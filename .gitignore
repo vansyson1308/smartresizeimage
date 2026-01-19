@@ -1,0 +1,23 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual env (nếu có)
+.venv/
+venv/
+Include/
+Lib/
+Scripts/
+
+# Cache/output
+cache/
+outputs/
+*.log
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Secrets
+.env
