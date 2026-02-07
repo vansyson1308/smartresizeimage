@@ -193,11 +193,8 @@ class ContentAwareFitStrategy:
         x_off = (target_w - img_w) // 2
 
         gap_h = target_h - img_h
-        if gap_h > 0 and target_h > target_w:
-            # Portrait target: place content at ~40% from top (more natural)
-            y_off = int(gap_h * 0.4)
-        else:
-            y_off = gap_h // 2
+        is_portrait = gap_h > 0 and target_h > target_w
+        y_off = int(gap_h * 0.4) if is_portrait else gap_h // 2
 
         # Try OpenCV inpainting first (best quality for edge extension)
         try:
@@ -335,7 +332,8 @@ class ContentAwareFitStrategy:
         # Blend
         mask_3d = mask[:, :, np.newaxis]
         original_layer = np.zeros_like(result, dtype=np.float32)
-        original_layer[dy1:dy2, dx1:dx2] = original_cv[sy1:sy1 + oh, sx1:sx1 + ow].astype(np.float32)
+        orig_slice = original_cv[sy1:sy1 + oh, sx1:sx1 + ow]
+        original_layer[dy1:dy2, dx1:dx2] = orig_slice.astype(np.float32)
 
         blended = (original_layer * mask_3d + inpainted.astype(np.float32) * (1.0 - mask_3d))
         return np.clip(blended, 0, 255).astype(np.uint8)
