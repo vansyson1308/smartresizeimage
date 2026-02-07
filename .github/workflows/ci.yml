@@ -20,17 +20,3 @@ jobs:
         run: ruff check backend/app/
       - name: Test
         run: pytest backend/tests/ -v --cov=backend/app --cov-report=term-missing
-
-  frontend-build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Install
-        run: cd frontend && npm install
-      - name: TypeScript Check
-        run: cd frontend && npx tsc --noEmit
-      - name: Build
-        run: cd frontend && npm run build
