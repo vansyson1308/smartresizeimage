@@ -4,8 +4,9 @@ WORKDIR /app
 
 # System dependencies for Pillow and OpenCV
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
+    libgl1 \
+    libglx-mesa0 \
+    libglib2.0-0t64 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
