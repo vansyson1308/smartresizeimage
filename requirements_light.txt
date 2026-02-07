@@ -1,5 +1,0 @@
-gradio>=4.0.0
-opencv-python
-rembg[pillow]
-numpy
-pillow

@@ -1,23 +1,58 @@
-# Python cache
+# Python
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
 
-# Virtual env (nếu có)
+# Virtual environments
 .venv/
 venv/
+venv_ai/
 Include/
 Lib/
 Scripts/
+pyvenv.cfg
 
 # Cache/output
 cache/
 outputs/
+models/
 *.log
+
+# Node.js
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
 
 # OS
 Thumbs.db
 .DS_Store
+nul
 
 # Secrets
 .env
+.env.local
+.env.*.local
+
+# Test/coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Docker
+docker-compose.override.yml
+
+# Deprecated files
+*.bat
+metadata.json
+0.2.0
+requirements_light.txt

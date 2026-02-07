@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(git -C \"C:\\\\Users\\\\MSI\\\\Desktop\\\\autobanner\" log --oneline -20)",
+      "Bash(python -m pytest:*)",
+      "Bash(python -m py_compile:*)",
+      "Bash(npm run typecheck:*)",
+      "Bash(python:*)",
+      "Bash(grep:*)"
+    ]
+  }
+}
