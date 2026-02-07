@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+import cv2
 import numpy as np
 from PIL import Image, ImageFilter
 
@@ -19,11 +20,11 @@ try:
     HAS_LAMA = True
 except ImportError:
     HAS_LAMA = False
-    logger.info("LaMa not available. Using basic inpainting only.")
+    logger.info("LaMa not available. Using OpenCV inpainting as primary method.")
 
 
 class BackgroundExtender:
-    """Handle background extension using AI inpainting or blur-based methods."""
+    """Handle background extension using AI inpainting, OpenCV inpaint, or edge repeat."""
 
     def __init__(self, use_ai_inpainting: bool = True) -> None:
         self.use_ai_inpainting = use_ai_inpainting and HAS_LAMA
@@ -48,7 +49,10 @@ class BackgroundExtender:
     ) -> Image.Image:
         """Extend image to fill target size.
 
-        Tries AI inpainting first, falls back to blur-based extension.
+        Priority:
+        1. LaMa AI inpainting (if available)
+        2. OpenCV inpainting (cv2.inpaint TELEA) — much better than blur
+        3. Edge-pixel repetition (fallback)
 
         Args:
             image: Source image.
@@ -57,103 +61,222 @@ class BackgroundExtender:
         Returns:
             Extended image.
         """
+        # Try LaMa first
         if self.use_ai_inpainting:
             self._ensure_lama_loaded()
             if self._lama:
-                return self._extend_with_inpainting(image, target_size)
+                return self._extend_with_lama(image, target_size)
 
-        return self._extend_with_blur(image, target_size)
+        # Try OpenCV inpainting (primary method)
+        try:
+            return self._extend_with_opencv_inpaint(image, target_size)
+        except Exception as e:
+            logger.warning("OpenCV inpaint failed: %s, using edge repeat", e)
 
-    def _extend_with_inpainting(
+        # Fallback to edge-pixel repetition
+        return self._extend_with_edge_repeat(image, target_size)
+
+    def _extend_with_lama(
         self, image: Image.Image, target_size: tuple[int, int]
     ) -> Image.Image:
-        """Extend image using AI inpainting."""
+        """Extend image using LaMa AI inpainting."""
         target_w, target_h = target_size
         img_w, img_h = image.size
+
+        # Scale image to cover as much of target as possible first
+        scale = max(target_w / img_w, target_h / img_h)
+        scaled_w = max(1, int(img_w * scale))
+        scaled_h = max(1, int(img_h * scale))
+        scaled = high_quality_resize(image, (scaled_w, scaled_h))
 
         # Create extended canvas
         canvas = Image.new("RGBA", target_size, (255, 255, 255, 255))
 
-        # Center original image
-        x_off = (target_w - img_w) // 2
-        y_off = (target_h - img_h) // 2
-        canvas.paste(image, (x_off, y_off))
+        # Center scaled image
+        x_off = (target_w - scaled_w) // 2
+        y_off = (target_h - scaled_h) // 2
+        canvas.paste(scaled, (x_off, y_off))
 
-        # Create mask for inpainting
-        mask = Image.new("L", target_size, 255)  # White = inpaint
-        mask.paste(0, (x_off, y_off, x_off + img_w, y_off + img_h))  # Black = keep
+        # Create mask for inpainting (white = areas to inpaint)
+        mask = Image.new("L", target_size, 255)
+        mask.paste(0, (x_off, y_off, x_off + scaled_w, y_off + scaled_h))
+
+        # Check if there's anything to inpaint
+        if np.array(mask).max() == 0:
+            return canvas
 
         try:
             canvas_rgb = canvas.convert("RGB")
             result = self._lama(canvas_rgb, mask)
             return result.convert("RGBA")
         except Exception as e:
-            logger.warning("Inpainting failed: %s, falling back to blur", e)
-            return self._extend_with_blur(image, target_size)
+            logger.warning("LaMa inpainting failed: %s, falling back to OpenCV", e)
+            try:
+                return self._extend_with_opencv_inpaint(image, target_size)
+            except Exception:
+                return self._extend_with_edge_repeat(image, target_size)
 
-    def _extend_with_blur(
+    def _extend_with_opencv_inpaint(
         self, image: Image.Image, target_size: tuple[int, int]
     ) -> Image.Image:
-        """Extend image using blur-based method."""
+        """Extend image using OpenCV inpainting (TELEA algorithm).
+
+        Much better than blur — generates natural-looking texture for extended areas.
+
+        Args:
+            image: Source image.
+            target_size: Target (width, height).
+
+        Returns:
+            Extended image with inpainted edges.
+        """
         target_w, target_h = target_size
         img_w, img_h = image.size
 
         # Guard against zero dimensions
         if img_w <= 0 or img_h <= 0:
-            logger.warning(
-                "Image has zero dimension (%dx%d), returning blank canvas", img_w, img_h
-            )
             return Image.new("RGBA", target_size, (255, 255, 255, 255))
 
-        # Scale image to cover at least one dimension
+        # Scale image to cover as much of the target as possible
         scale = max(target_w / img_w, target_h / img_h)
-        scaled_w = int(img_w * scale)
-        scaled_h = int(img_h * scale)
+        scaled_w = max(1, int(img_w * scale))
+        scaled_h = max(1, int(img_h * scale))
         scaled = high_quality_resize(image, (scaled_w, scaled_h))
 
-        # Create blurred version for extension
-        blurred = scaled.filter(ImageFilter.GaussianBlur(radius=Config.BLUR_RADIUS))
+        # Convert to OpenCV BGR format
+        scaled_rgb = np.array(scaled.convert("RGB"))
+        scaled_cv = cv2.cvtColor(scaled_rgb, cv2.COLOR_RGB2BGR)
 
-        # Create canvas with blurred background
-        canvas = Image.new("RGBA", target_size, (255, 255, 255, 255))
+        # Create canvas and mask
+        canvas = np.zeros((target_h, target_w, 3), dtype=np.uint8)
+        mask = np.ones((target_h, target_w), dtype=np.uint8) * 255
 
-        # Tile/center blurred version
+        # Calculate placement (center the scaled image)
         x_off = (target_w - scaled_w) // 2
         y_off = (target_h - scaled_h) // 2
 
-        # Fill with edge colors first
-        if scaled_w < target_w or scaled_h < target_h:
-            arr = np.array(scaled)
-            if arr.ndim == 3 and arr.shape[2] >= 3:
-                top_color = tuple(arr[0, :, :3].mean(axis=0).astype(int))
-                bottom_color = tuple(arr[-1, :, :3].mean(axis=0).astype(int))
-                left_color = tuple(arr[:, 0, :3].mean(axis=0).astype(int))
-                right_color = tuple(arr[:, -1, :3].mean(axis=0).astype(int))
-                avg_color = tuple(
-                    (
-                        (
-                            np.array(top_color)
-                            + np.array(bottom_color)
-                            + np.array(left_color)
-                            + np.array(right_color)
-                        )
-                        // 4
-                    ).astype(int)
-                )
-                canvas = Image.new("RGBA", target_size, avg_color + (255,))
+        # Calculate source/destination regions (handle negative offsets)
+        dst_x1 = max(0, x_off)
+        dst_y1 = max(0, y_off)
+        dst_x2 = min(target_w, x_off + scaled_w)
+        dst_y2 = min(target_h, y_off + scaled_h)
 
-        # Paste blurred
-        canvas.paste(blurred, (x_off, y_off))
+        src_x1 = max(0, -x_off)
+        src_y1 = max(0, -y_off)
+        src_x2 = src_x1 + (dst_x2 - dst_x1)
+        src_y2 = src_y1 + (dst_y2 - dst_y1)
 
-        # Paste original sharp in center
-        center_x = (target_w - img_w) // 2
-        center_y = (target_h - img_h) // 2
+        # Place scaled image on canvas
+        canvas[dst_y1:dst_y2, dst_x1:dst_x2] = scaled_cv[src_y1:src_y2, src_x1:src_x2]
+        mask[dst_y1:dst_y2, dst_x1:dst_x2] = 0  # Black = keep
 
-        # Create gradient mask for blending
-        mask = create_feather_mask(image.size, feather=50)
-        canvas.paste(image, (center_x, center_y), mask)
+        # Check if there's anything to inpaint
+        if mask.max() == 0:
+            result_rgb = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
+            return Image.fromarray(result_rgb).convert("RGBA")
 
-        return canvas
+        # Apply cv2.inpaint with TELEA algorithm
+        inpaint_radius = Config.OPENCV_INPAINT_RADIUS
+        inpainted = cv2.inpaint(canvas, mask, inpaint_radius, cv2.INPAINT_TELEA)
+
+        # Convert back to PIL RGBA
+        result_rgb = cv2.cvtColor(inpainted, cv2.COLOR_BGR2RGB)
+        return Image.fromarray(result_rgb).convert("RGBA")
+
+    def _extend_with_edge_repeat(
+        self, image: Image.Image, target_size: tuple[int, int]
+    ) -> Image.Image:
+        """Extend image by repeating edge pixels with light blur.
+
+        Better than heavy Gaussian blur — creates seamless edge extensions.
+
+        Args:
+            image: Source image.
+            target_size: Target (width, height).
+
+        Returns:
+            Extended image.
+        """
+        target_w, target_h = target_size
+        img_w, img_h = image.size
+
+        # Guard against zero dimensions
+        if img_w <= 0 or img_h <= 0:
+            return Image.new("RGBA", target_size, (255, 255, 255, 255))
+
+        # Scale image to cover as much of the target as possible
+        scale = max(target_w / img_w, target_h / img_h)
+        scaled_w = max(1, int(img_w * scale))
+        scaled_h = max(1, int(img_h * scale))
+        scaled = high_quality_resize(image, (scaled_w, scaled_h))
+
+        arr = np.array(scaled.convert("RGBA"))
+
+        # Calculate placement
+        x_off = (target_w - scaled_w) // 2
+        y_off = (target_h - scaled_h) // 2
+
+        # Create output canvas
+        canvas = np.zeros((target_h, target_w, 4), dtype=np.uint8)
+        canvas[:, :, 3] = 255  # Fully opaque
+
+        # Calculate safe regions
+        dst_x1 = max(0, x_off)
+        dst_y1 = max(0, y_off)
+        dst_x2 = min(target_w, x_off + scaled_w)
+        dst_y2 = min(target_h, y_off + scaled_h)
+
+        src_x1 = max(0, -x_off)
+        src_y1 = max(0, -y_off)
+        src_x2 = src_x1 + (dst_x2 - dst_x1)
+        src_y2 = src_y1 + (dst_y2 - dst_y1)
+
+        # Place scaled image
+        canvas[dst_y1:dst_y2, dst_x1:dst_x2] = arr[src_y1:src_y2, src_x1:src_x2]
+
+        # Extend edges: top
+        if dst_y1 > 0:
+            top_row = arr[src_y1 : src_y1 + 1, src_x1:src_x2]
+            canvas[:dst_y1, dst_x1:dst_x2] = np.tile(top_row, (dst_y1, 1, 1))
+
+        # Extend edges: bottom
+        if dst_y2 < target_h:
+            bottom_row = arr[src_y2 - 1 : src_y2, src_x1:src_x2]
+            remaining = target_h - dst_y2
+            canvas[dst_y2:, dst_x1:dst_x2] = np.tile(bottom_row, (remaining, 1, 1))
+
+        # Extend edges: left
+        if dst_x1 > 0:
+            left_col = canvas[dst_y1:dst_y2, dst_x1 : dst_x1 + 1]
+            canvas[dst_y1:dst_y2, :dst_x1] = np.tile(left_col, (1, dst_x1, 1))
+
+        # Extend edges: right
+        if dst_x2 < target_w:
+            right_col = canvas[dst_y1:dst_y2, dst_x2 - 1 : dst_x2]
+            remaining = target_w - dst_x2
+            canvas[dst_y1:dst_y2, dst_x2:] = np.tile(right_col, (1, remaining, 1))
+
+        # Fill corners using nearest edge pixel
+        if dst_y1 > 0 and dst_x1 > 0:
+            canvas[:dst_y1, :dst_x1] = arr[src_y1, src_x1]
+        if dst_y1 > 0 and dst_x2 < target_w:
+            canvas[:dst_y1, dst_x2:] = arr[src_y1, src_x2 - 1]
+        if dst_y2 < target_h and dst_x1 > 0:
+            canvas[dst_y2:, :dst_x1] = arr[src_y2 - 1, src_x1]
+        if dst_y2 < target_h and dst_x2 < target_w:
+            canvas[dst_y2:, dst_x2:] = arr[src_y2 - 1, src_x2 - 1]
+
+        # Apply light Gaussian blur only to extended regions for smoothing
+        result = Image.fromarray(canvas)
+        blurred = result.filter(ImageFilter.GaussianBlur(radius=3))
+
+        # Composite: keep sharp center, use blurred edges
+        final = blurred.copy()
+        # Paste sharp original back
+        sharp_region = result.crop((dst_x1, dst_y1, dst_x2, dst_y2))
+        final.paste(sharp_region, (dst_x1, dst_y1))
+
+        return final
 
 
 def create_feather_mask(

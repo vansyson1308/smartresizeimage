@@ -10,6 +10,7 @@ from ..constants import BACKGROUND_ROLES
 from ..enums import ElementRole
 from ..models import CompositionResult, DesignElement, LayoutResult
 from .background import BackgroundExtender
+from .content_aware_fit import ContentAwareFitStrategy, FitMode
 from .resize import high_quality_resize
 
 logger = logging.getLogger("autobanner.composition")
@@ -23,10 +24,12 @@ class CompositionEngine:
     - Background extension/generation
     - Layer blending with effects
     - AI-powered inpainting (optional)
+    - Content-aware fit for flat (single-layer) images
     """
 
     def __init__(self, use_ai_inpainting: bool = True) -> None:
         self.bg_extender = BackgroundExtender(use_ai_inpainting=use_ai_inpainting)
+        self.content_aware_fit = ContentAwareFitStrategy(extender=self.bg_extender)
 
     def compose(
         self,
@@ -37,6 +40,11 @@ class CompositionEngine:
     ) -> CompositionResult:
         """Compose final image.
 
+        For flat images (single PNG/JPG from ImageParser), uses the
+        content-aware fit strategy for dramatically better quality.
+        For multi-layer sources (PSD), uses the existing zone-based
+        layout and composition pipeline.
+
         Args:
             elements: List of design elements with images.
             layout_results: Layout results with new positions.
@@ -46,7 +54,67 @@ class CompositionEngine:
         Returns:
             CompositionResult with final image.
         """
-        target_w, target_h = target_size
+        warnings: list[str] = []
+
+        # Check if this is a flat image source — use content-aware fit
+        if self._is_flat_image_source(elements):
+            result_image = self._compose_flat_image(
+                elements[0], source_size, target_size
+            )
+            return CompositionResult(
+                image=result_image.convert("RGB"),
+                layout_results=layout_results,
+                warnings=warnings,
+            )
+
+        # Standard multi-element composition (PSD, etc.)
+        return self._compose_multi_element(
+            elements, layout_results, source_size, target_size
+        )
+
+    @staticmethod
+    def _is_flat_image_source(elements: list[DesignElement]) -> bool:
+        """Check if elements come from a flat image (single-layer PNG/JPG).
+
+        Detection is based on the ``_source_type`` metadata set by ImageParser.
+        Falls back safely to False if metadata is absent.
+        """
+        if len(elements) != 1:
+            return False
+        return elements[0].effects.get("_source_type") == "flat_image"
+
+    def _compose_flat_image(
+        self,
+        element: DesignElement,
+        source_size: tuple[int, int],
+        target_size: tuple[int, int],
+    ) -> Image.Image:
+        """Compose a flat image using content-aware fit strategy.
+
+        This produces dramatically better results than the old blur-extend
+        approach by intelligently scaling and extending edges.
+        """
+        if not element.image:
+            return Image.new("RGBA", target_size, (255, 255, 255, 255))
+
+        logger.info(
+            "Using content-aware fit: %dx%d -> %dx%d",
+            source_size[0], source_size[1],
+            target_size[0], target_size[1],
+        )
+
+        return self.content_aware_fit.fit(
+            element.image, target_size, mode=FitMode.SMART
+        )
+
+    def _compose_multi_element(
+        self,
+        elements: list[DesignElement],
+        layout_results: list[LayoutResult],
+        source_size: tuple[int, int],
+        target_size: tuple[int, int],
+    ) -> CompositionResult:
+        """Standard composition for multi-element sources (PSD files)."""
         warnings: list[str] = []
 
         # Create result mapping
@@ -93,7 +161,7 @@ class CompositionEngine:
     def _compose_background(
         self,
         canvas: Image.Image,
-        bg_elements: list[tuple[DesignElement, LayoutResult]],
+        bg_elements: list[tuple[DesignElement, LayoutResult | None]],
         source_size: tuple[int, int],
         target_size: tuple[int, int],
     ) -> Image.Image:

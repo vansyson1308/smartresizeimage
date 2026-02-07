@@ -19,6 +19,10 @@ class Config:
     # Background
     INPAINT_RADIUS = 5
     BLUR_RADIUS = 50
+    OPENCV_INPAINT_RADIUS = 5  # Radius for cv2.inpaint TELEA
+
+    # Content-aware fit (flat PNG/JPG relayout)
+    MAX_CROP_PERCENT = 0.20  # Never crop more than 20% of source content
 
     # Quality
     RESIZE_QUALITY = Image.Resampling.LANCZOS

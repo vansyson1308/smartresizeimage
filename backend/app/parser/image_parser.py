@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
 from ..enums import ElementRole
@@ -19,8 +20,9 @@ class ImageParser(BaseParser):
     """Parse raster image files (PNG, JPG, WEBP) as single-element designs.
 
     For non-PSD formats, the parser treats the entire image as a single
-    BACKGROUND element, allowing the re-layout pipeline to process it
-    with background extension and composition.
+    BACKGROUND element. Metadata ``_source_type=flat_image`` is attached so
+    the composition engine can use the content-aware fit strategy instead
+    of the zone-based layout used for multi-layer PSD files.
     """
 
     SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
@@ -49,6 +51,8 @@ class ImageParser(BaseParser):
         w, h = img.size
         logger.info("Parsed image %s: %dx%d", Path(file_path).name, w, h)
 
+        has_transparency = self._has_meaningful_alpha(img)
+
         element = DesignElement(
             id="source_image_0",
             name="Source Image",
@@ -62,4 +66,23 @@ class ImageParser(BaseParser):
             z_index=0,
         )
 
+        # Mark as flat image so composition engine uses ContentAwareFit
+        element.effects["_source_type"] = "flat_image"
+        element.effects["_has_transparency"] = has_transparency
+
         return [element], (w, h)
+
+    @staticmethod
+    def _has_meaningful_alpha(img: Image.Image) -> bool:
+        """Check if image has meaningful transparency (not just fully opaque).
+
+        Returns True if more than 5% of pixels have alpha < 255.
+        """
+        if img.mode != "RGBA":
+            return False
+
+        alpha = np.array(img)[:, :, 3]
+        non_opaque = int(np.sum(alpha < 255))
+        total = alpha.size
+
+        return (non_opaque / total) > 0.05

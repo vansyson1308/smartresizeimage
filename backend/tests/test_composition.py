@@ -53,12 +53,12 @@ class TestBackgroundExtender:
         result = extender.extend(img, (200, 200))
         assert result.size == (200, 200)
 
-    def test_extend_with_blur_zero_dimension(self):
+    def test_extend_zero_dimension(self):
         """Zero-dimension image should return blank canvas (Bug 4 fix)."""
         extender = BackgroundExtender(use_ai_inpainting=False)
         # Create a 1x1 image (smallest valid)
         img = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
-        result = extender._extend_with_blur(img, (500, 500))
+        result = extender.extend(img, (500, 500))
         assert result.size == (500, 500)
 
 
