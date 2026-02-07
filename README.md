@@ -8,7 +8,7 @@ AutoBanner has two independent processing modes:
 
 - **Frontend (Local WASM)**: Runs entirely in the browser using WebAssembly-based background removal (`@imgly/background-removal`) and Canvas API composition. Supports batch generation across 11 preset ad formats (Social Media, Google Display Ads, Video & Display). Zero server dependency.
 
-- **Backend (AI-Powered PSD Re-Layout)**: Python service using Gradio for the UI. Parses PSD files (and PNG/JPG/WEBP), classifies layer semantics with CLIP, calculates adaptive layouts for any target aspect ratio, and composes the final output with gamma-correct resizing and AI inpainting (LaMa) for background extension.
+- **Backend (AI-Powered PSD Re-Layout)**: Python service using Gradio for the UI. Parses PSD files (and PNG/JPG/WEBP), classifies layer semantics with CLIP, calculates adaptive layouts for any target aspect ratio, and composes the final output with gamma-correct LANCZOS resizing, content-aware fit strategy (SMART mode: auto COVER/CONTAIN), and tiered background extension (LaMa AI inpainting, OpenCV TELEA inpainting, edge-pixel repetition with feathered blending).
 
 ## Prerequisites
 
@@ -84,9 +84,9 @@ cd frontend && npx tsc --noEmit
 | Format | Backend | Frontend |
 |--------|---------|----------|
 | PSD | Full layer parsing | - |
-| PNG | Single-layer | Full |
-| JPG | Single-layer | Full |
-| WEBP | Single-layer | Full |
+| PNG | Content-aware fit | Blur + segment |
+| JPG | Content-aware fit | Blur + segment |
+| WEBP | Content-aware fit | Blur + segment |
 
 ## Project Structure
 
@@ -104,9 +104,9 @@ autobanner/
 │   │   ├── parser/               # PSD & image parsers
 │   │   ├── classifier/           # Semantic classifier (CLIP)
 │   │   ├── layout/               # Layout engine & templates
-│   │   ├── composition/          # Composition, resize, background
+│   │   ├── composition/          # Composition, resize, background, content-aware fit
 │   │   └── relayout.py           # Orchestrator
-│   ├── tests/                    # pytest test suite (77 tests)
+│   ├── tests/                    # pytest test suite (101 tests)
 │   ├── requirements.txt          # Production deps (with torch/AI)
 │   ├── requirements-ci.txt       # Lightweight deps (CI/testing)
 │   └── requirements-dev.txt      # Dev deps (includes production + tools)
@@ -126,5 +126,16 @@ autobanner/
 
 GitHub Actions runs on every push/PR to `main`:
 
-- **Backend**: Lint (ruff) + Test (pytest, 77 tests) + Coverage
+- **Backend**: Lint (ruff) + Test (pytest, 101 tests) + Coverage
 - **Frontend**: TypeScript check + Build (Vite)
+
+## Quality Comparison
+
+| Aspect | Frontend (localhost:3000) | Backend (localhost:7860) |
+|--------|--------------------------|-------------------------|
+| Resizing | Canvas bilinear | PIL LANCZOS + gamma 2.2 |
+| Aspect ratio | Fixed COVER (crop) | SMART (auto COVER/CONTAIN) |
+| Background fill | Gaussian blur 20px | OpenCV inpaint / edge-repeat |
+| Content preservation | May crop text/elements | Never crops >20% |
+| Processing | Instant (client-side) | 1-5s (server, higher quality) |
+| Use case | Quick preview | Production-ready assets |
