@@ -1,4 +1,4 @@
-import { removeBackground } from "@imgly/background-removal";
+import removeBackground from "@imgly/background-removal";
 import { LayoutRule } from "../types";
 import { getCachedSegmentation, setCachedSegmentation } from "./segmentationCache";
 
@@ -128,13 +128,12 @@ export const processBannerLocally = async (
   let foregroundBitmap: ImageBitmap;
   try {
       // Check cache first
-      let segBlob = await getCachedSegmentation(originalBase64);
-      if (!segBlob) {
-          segBlob = await removeBackground(originalBase64, {
-              progress: (_key: string, _current: number, _total: number) => {
-                  // Progress callback
-              }
-          });
+      const cached = await getCachedSegmentation(originalBase64);
+      let segBlob: Blob;
+      if (cached) {
+          segBlob = cached;
+      } else {
+          segBlob = await removeBackground(originalBase64);
           await setCachedSegmentation(originalBase64, segBlob);
       }
       foregroundBitmap = await createImageBitmap(segBlob);
