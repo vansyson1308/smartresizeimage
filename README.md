@@ -10,6 +10,15 @@ AutoBanner has two independent processing modes:
 
 - **Backend (AI-Powered PSD Re-Layout)**: Python service using Gradio for the UI. Parses PSD files (and PNG/JPG/WEBP), classifies layer semantics with CLIP, calculates adaptive layouts for any target aspect ratio, and composes the final output with gamma-correct resizing and AI inpainting (LaMa) for background extension.
 
+## Prerequisites
+
+| Tool | Version | Required for |
+|------|---------|-------------|
+| Python | 3.10+ | Backend |
+| Node.js | 20+ | Frontend |
+| Docker | 24+ | Quick start (optional) |
+| CUDA GPU | - | AI classification (optional, backend falls back to heuristics) |
+
 ## Quick Start (Docker)
 
 ```bash
@@ -28,8 +37,14 @@ cd backend
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements-dev.txt
-python -m backend.app.main
+python -m app.main
 ```
+
+> **Note**: For CPU-only environments without torch/CUDA, install the lightweight dependencies instead:
+> ```bash
+> pip install -r requirements-ci.txt
+> ```
+> The backend will still work but skip AI-based CLIP classification (falls back to rule-based + heuristic classification).
 
 ### Frontend
 
@@ -39,7 +54,11 @@ npm install
 npm run dev
 ```
 
+Open http://localhost:3000 in your browser.
+
 ## Testing
+
+All commands run from the **project root** (`autobanner/`):
 
 ### Backend (pytest)
 
@@ -50,8 +69,7 @@ pytest backend/tests/ -v --cov=backend/app --cov-report=term-missing
 ### Frontend (vitest)
 
 ```bash
-cd frontend
-npm test
+cd frontend && npm test
 ```
 
 ### Linting
@@ -65,10 +83,10 @@ cd frontend && npx tsc --noEmit
 
 | Format | Backend | Frontend |
 |--------|---------|----------|
-| PSD    | Full layer parsing | - |
-| PNG    | Single-layer | Full |
-| JPG    | Single-layer | Full |
-| WEBP   | Single-layer | Full |
+| PSD | Full layer parsing | - |
+| PNG | Single-layer | Full |
+| JPG | Single-layer | Full |
+| WEBP | Single-layer | Full |
 
 ## Project Structure
 
@@ -88,7 +106,10 @@ autobanner/
 │   │   ├── layout/               # Layout engine & templates
 │   │   ├── composition/          # Composition, resize, background
 │   │   └── relayout.py           # Orchestrator
-│   └── tests/                    # pytest test suite
+│   ├── tests/                    # pytest test suite (77 tests)
+│   ├── requirements.txt          # Production deps (with torch/AI)
+│   ├── requirements-ci.txt       # Lightweight deps (CI/testing)
+│   └── requirements-dev.txt      # Dev deps (includes production + tools)
 ├── frontend/
 │   ├── src/
 │   │   ├── App.tsx               # Main React app
@@ -104,6 +125,6 @@ autobanner/
 ## CI/CD
 
 GitHub Actions runs on every push/PR to `main`:
-- Backend: Lint (ruff) + Test (pytest) + Coverage
-- Frontend: TypeScript check + Build
-- Docker: Image build verification
+
+- **Backend**: Lint (ruff) + Test (pytest, 77 tests) + Coverage
+- **Frontend**: TypeScript check + Build (Vite)
