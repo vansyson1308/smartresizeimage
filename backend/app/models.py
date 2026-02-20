@@ -98,3 +98,7 @@ class CompositionResult:
     image: PILImage.Image
     layout_results: list[LayoutResult]
     warnings: list[str] = field(default_factory=list)
+    metadata: dict = field(default_factory=dict)
+    gates_passed: bool = True
+    fail_reasons: list[str] = field(default_factory=list)
+    used_fallback: bool = False

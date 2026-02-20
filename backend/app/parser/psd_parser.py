@@ -192,10 +192,40 @@ class PSDParser(BaseParser):
         try:
             if hasattr(layer, "effects") and layer.effects:
                 for effect in layer.effects:
-                    effects[effect.name] = {
+                    effect_payload = {
                         "enabled": effect.enabled,
                         "opacity": getattr(effect, "opacity", 100),
                     }
+
+                    effect_name = str(effect.name).lower().replace("-", "_").replace(" ", "_")
+
+                    # PSD-like Drop Shadow subset mapping for renderer MVP.
+                    # TODO: expand psd-tools effect parsing for angle/spread/choke/color models.
+                    if "drop" in effect_name and "shadow" in effect_name:
+                        effect_payload.update(
+                            {
+                                "offset_x": getattr(
+                                    effect,
+                                    "distance_x",
+                                    getattr(effect, "offset_x", 0),
+                                ),
+                                "offset_y": getattr(
+                                    effect,
+                                    "distance_y",
+                                    getattr(effect, "offset_y", 2),
+                                ),
+                                "blur_radius": getattr(effect, "blur", getattr(effect, "size", 4)),
+                                "spread": getattr(effect, "spread", 0),
+                                "color": getattr(
+                                    effect,
+                                    "color",
+                                    {"r": 0, "g": 0, "b": 0, "a": 255},
+                                ),
+                            }
+                        )
+                        effects["drop_shadow"] = effect_payload
+
+                    effects[effect_name] = effect_payload
         except (AttributeError, TypeError) as e:
             logger.debug("Could not extract effects: %s", e)
         return effects
