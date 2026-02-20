@@ -11,8 +11,9 @@ from ..enums import ElementRole
 from ..models import BoundingBox, DesignElement, LayoutResult
 from .constraints import validate_layout
 from .profiles import LayoutProfile, pick_profile
+from .repair import apply_repair
 from .scoring import score_layout
-from .solver import solve_layout
+from .solver import solve_layout, total_overlap_area
 from .templates import TEMPLATES
 from .typography import fit_text_block
 
@@ -33,6 +34,7 @@ class LayoutEngine:
 
     def __init__(self) -> None:
         self.last_layout_debug: dict[str, object] = {}
+        self._typography_debug: list[dict[str, object]] = []
 
     def calculate_layout(
         self,
@@ -51,6 +53,8 @@ class LayoutEngine:
         if not Config.LAYOUT_PROFILE_SCORING_ENABLED:
             return base_results
 
+        self._typography_debug = []
+
         profile = pick_profile(target_size[0], target_size[1])
         role_by_id = {e.id: e.role for e in elements}
 
@@ -58,8 +62,26 @@ class LayoutEngine:
         best_results = base_results
         best_score = float("-inf")
         best_violations: list[str] = []
+        best_repair_steps: list[str] = []
+        best_outside_margin_count = 0
+        fallback_used = False
+        fallback_reason = ""
 
         had_candidate_error = False
+        elements_by_id = {e.id: e for e in elements}
+        canvas_area = max(1, target_size[0] * target_size[1])
+
+        base_repair = apply_repair(base_results, elements_by_id, profile, target_size)
+        try:
+            repaired_base, _ = solve_layout(
+                base_repair.layout,
+                target_size=target_size,
+                profile=profile,
+                role_by_id=role_by_id,
+                iterations=max(8, Config.LAYOUT_SOLVER_MAX_ITERS // 2),
+            )
+        except Exception:
+            repaired_base = base_repair.layout
         for candidate in candidates:
             try:
                 solved, solver_meta = solve_layout(
@@ -69,13 +91,31 @@ class LayoutEngine:
                     role_by_id=role_by_id,
                     iterations=Config.LAYOUT_SOLVER_MAX_ITERS,
                 )
-                violations = validate_layout(solved, profile, target_size, role_by_id)
-                score = score_layout(solved, profile, target_size, role_by_id)
+                repair = apply_repair(solved, elements_by_id, profile, target_size)
+                repaired, solver_meta = solve_layout(
+                    repair.layout,
+                    target_size=target_size,
+                    profile=profile,
+                    role_by_id=role_by_id,
+                    iterations=max(8, Config.LAYOUT_SOLVER_MAX_ITERS // 2),
+                )
+
+                violations = validate_layout(repaired, profile, target_size, role_by_id)
+                outside_margin_count = len(
+                    [v for v in violations if v.startswith("outside_margin:")]
+                )
+                if outside_margin_count > 0:
+                    continue
+
+                score = score_layout(repaired, profile, target_size, role_by_id)
                 score -= solver_meta.get("overlap_area", 0.0) * 0.01
+                score -= outside_margin_count * 1000.0
                 if score > best_score:
                     best_score = score
-                    best_results = solved
+                    best_results = repaired
                     best_violations = violations
+                    best_repair_steps = repair.steps
+                    best_outside_margin_count = outside_margin_count
             except Exception as e:
                 had_candidate_error = True
                 logger.warning(
@@ -84,8 +124,17 @@ class LayoutEngine:
                 )
 
         if best_score == float("-inf"):
-            logger.warning("Adaptive solver failed for all candidates; using rigid template")
-            return base_results
+            logger.warning(
+                "Adaptive solver failed for all candidates after repair; using rigid template"
+            )
+            fallback_used = True
+            fallback_reason = "no_repairable_candidate"
+            best_results = repaired_base
+            best_violations = validate_layout(repaired_base, profile, target_size, role_by_id)
+            best_repair_steps = list(base_repair.steps)
+            best_outside_margin_count = len(
+                [v for v in best_violations if v.startswith("outside_margin:")]
+            )
 
         logger.info(
             "profile=%s, candidates=%d, best_score=%.2f, violations=%d",
@@ -97,9 +146,16 @@ class LayoutEngine:
 
         self.last_layout_debug = {
             "profile": profile.name,
+            "profile_name": profile.name,
             "candidates": len(candidates),
             "best_score": float(best_score),
             "violations": list(best_violations),
+            "repair_applied": bool(best_repair_steps),
+            "repair_steps": list(best_repair_steps),
+            "fallback_used": fallback_used,
+            "fallback_reason": fallback_reason,
+            "outside_margin_count": best_outside_margin_count,
+            "typography": list(self._typography_debug),
             "results": [
                 {
                     "element_id": r.element_id,
@@ -113,9 +169,17 @@ class LayoutEngine:
             ],
         }
 
-        if len(best_violations) >= 6:
-            logger.warning("Adaptive scoring fallback to rigid template due to heavy violations")
-            return base_results
+        overlap_ratio = total_overlap_area(best_results) / canvas_area
+        if best_outside_margin_count > 0:
+            logger.warning("Adaptive scoring fallback: hard margin violations after repair")
+            self.last_layout_debug["fallback_used"] = True
+            self.last_layout_debug["fallback_reason"] = "outside_margin_after_repair"
+            return repaired_base
+        if overlap_ratio > 0.25:
+            logger.warning("Adaptive scoring fallback: catastrophic overlap after repair")
+            self.last_layout_debug["fallback_used"] = True
+            self.last_layout_debug["fallback_reason"] = "catastrophic_overlap_after_repair"
+            return repaired_base
 
         if had_candidate_error:
             logger.info("Adaptive scoring completed with fallback on failed candidates")
@@ -242,6 +306,17 @@ class LayoutEngine:
             fit.font_size,
             len(fit.lines),
             fit.overflow,
+        )
+
+        self._typography_debug.append(
+            {
+                "element_id": elem.id,
+                "role": elem.role.value,
+                "font_px": int(fit.font_size),
+                "unit": "px",
+                "lines": len(fit.lines),
+                "overflow": bool(fit.overflow),
+            }
         )
 
         scale = new_h / max(1, elem.bbox.height)

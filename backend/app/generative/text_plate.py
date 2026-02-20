@@ -100,6 +100,8 @@ def apply_text_safe_plates(
         "applied": applied > 0,
         "plates": applied,
         "avg_busy": (sum(busy_scores) / len(busy_scores)) if busy_scores else 0.0,
+        "busy_scores": [round(float(v), 6) for v in busy_scores],
+        "busy_threshold": float(config.busy_threshold),
         "style": config.style,
     }
 

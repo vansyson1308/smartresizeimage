@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fixtures", default="backend/tests/bench_fixtures")
     parser.add_argument("--outdir", default="backend/tests/fixtures/outputs/bench_phase21")
-    parser.add_argument("--mode", choices=["baseline", "phase21", "both"], default="both")
+    parser.add_argument("--mode", choices=["baseline", "phase21", "phase3", "both"], default="both")
     parser.add_argument("--sizes", default="1200x628,1080x1920,1080x1080")
     parser.add_argument("--cases", default="all")
     parser.add_argument("--seed", type=int, default=42)
@@ -74,12 +74,13 @@ def run_benchmark(args: argparse.Namespace) -> Path:
                 base["image"].save(run_dir / "before.png")
                 runs.append(base["record"])
 
-            if args.mode in ("phase21", "both"):
+            if args.mode in ("phase21", "phase3", "both"):
+                phase_mode = "phase21" if args.mode == "both" else args.mode
                 p21 = _run_one_mode(
                     elements,
                     source_size,
                     size,
-                    mode="phase21",
+                    mode=phase_mode,
                     out_dir=run_dir,
                     busy_expected=bool(meta.get("tags", {}).get("busy_background", False)),
                 )
@@ -102,7 +103,7 @@ def _run_one_mode(
     out_dir: Path,
     busy_expected: bool = False,
 ) -> dict:
-    use_phase21 = mode == "phase21"
+    use_phase21 = mode in ("phase21", "phase3")
     prev_cfg = (
         Config.LAYOUT_PROFILE_SCORING_ENABLED,
         Config.TEXT_SAFE_PLATE_ENABLED,
@@ -125,8 +126,20 @@ def _run_one_mode(
         layout_engine = LayoutEngine()
         layout = layout_engine.calculate_layout(elements, source_size, target_size)
 
-        compositor = CompositionEngine(use_ai_inpainting=False)
-        result = compositor.compose(elements, layout, source_size, target_size)
+        if mode == "phase3":
+            from backend.app.redesign.api import run_target_first_redesign
+
+            result = run_target_first_redesign(
+                elements=elements,
+                layout_results=layout,
+                source_size=source_size,
+                target_size=target_size,
+                manual_anchors=None,
+                n_candidates=4,
+            )
+        else:
+            compositor = CompositionEngine(use_ai_inpainting=False)
+            result = compositor.compose(elements, layout, source_size, target_size)
 
         profile = pick_profile(*target_size)
         eval_res = evaluate_bench_run(
@@ -162,11 +175,18 @@ def _run_one_mode(
 
         layout_debug = {
             "profile": profile.name,
+            "profile_name": profile.name,
             "target_size": {"width": target_size[0], "height": target_size[1]},
             "mode": mode,
             "score": eval_res.metrics.total_score,
             "violations": eval_res.metrics.violations,
             "metrics": asdict(eval_res.metrics),
+            "repair_applied": bool(layout_engine.last_layout_debug.get("repair_applied", False)),
+            "repair_steps": list(layout_engine.last_layout_debug.get("repair_steps", [])),
+            "fallback_used": bool(layout_engine.last_layout_debug.get("fallback_used", False)),
+            "fallback_reason": str(layout_engine.last_layout_debug.get("fallback_reason", "")),
+            "text_plate": dict(result.metadata.get("text_plate", {})),
+            "redesign": dict(result.metadata.get("redesign", {})),
             "results": [
                 {
                     "element_id": lr.element_id,
@@ -279,6 +299,8 @@ def _select_cases(fixtures_dir: Path, cases: str) -> list[Path]:
 
 def _build_report(runs: list[dict], outdir: Path) -> str:
     phase_runs = [r for r in runs if r["mode"] == "phase21"]
+    if not phase_runs:
+        phase_runs = [r for r in runs if r["mode"] == "phase3"]
     total = len(phase_runs)
     passed = sum(1 for r in phase_runs if r["passed"])
     pass_rate = (passed / total * 100.0) if total else 0.0
@@ -303,14 +325,20 @@ def _build_report(runs: list[dict], outdir: Path) -> str:
         key=lambda r: (0 if r["passed"] else -1, r["metrics"]["total_score"]),
     )[:10]
 
+    report_mode = phase_runs[0]["mode"] if phase_runs else "phase21"
+    report_title = (
+        "Phase 3 Benchmark Report"
+        if report_mode == "phase3"
+        else "Phase 2.1 Benchmark Report"
+    )
     report = [
-        "# Phase 2.1 Benchmark Report",
+        f"# {report_title}",
         "",
-        f"- Total Phase2.1 runs: **{total}**",
+        f"- Total {report_mode} runs: **{total}**",
         f"- Passed: **{passed}**",
         f"- Pass rate: **{pass_rate:.1f}%**",
         "",
-        "## Results table (Phase2.1)",
+        f"## Results table ({report_mode})",
         "",
         "| Case | Size | Score | Status | Violations | After | Overlay |",
         "|---|---:|---:|---|---:|---|---|",

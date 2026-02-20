@@ -10,6 +10,7 @@ from PIL import Image, ImageDraw
 from ..enums import ElementRole
 from ..models import BoundingBox, LayoutResult
 from .profiles import LayoutProfile
+from .repair import clamp_bbox_to_margins
 
 
 def solve_layout(
@@ -95,16 +96,12 @@ def solve_layout(
             if cur.y < min_y:
                 cur.y = min_y
 
-        # 4) clamp to margins/safe area
+        # 4) hard clamp to margins/safe area
         for r in results:
             if not r.visible:
                 continue
             b = r.new_bbox
-            max_x = max(margin_x, width - margin_x - b.width)
-            max_y = max(margin_y, height - margin_y - b.height)
-            b.x = max(margin_x, min(max_x, b.x))
-            b.y = max(margin_y, min(max_y, b.y))
-            r.new_bbox = b
+            r.new_bbox = clamp_bbox_to_margins(b, (margin_x, margin_y), width, height)
 
     overlap = total_overlap_area(results)
     return results, {"overlap_area": float(overlap)}

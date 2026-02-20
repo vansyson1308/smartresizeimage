@@ -10,7 +10,8 @@ class BenchThresholds:
     max_overlap_area_ratio: float = 0.10
     max_outside_margin_ratio: float = 0.05
     min_hero_prominence_ratio: float = 0.12
-    min_total_score: float = 250.0
+    min_total_score: float = 32.0
+    text_plate_busy_threshold: float = 0.20
 
 
 DEFAULT_THRESHOLDS = BenchThresholds()
