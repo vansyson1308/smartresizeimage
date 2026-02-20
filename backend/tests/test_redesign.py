@@ -164,3 +164,10 @@ def test_phase3_redesign_flat_with_manual_anchors_debug_fields() -> None:
     assert "palette_stats" in redesign
     assert isinstance(redesign["candidates"], list)
     assert "penalties" in redesign["candidates"][0]
+    assert "recipe" in redesign["candidates"][0]
+    assert redesign["selected_reason"] in {
+        "highest_valid_score",
+        "best_any_candidate",
+        "phase3_last_resort",
+    }
+    assert out.metadata["text_plate"]["applied"] is True

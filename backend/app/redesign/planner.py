@@ -30,21 +30,28 @@ class RedesignPlan:
 
 
 def infer_horizon_hint(image: Image.Image) -> tuple[int, int]:
-    """Infer horizon/ground transition from row-wise color/edge changes."""
+    """Infer horizon/ground transition from row-wise color + edge changes with smoothing."""
     arr = np.array(image.convert("RGB"), dtype=np.float32)
     h = arr.shape[0]
     if h < 8:
         return (max(0, h // 2 - 2), min(h, h // 2 + 2))
 
-    row_mean = arr.mean(axis=(1, 2))
+    luma = (arr[:, :, 0] * 0.299 + arr[:, :, 1] * 0.587 + arr[:, :, 2] * 0.114)
+    row_mean = luma.mean(axis=1)
+    row_std = luma.std(axis=1)
     row_diff = np.abs(np.diff(row_mean, prepend=row_mean[:1]))
-    gx = np.abs(np.diff(arr, axis=1)).mean(axis=(1, 2)) if arr.shape[1] > 1 else np.zeros(h)
-    score = row_diff * 0.65 + gx * 0.35
+    row_std_diff = np.abs(np.diff(row_std, prepend=row_std[:1]))
+    gx = np.abs(np.diff(luma, axis=1)).mean(axis=1) if arr.shape[1] > 1 else np.zeros(h)
 
-    y_start = int(h * 0.45)
-    y_end = max(y_start + 1, int(h * 0.92))
+    score = row_diff * 0.45 + gx * 0.35 + row_std_diff * 0.20
+    kernel = np.array([1.0, 2.0, 3.0, 2.0, 1.0], dtype=np.float32)
+    kernel = kernel / kernel.sum()
+    score = np.convolve(score, kernel, mode="same")
+
+    y_start = int(h * 0.38)
+    y_end = max(y_start + 1, int(h * 0.94))
     idx = y_start + int(np.argmax(score[y_start:y_end]))
-    band = max(4, int(h * 0.03))
+    band = max(5, int(h * 0.035))
     return max(0, idx - band), min(h, idx + band)
 
 
@@ -55,28 +62,31 @@ def build_target_first_plan(
     source_background: Image.Image,
 ) -> RedesignPlan:
     """Build deterministic background/decor/ground fill zones with flat-illustration hints."""
+    _ = anchors
     w, h = target_size
     fill_mask = ~protected_mask
 
     horizon_hint = infer_horizon_hint(source_background.resize(target_size).convert("RGB"))
     skyline_band = (
-        max(0, horizon_hint[0] - int(0.04 * h)),
-        min(h, horizon_hint[1] + int(0.04 * h)),
+        max(0, horizon_hint[0] - int(0.05 * h)),
+        min(h, horizon_hint[1] + int(0.05 * h)),
     )
 
     decor_mask = np.zeros((h, w), dtype=bool)
-    top_h = max(1, int(0.24 * h))
-    side_w = max(1, int(0.26 * w))
+    top_h = max(1, int(0.22 * h))
+    side_w = max(1, int(0.23 * w))
     zones = [
-        (0, 0, side_w, top_h),
-        (w - side_w, 0, side_w, top_h),
-        (0, int(0.18 * h), int(0.12 * w), int(0.28 * h)),
-        (w - int(0.12 * w), int(0.18 * h), int(0.12 * w), int(0.28 * h)),
+        (int(0.03 * w), int(0.02 * h), side_w, top_h),
+        (w - side_w - int(0.03 * w), int(0.02 * h), side_w, top_h),
+        (int(0.02 * w), int(0.20 * h), int(0.10 * w), int(0.28 * h)),
+        (w - int(0.12 * w), int(0.20 * h), int(0.10 * w), int(0.28 * h)),
     ]
     for x, y, zw, zh in zones:
-        x2 = min(w, x + zw)
-        y2 = min(h, y + zh)
-        decor_mask[y:y2, x:x2] = True
+        x1 = max(0, x)
+        y1 = max(0, y)
+        x2 = min(w, x1 + max(1, zw))
+        y2 = min(h, y1 + max(1, zh))
+        decor_mask[y1:y2, x1:x2] = True
     decor_mask &= fill_mask
 
     ground_mask = np.zeros((h, w), dtype=bool)
