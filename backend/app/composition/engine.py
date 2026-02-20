@@ -108,9 +108,36 @@ class CompositionEngine:
             target_size[0], target_size[1],
         )
 
+        focus_bbox = self._extract_hero_focus_bbox(element)
         return self.content_aware_fit.fit(
-            element.image, target_size, mode=FitMode.SMART
+            element.image,
+            target_size,
+            mode=FitMode.SMART,
+            focus_bbox=focus_bbox,
         )
+
+    @staticmethod
+    def _extract_hero_focus_bbox(
+        element: DesignElement,
+    ) -> tuple[int, int, int, int] | None:
+        """Extract optional focus window (hero backbox) from element metadata."""
+        effects = element.effects or {}
+        candidates = (
+            effects.get("hero_backbox"),
+            effects.get("hero_bbox"),
+            effects.get("focus_bbox"),
+        )
+
+        for candidate in candidates:
+            if not isinstance(candidate, (list, tuple)) or len(candidate) != 4:
+                continue
+            try:
+                x, y, w, h = [int(v) for v in candidate]
+            except Exception:
+                continue
+            if w > 0 and h > 0:
+                return (x, y, w, h)
+        return None
 
     def _compose_multi_element(
         self,

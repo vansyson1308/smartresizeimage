@@ -23,6 +23,9 @@ class Config:
 
     # Content-aware fit (flat PNG/JPG relayout)
     MAX_CROP_PERCENT = 0.20  # Never crop more than 20% of source content
+    HERO_PROMINENCE_TARGET = 0.18
+    SMART_CROP_MAX_ZOOM = 1.6
+    SMART_CROP_SAFE_PADDING = 12
 
     # Quality
     RESIZE_QUALITY = Image.Resampling.LANCZOS

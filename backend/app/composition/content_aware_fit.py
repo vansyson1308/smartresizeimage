@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from enum import Enum
 
 import numpy as np
@@ -72,6 +73,7 @@ class ContentAwareFitStrategy:
         source_image: Image.Image,
         target_size: tuple[int, int],
         mode: FitMode = FitMode.SMART,
+        focus_bbox: tuple[int, int, int, int] | None = None,
     ) -> Image.Image:
         """Fit source image to target size intelligently.
 
@@ -98,8 +100,64 @@ class ContentAwareFitStrategy:
         )
 
         if use_cover:
-            return self._apply_cover(image, target_size)
+            effective_focus = focus_bbox
+            if effective_focus is None:
+                try:
+                    effective_focus = self._detect_focus_bbox(image)
+                except Exception as e:
+                    logger.warning(
+                        "Focus detector unavailable -> deterministic center crop fallback: %s",
+                        e,
+                    )
+                    effective_focus = None
+            return self._apply_cover(image, target_size, focus_bbox=effective_focus)
         return self._apply_contain(image, target_size)
+
+    def _detect_focus_bbox(
+        self,
+        image: Image.Image,
+    ) -> tuple[int, int, int, int] | None:
+        """Estimate a deterministic focus region for SMART cover crops.
+
+        Uses a light-weight edge-density + center-bias heuristic so we can
+        keep likely subject regions prominent in portrait conversions.
+        """
+        try:
+            arr = np.array(image.convert("L"), dtype=np.float32) / 255.0
+            h, w = arr.shape
+            if w < 8 or h < 8:
+                return None
+
+            gx = np.zeros_like(arr)
+            gy = np.zeros_like(arr)
+            gx[:, 1:] = np.abs(arr[:, 1:] - arr[:, :-1])
+            gy[1:, :] = np.abs(arr[1:, :] - arr[:-1, :])
+            edge = gx + gy
+
+            yy, xx = np.indices((h, w), dtype=np.float32)
+            cx = (w - 1) / 2.0
+            cy = (h - 1) / 2.0
+            sigma_x = max(1.0, w * 0.35)
+            sigma_y = max(1.0, h * 0.35)
+            center_bias = np.exp(
+                -(((xx - cx) ** 2) / (2 * sigma_x**2) + ((yy - cy) ** 2) / (2 * sigma_y**2))
+            )
+
+            score = edge * 0.75 + center_bias * 0.25
+            y_peak, x_peak = np.unravel_index(int(np.argmax(score)), score.shape)
+
+            box_w = max(1, int(w * 0.35))
+            box_h = max(1, int(h * 0.35))
+            x1 = max(0, min(w - box_w, x_peak - box_w // 2))
+            y1 = max(0, min(h - box_h, y_peak - box_h // 2))
+
+            return (x1, y1, box_w, box_h)
+        except Exception as e:
+            logger.warning(
+                "Focus detector unavailable -> deterministic center crop fallback: %s",
+                e,
+            )
+            return None
 
     def _should_use_cover(
         self,
@@ -142,6 +200,7 @@ class ContentAwareFitStrategy:
         self,
         image: Image.Image,
         target_size: tuple[int, int],
+        focus_bbox: tuple[int, int, int, int] | None = None,
     ) -> Image.Image:
         """Scale to fill target entirely, center-crop excess.
 
@@ -153,19 +212,79 @@ class ContentAwareFitStrategy:
 
         # Scale to cover
         scale = max(target_w / src_w, target_h / src_h)
+
+        if focus_bbox is not None:
+            fx, fy, fw, fh = focus_bbox
+            fw = max(1, min(src_w, fw))
+            fh = max(1, min(src_h, fh))
+            focus_area = fw * fh
+            if focus_area > 0:
+                target_focus_area = Config.HERO_PROMINENCE_TARGET * target_w * target_h
+                focus_scale = math.sqrt(max(0.0, target_focus_area) / focus_area)
+                max_zoom_scale = scale * max(1.0, Config.SMART_CROP_MAX_ZOOM)
+                scale = min(max(scale, focus_scale), max_zoom_scale)
+
         new_w = max(1, int(src_w * scale))
         new_h = max(1, int(src_h * scale))
         scaled = high_quality_resize(image, (new_w, new_h))
 
-        # Center crop
-        crop_x = (new_w - target_w) // 2
-        crop_y = (new_h - target_h) // 2
+        # Focus-aware crop (fallback to center if unavailable)
+        crop_x, crop_y = self._compute_focus_crop_origin(
+            new_w,
+            new_h,
+            target_w,
+            target_h,
+            scale,
+            focus_bbox,
+        )
         cropped = scaled.crop((
             crop_x, crop_y,
             crop_x + target_w, crop_y + target_h,
         ))
 
         return cropped
+
+    def _compute_focus_crop_origin(
+        self,
+        scaled_w: int,
+        scaled_h: int,
+        target_w: int,
+        target_h: int,
+        scale: float,
+        focus_bbox: tuple[int, int, int, int] | None,
+    ) -> tuple[int, int]:
+        """Compute a safe crop origin that keeps focus region in view."""
+        max_x = max(0, scaled_w - target_w)
+        max_y = max(0, scaled_h - target_h)
+
+        if focus_bbox is None:
+            return max_x // 2, max_y // 2
+
+        fx, fy, fw, fh = focus_bbox
+        fx1 = fx * scale
+        fy1 = fy * scale
+        fx2 = (fx + fw) * scale
+        fy2 = (fy + fh) * scale
+
+        focus_cx = (fx1 + fx2) / 2.0
+        focus_cy = (fy1 + fy2) / 2.0
+        crop_x = int(round(focus_cx - target_w / 2.0))
+        crop_y = int(round(focus_cy - target_h / 2.0))
+
+        pad = int(max(0, Config.SMART_CROP_SAFE_PADDING))
+        min_crop_x = int(math.floor(fx2 + pad - target_w))
+        max_crop_x = int(math.ceil(fx1 - pad))
+        min_crop_y = int(math.floor(fy2 + pad - target_h))
+        max_crop_y = int(math.ceil(fy1 - pad))
+
+        if min_crop_x <= max_crop_x:
+            crop_x = max(min_crop_x, min(crop_x, max_crop_x))
+        if min_crop_y <= max_crop_y:
+            crop_y = max(min_crop_y, min(crop_y, max_crop_y))
+
+        crop_x = max(0, min(max_x, crop_x))
+        crop_y = max(0, min(max_y, crop_y))
+        return crop_x, crop_y
 
     def _apply_contain(
         self,
