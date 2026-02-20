@@ -1,6 +1,5 @@
 """Tests for semantic classifier."""
 
-import pytest
 from PIL import Image
 
 from backend.app.classifier.semantic_classifier import SemanticClassifier

@@ -5,12 +5,11 @@ from __future__ import annotations
 import pytest
 from PIL import Image
 
-from backend.app.composition.background import BackgroundExtender
+from backend.app.composition.background import BackgroundExtender, _get_cv2
 from backend.app.composition.content_aware_fit import (
     ContentAwareFitStrategy,
     FitMode,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -144,20 +143,35 @@ class TestOpenCVInpaint:
         self.extender = BackgroundExtender(use_ai_inpainting=False)
 
     def test_opencv_inpaint_creates_correct_size(self) -> None:
-        """cv2.inpaint output should match target size."""
+        """cv2.inpaint output should match target size when cv2 is present."""
         img = _solid_image(100, 100)
+        if _get_cv2() is None:
+            with pytest.raises(RuntimeError, match="cv2 unavailable"):
+                self.extender._extend_with_opencv_inpaint(img, (200, 300))
+            return
+
         result = self.extender._extend_with_opencv_inpaint(img, (200, 300))
         assert result.size == (200, 300)
 
     def test_opencv_inpaint_rgba_output(self) -> None:
-        """Output should be RGBA."""
+        """Output should be RGBA when cv2 inpaint path is available."""
         img = _solid_image(100, 100)
+        if _get_cv2() is None:
+            with pytest.raises(RuntimeError, match="cv2 unavailable"):
+                self.extender._extend_with_opencv_inpaint(img, (200, 300))
+            return
+
         result = self.extender._extend_with_opencv_inpaint(img, (200, 300))
         assert result.mode == "RGBA"
 
     def test_opencv_inpaint_zero_source(self) -> None:
-        """Zero-dimension source returns blank canvas."""
+        """Zero-dimension source returns blank canvas when cv2 exists."""
         img = Image.new("RGBA", (0, 0))
+        if _get_cv2() is None:
+            with pytest.raises(RuntimeError, match="cv2 unavailable"):
+                self.extender._extend_with_opencv_inpaint(img, (100, 100))
+            return
+
         result = self.extender._extend_with_opencv_inpaint(img, (100, 100))
         assert result.size == (100, 100)
 
@@ -202,3 +216,85 @@ class TestExtendPriority:
         img = _solid_image(100, 100)
         result = extender.extend(img, (200, 300))
         assert result.size == (200, 300)
+
+
+class TestHeadlessFallback:
+    """Fallback behavior when cv2 cannot be imported."""
+
+    def test_background_extender_falls_back_without_cv2(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        extender = BackgroundExtender(use_ai_inpainting=False)
+        from backend.app.composition import background as bg_mod
+
+        monkeypatch.setattr(bg_mod, "_cv2_checked", True)
+        monkeypatch.setattr(bg_mod, "_cv2_module", None)
+
+        img = _solid_image(120, 80)
+        result = extender.extend(img, (220, 220))
+        assert result.size == (220, 220)
+        assert result.mode == "RGBA"
+
+    def test_content_aware_fit_falls_back_without_cv2(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        extender = BackgroundExtender(use_ai_inpainting=False)
+        strategy = ContentAwareFitStrategy(extender=extender)
+        from backend.app.composition import content_aware_fit as fit_mod
+
+        monkeypatch.setattr(fit_mod, "_cv2_checked", True)
+        monkeypatch.setattr(fit_mod, "_cv2_module", None)
+
+        result = strategy.fit(_solid_image(300, 120), (300, 600), FitMode.CONTAIN)
+        assert result.size == (300, 600)
+        assert result.mode == "RGBA"
+
+
+def _hero_center_distance(img: Image.Image) -> float:
+    """Distance of bright-red synthetic hero centroid to image center."""
+    import numpy as np
+
+    arr = np.array(img.convert("RGB"))
+    mask = (arr[:, :, 0] > 220) & (arr[:, :, 1] < 60) & (arr[:, :, 2] < 60)
+    ys, xs = np.where(mask)
+    assert len(xs) > 0
+    cx = float(xs.mean())
+    cy = float(ys.mean())
+    h, w = arr.shape[:2]
+    return ((cx - (w / 2.0)) ** 2 + (cy - (h / 2.0)) ** 2) ** 0.5
+
+
+class TestSmartFocusCrop:
+    """Smart crop/zoom keeps hero focus better for portrait outputs."""
+
+    def setup_method(self) -> None:
+        extender = BackgroundExtender(use_ai_inpainting=False)
+        self.strategy = ContentAwareFitStrategy(extender=extender)
+
+    def test_focus_bbox_corner_is_better_centered_than_baseline(self) -> None:
+        src = Image.new("RGBA", (800, 500), (40, 40, 40, 255))
+        # synthetic hero in top-left corner
+        for x in range(20, 180):
+            for y in range(20, 180):
+                src.putpixel((x, y), (255, 0, 0, 255))
+
+        target = (400, 600)
+        baseline = self.strategy.fit(src, target, mode=FitMode.COVER, focus_bbox=None)
+        focused = self.strategy.fit(src, target, mode=FitMode.COVER, focus_bbox=(20, 20, 160, 160))
+
+        assert baseline.size == target
+        assert focused.size == target
+        assert _hero_center_distance(focused) < _hero_center_distance(baseline)
+
+    def test_focus_detector_failure_falls_back_without_crash(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        src = _solid_image(600, 400)
+
+        def _boom(_img: Image.Image) -> tuple[int, int, int, int] | None:
+            raise RuntimeError("detector missing")
+
+        monkeypatch.setattr(self.strategy, "_detect_focus_bbox", _boom)
+        result = self.strategy.fit(src, (300, 250), mode=FitMode.COVER)
+        assert result.size == (300, 250)
+        assert result.mode == "RGBA"

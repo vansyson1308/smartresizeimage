@@ -1,6 +1,5 @@
 """Tests for layout engine."""
 
-import pytest
 from PIL import Image
 
 from backend.app.enums import ElementRole

@@ -1,6 +1,7 @@
 """Tests for composition engine."""
 
-import pytest
+import logging
+
 from PIL import Image
 
 from backend.app.composition.background import BackgroundExtender, create_feather_mask
@@ -138,3 +139,77 @@ class TestCompositionEngine:
 
         result = engine.compose([elem], [layout], (100, 100), (100, 100))
         assert isinstance(result, CompositionResult)
+
+    def test_unsupported_blend_mode_falls_back_to_normal(self, caplog):
+        engine = CompositionEngine(use_ai_inpainting=False)
+        caplog.set_level(logging.WARNING)
+
+        bg_elem = DesignElement(
+            id="bg",
+            name="BG",
+            layer_type="pixel",
+            bbox=BoundingBox(0, 0, 100, 100),
+            image=Image.new("RGBA", (100, 100), (200, 200, 200, 255)),
+            role=ElementRole.BACKGROUND,
+            priority=9,
+        )
+        fg_elem = DesignElement(
+            id="fg",
+            name="FG",
+            layer_type="pixel",
+            bbox=BoundingBox(10, 10, 60, 60),
+            image=Image.new("RGBA", (60, 60), (255, 0, 0, 180)),
+            role=ElementRole.HERO_IMAGE,
+            priority=3,
+            z_index=1,
+            blend_mode="unsupported-mode",
+        )
+
+        result = engine.compose(
+            [bg_elem, fg_elem],
+            [
+                LayoutResult("bg", BoundingBox(0, 0, 100, 100), 1.0),
+                LayoutResult("fg", BoundingBox(20, 20, 60, 60), 1.0),
+            ],
+            (100, 100),
+            (100, 100),
+        )
+
+        assert result.image.size == (100, 100)
+        assert "Unsupported blend mode" in caplog.text
+
+    def test_missing_drop_shadow_params_do_not_crash(self):
+        engine = CompositionEngine(use_ai_inpainting=False)
+
+        bg_elem = DesignElement(
+            id="bg",
+            name="BG",
+            layer_type="pixel",
+            bbox=BoundingBox(0, 0, 100, 100),
+            image=Image.new("RGBA", (100, 100), (230, 230, 230, 255)),
+            role=ElementRole.BACKGROUND,
+            priority=9,
+        )
+        fg_elem = DesignElement(
+            id="fg",
+            name="FG",
+            layer_type="pixel",
+            bbox=BoundingBox(10, 10, 50, 50),
+            image=Image.new("RGBA", (50, 50), (255, 50, 50, 255)),
+            role=ElementRole.HERO_IMAGE,
+            priority=3,
+            z_index=1,
+            effects={"drop_shadow": {}},
+        )
+
+        result = engine.compose(
+            [bg_elem, fg_elem],
+            [
+                LayoutResult("bg", BoundingBox(0, 0, 100, 100), 1.0),
+                LayoutResult("fg", BoundingBox(20, 20, 50, 50), 1.0),
+            ],
+            (100, 100),
+            (100, 100),
+        )
+
+        assert result.image.size == (100, 100)

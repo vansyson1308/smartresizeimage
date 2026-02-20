@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 
-import cv2
 import numpy as np
 from PIL import Image, ImageFilter
 
@@ -12,6 +11,32 @@ from ..config import Config
 from .resize import high_quality_resize
 
 logger = logging.getLogger("autobanner.composition.background")
+
+_cv2_checked = False
+_cv2_module: object | None = None
+
+
+def _get_cv2() -> object | None:
+    """Return OpenCV module if available; otherwise None.
+
+    Import is done lazily so composition modules stay importable in
+    headless/minimal environments where cv2 shared libs are unavailable.
+    """
+    global _cv2_checked, _cv2_module
+
+    if _cv2_checked:
+        return _cv2_module
+
+    _cv2_checked = True
+    try:
+        import cv2  # type: ignore
+
+        _cv2_module = cv2
+    except Exception as e:
+        _cv2_module = None
+        logger.warning("cv2 unavailable -> fallback edge-repeat path: %s", e)
+
+    return _cv2_module
 
 # Optional LaMa import
 try:
@@ -130,6 +155,10 @@ class BackgroundExtender:
         Returns:
             Extended image with inpainted edges.
         """
+        cv2 = _get_cv2()
+        if cv2 is None:
+            raise RuntimeError("cv2 unavailable")
+
         target_w, target_h = target_size
         img_w, img_h = image.size
 

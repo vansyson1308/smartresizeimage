@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
+import numpy as np
 from PIL import Image
 
+from ..config import Config
 from ..constants import BACKGROUND_ROLES
 from ..enums import ElementRole
+from ..generative.text_plate import TextPlateConfig, apply_text_safe_plates
 from ..models import CompositionResult, DesignElement, LayoutResult
 from .background import BackgroundExtender
+from .color import BlendMode, composite_pil_over, parse_blend_mode
 from .content_aware_fit import ContentAwareFitStrategy, FitMode
+from .effects import parse_drop_shadow_effect, render_drop_shadow
 from .resize import high_quality_resize
 
 logger = logging.getLogger("autobanner.composition")
@@ -37,6 +43,7 @@ class CompositionEngine:
         layout_results: list[LayoutResult],
         source_size: tuple[int, int],
         target_size: tuple[int, int],
+        bg_outpaint_fn: Callable[[Image.Image], Image.Image] | None = None,
     ) -> CompositionResult:
         """Compose final image.
 
@@ -69,7 +76,7 @@ class CompositionEngine:
 
         # Standard multi-element composition (PSD, etc.)
         return self._compose_multi_element(
-            elements, layout_results, source_size, target_size
+            elements, layout_results, source_size, target_size, bg_outpaint_fn
         )
 
     @staticmethod
@@ -103,9 +110,36 @@ class CompositionEngine:
             target_size[0], target_size[1],
         )
 
+        focus_bbox = self._extract_hero_focus_bbox(element)
         return self.content_aware_fit.fit(
-            element.image, target_size, mode=FitMode.SMART
+            element.image,
+            target_size,
+            mode=FitMode.SMART,
+            focus_bbox=focus_bbox,
         )
+
+    @staticmethod
+    def _extract_hero_focus_bbox(
+        element: DesignElement,
+    ) -> tuple[int, int, int, int] | None:
+        """Extract optional focus window (hero backbox) from element metadata."""
+        effects = element.effects or {}
+        candidates = (
+            effects.get("hero_backbox"),
+            effects.get("hero_bbox"),
+            effects.get("focus_bbox"),
+        )
+
+        for candidate in candidates:
+            if not isinstance(candidate, (list, tuple)) or len(candidate) != 4:
+                continue
+            try:
+                x, y, w, h = [int(v) for v in candidate]
+            except Exception:
+                continue
+            if w > 0 and h > 0:
+                return (x, y, w, h)
+        return None
 
     def _compose_multi_element(
         self,
@@ -113,6 +147,7 @@ class CompositionEngine:
         layout_results: list[LayoutResult],
         source_size: tuple[int, int],
         target_size: tuple[int, int],
+        bg_outpaint_fn: Callable[[Image.Image], Image.Image] | None = None,
     ) -> CompositionResult:
         """Standard composition for multi-element sources (PSD files)."""
         warnings: list[str] = []
@@ -139,6 +174,14 @@ class CompositionEngine:
         # Compose background
         canvas = self._compose_background(canvas, bg_elements, source_size, target_size)
 
+        if bg_outpaint_fn is not None:
+            try:
+                canvas = bg_outpaint_fn(canvas)
+            except Exception as e:
+                warnings.append(f"Background outpaint failed: {e}")
+
+        canvas, text_plate_meta = self._apply_text_safe_plate(canvas, content_elements, target_size)
+
         # Sort content by z_index
         content_elements.sort(key=lambda x: x[0].z_index if x[0] else 0)
 
@@ -156,7 +199,66 @@ class CompositionEngine:
             image=canvas.convert("RGB"),
             layout_results=layout_results,
             warnings=warnings,
+            metadata={"text_plate": text_plate_meta},
         )
+
+    def _apply_text_safe_plate(
+        self,
+        canvas: Image.Image,
+        content_elements: list[tuple[DesignElement, LayoutResult | None]],
+        target_size: tuple[int, int],
+    ) -> tuple[Image.Image, dict[str, object]]:
+        """Apply optional readability plate behind text roles on busy backgrounds."""
+        if not Config.TEXT_SAFE_PLATE_ENABLED:
+            return canvas, {"applied": False, "reason": "disabled"}
+
+        text_roles = {
+            ElementRole.HEADLINE,
+            ElementRole.SUBHEADLINE,
+            ElementRole.BODY_TEXT,
+            ElementRole.CTA,
+            ElementRole.LABEL,
+        }
+        avoid_roles = {ElementRole.LOGO, ElementRole.HERO_IMAGE}
+
+        text_boxes: list[tuple[int, int, int, int]] = []
+        avoid_mask = np.zeros((target_size[1], target_size[0]), dtype=bool)
+
+        for elem, layout in content_elements:
+            if layout is None or not layout.visible:
+                continue
+            box = layout.new_bbox
+            x1 = max(0, box.x)
+            y1 = max(0, box.y)
+            x2 = min(target_size[0], box.x2)
+            y2 = min(target_size[1], box.y2)
+            if x2 <= x1 or y2 <= y1:
+                continue
+            if elem.role in text_roles:
+                text_boxes.append((x1, y1, x2 - x1, y2 - y1))
+            if elem.role in avoid_roles:
+                avoid_mask[y1:y2, x1:x2] = True
+
+        if not text_boxes:
+            return canvas, {"applied": False, "reason": "no_text_boxes"}
+
+        plate_cfg = TextPlateConfig(
+            enabled=Config.TEXT_SAFE_PLATE_ENABLED,
+            style=Config.TEXT_SAFE_PLATE_STYLE,
+            busy_threshold=Config.TEXT_SAFE_BUSY_THRESHOLD,
+            padding=Config.TEXT_SAFE_PLATE_PADDING,
+            feather_radius=Config.TEXT_SAFE_PLATE_FEATHER,
+            opacity=Config.TEXT_SAFE_PLATE_OPACITY,
+            corner_radius=Config.TEXT_SAFE_PLATE_RADIUS,
+        )
+
+        plated, meta = apply_text_safe_plates(
+            background=canvas,
+            text_boxes=text_boxes,
+            avoid_mask=avoid_mask,
+            config=plate_cfg,
+        )
+        return plated, dict(meta)
 
     def _compose_background(
         self,
@@ -197,14 +299,26 @@ class CompositionEngine:
                 y = (new_h - target_h) // 2
                 bg_image = bg_image.crop((x, y, x + target_w, y + target_h))
 
-        canvas.paste(bg_image, (0, 0))
+        canvas = composite_pil_over(
+            canvas,
+            bg_image,
+            (0, 0),
+            use_linear=Config.USE_LINEAR_COMPOSITING,
+            blend_mode=BlendMode.NORMAL,
+        )
 
         # Add overlays
         for elem, _layout in bg_elements[1:]:
             if elem.role == ElementRole.OVERLAY and elem.image:
                 overlay = elem.image.convert("RGBA")
                 overlay = high_quality_resize(overlay, target_size)
-                canvas = Image.alpha_composite(canvas, overlay)
+                canvas = composite_pil_over(
+                    canvas,
+                    overlay,
+                    (0, 0),
+                    use_linear=Config.USE_LINEAR_COMPOSITING,
+                    blend_mode=BlendMode.NORMAL,
+                )
 
         return canvas
 
@@ -233,7 +347,34 @@ class CompositionEngine:
             alpha = alpha.point(lambda p: int(p * element.opacity))
             resized.putalpha(alpha)
 
-        # Paste with alpha
-        canvas.paste(resized, (layout.new_bbox.x, layout.new_bbox.y), resized)
+        # Optional drop-shadow (rendered below element)
+        drop_shadow = parse_drop_shadow_effect(element.effects)
+        if drop_shadow is not None:
+            scaled_shadow = drop_shadow.scaled(layout.scale_factor)
+            shadow_img, shadow_off = render_drop_shadow(resized, scaled_shadow)
+            canvas = composite_pil_over(
+                canvas,
+                shadow_img,
+                (layout.new_bbox.x + shadow_off[0], layout.new_bbox.y + shadow_off[1]),
+                use_linear=Config.USE_LINEAR_COMPOSITING,
+                blend_mode=BlendMode.NORMAL,
+            )
+
+        # Blend main element
+        blend_mode, supported = parse_blend_mode(element.blend_mode)
+        if not supported:
+            logger.warning(
+                "Unsupported blend mode '%s' on element '%s'; falling back to normal",
+                element.blend_mode,
+                element.name,
+            )
+
+        canvas = composite_pil_over(
+            canvas,
+            resized,
+            (layout.new_bbox.x, layout.new_bbox.y),
+            use_linear=Config.USE_LINEAR_COMPOSITING,
+            blend_mode=blend_mode,
+        )
 
         return canvas
