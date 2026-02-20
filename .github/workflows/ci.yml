@@ -17,6 +17,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r backend/requirements-ci.txt
       - name: Lint
-        run: ruff check backend/app/
+        run: ruff check backend/app backend/tests
       - name: Test
         run: pytest backend/tests/ -v --cov=backend/app --cov-report=term-missing

@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from enum import Enum
 
-import cv2
 import numpy as np
 from PIL import Image, ImageFilter
 
@@ -14,6 +13,32 @@ from .background import BackgroundExtender
 from .resize import high_quality_resize
 
 logger = logging.getLogger("autobanner.composition.content_aware_fit")
+
+_cv2_checked = False
+_cv2_module: object | None = None
+
+
+def _get_cv2() -> object | None:
+    """Return OpenCV module if available; otherwise None.
+
+    Lazy import keeps this module importable when cv2 cannot load due to
+    missing system libs (for example libGL in headless environments).
+    """
+    global _cv2_checked, _cv2_module
+
+    if _cv2_checked:
+        return _cv2_module
+
+    _cv2_checked = True
+    try:
+        import cv2  # type: ignore
+
+        _cv2_module = cv2
+    except Exception as e:
+        _cv2_module = None
+        logger.warning("cv2 unavailable -> fallback edge-repeat fit path: %s", e)
+
+    return _cv2_module
 
 
 class FitMode(Enum):
@@ -213,6 +238,9 @@ class ContentAwareFitStrategy:
         y_off: int,
     ) -> Image.Image:
         """Extend image using OpenCV inpainting at fixed position."""
+        cv2 = _get_cv2()
+        if cv2 is None:
+            raise RuntimeError("cv2 unavailable")
 
         target_w, target_h = target_size
         img_w, img_h = image.size
@@ -327,7 +355,9 @@ class ContentAwareFitStrategy:
         mask[dy1:dy2, dx1:dx2] = 1.0
 
         # Apply Gaussian blur to create smooth transition
-        mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=feather_px)
+        mask_img = Image.fromarray((mask * 255).astype(np.uint8), mode="L")
+        blurred_mask = mask_img.filter(ImageFilter.GaussianBlur(radius=feather_px))
+        mask = np.array(blurred_mask, dtype=np.float32) / 255.0
 
         # Blend
         mask_3d = mask[:, :, np.newaxis]

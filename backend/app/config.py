@@ -27,6 +27,7 @@ class Config:
     # Quality
     RESIZE_QUALITY = Image.Resampling.LANCZOS
     GAMMA = 2.2
+    USE_LINEAR_COMPOSITING = True
 
     # AI
     CLIP_MODEL = "openai/clip-vit-base-patch32"
