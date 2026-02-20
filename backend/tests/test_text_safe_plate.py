@@ -65,3 +65,19 @@ def test_plate_can_be_disabled() -> None:
 
     assert meta["applied"] is False
     assert np.array_equal(np.array(out), np.array(bg))
+
+
+def test_plate_busy_vs_non_busy_threshold_behavior() -> None:
+    noisy = _noisy_bg(240, 160, seed=9)
+    flat = Image.new("RGBA", (240, 160), (120, 120, 120, 255))
+    box = (50, 40, 120, 50)
+    protected = np.zeros((160, 240), dtype=bool)
+
+    cfg = TextPlateConfig(enabled=True, busy_threshold=0.2)
+    _, meta_noisy = apply_text_safe_plates(noisy, [box], protected, cfg)
+    _, meta_flat = apply_text_safe_plates(flat, [box], protected, cfg)
+
+    assert meta_noisy["avg_busy"] >= cfg.busy_threshold
+    assert meta_noisy["applied"] is True
+    assert meta_flat["avg_busy"] < cfg.busy_threshold
+    assert meta_flat["applied"] is False

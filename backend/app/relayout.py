@@ -26,6 +26,7 @@ from .layout import LayoutEngine
 from .layout.solver import export_layout_debug_json, render_layout_debug_overlay
 from .models import CompositionResult, DesignElement, LayoutResult
 from .parser import get_parser
+from .redesign import run_target_first_redesign
 from .validators import validate_dimensions, validate_file_path
 
 logger = logging.getLogger("autobanner.relayout")
@@ -342,8 +343,35 @@ class ReLayoutEngine:
 
         return outpainted
 
+
+    def relayout_redesign(
+        self,
+        target_size: tuple[int, int],
+        manual_anchors: list[dict[str, int | str]] | None = None,
+    ) -> CompositionResult:
+        """Phase 3 target-first redesign (anchored, brand-locked)."""
+        if not self.elements:
+            raise ValueError("No file loaded. Call load_file() first.")
+
+        validate_dimensions(target_size[0], target_size[1])
+        layout_results = self.layout_engine.calculate_layout(
+            self.elements, self.source_size, target_size
+        )
+        self._maybe_export_layout_debug(layout_results, target_size)
+
+        return run_target_first_redesign(
+            elements=self.elements,
+            layout_results=layout_results,
+            source_size=self.source_size,
+            target_size=target_size,
+            manual_anchors=manual_anchors,
+        )
+
     def batch_relayout(
-        self, target_sizes: list[tuple[int, int, str]]
+        self,
+        target_sizes: list[tuple[int, int, str]],
+        mode: str = "phase21",
+        manual_anchors: list[dict[str, int | str]] | None = None,
     ) -> dict[str, CompositionResult]:
         """Re-layout to multiple sizes.
 
@@ -357,7 +385,10 @@ class ReLayoutEngine:
 
         for width, height, name in target_sizes:
             try:
-                result = self.relayout((width, height))
+                if mode == "phase3":
+                    result = self.relayout_redesign((width, height), manual_anchors=manual_anchors)
+                else:
+                    result = self.relayout((width, height))
                 results[name] = result
             except Exception as e:
                 logger.error("Error processing %s: %s", name, e, exc_info=True)
