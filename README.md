@@ -16,13 +16,14 @@ AutoBanner is a deterministic banner re-layout engine for converting one design 
 - Not a generative design-rewrite tool by default.
 - Not guaranteed to perfectly match designer hand-redraw output in all edge cases.
 
-## Key features (Phase 2 + 2.1)
+## Key features (Phase 2 + 2.1 + 3)
 - Adaptive re-layout profiles: LANDSCAPE / SQUARE / PORTRAIT.
 - Typography reflow: auto font scaling + wrapping without rewriting text.
 - Collision solver + alignment snapping.
 - Smart crop/focus for flat-image SMART fit.
 - Text-safe background plate on busy text regions.
 - Deterministic benchmark harness (fixtures + metrics + report).
+- Target-first Redesign (Phase 3): anchored, brand-locked composition for target-native outputs (flat illustration optimized: sky/cityscape/fireworks/confetti).
 
 ## Quickstart (<10 minutes)
 
@@ -90,6 +91,21 @@ Headless/OpenCV behavior:
 - If OpenCV cannot load (`libGL`/`cv2` issues), composition falls back to deterministic edge-repeat paths.
 - The app should still render outputs (with warning logs).
 
+
+## Target-first Redesign (Phase 3)
+- **Relayout (Phase 2.1)**: deterministic geometric relayout of existing composition.
+- **Target-first Redesign (Phase 3)**: place immutable brand anchors first (logo/text/CTA/mascot-equivalent) and regenerate only non-protected background/decor regions for a target-native look.
+
+Anchor/protected-region guarantees:
+- Flat-image workflow supports manual anchors and a flat-banner style preset (Mascot/MainText/CTA).
+- Protected anchors are composed as immutable foreground layers.
+- Background/decor generation is restricted to non-protected mask only.
+
+Generative adapter:
+- Optional and OFF by default.
+- Enable with `AUTOBANNER_ENABLE_GENERATIVE_REDESIGN=true`.
+- No external AI key is required for tests or default runtime; deterministic generator is always available.
+
 ## Development
 
 ### Lint + tests
@@ -102,12 +118,14 @@ pytest -q
 ```bash
 python backend/tools/generate_bench_fixtures.py --cases 12 --seed 42
 python backend/tools/run_layout_bench.py --mode both --seed 42
+python backend/tools/run_layout_bench.py --mode phase3 --seed 42
 ```
 
 > Benchmark artifacts are generated locally under `backend/tests/fixtures/outputs/` and must not be committed.
 
 ## Troubleshooting
-- **`libGL.so.1` / OpenCV import errors**: use `requirements-ci.txt`; fallback paths should still run.
+- **`libGL.so.1` / OpenCV import errors**: use `requirements-ci.txt`; fallback paths should still run (including Phase 3 deterministic generator).
+- **Phase 3 quality differences in headless mode**: ensure deterministic mode baseline first; optional generative adapter is disabled by default and requires explicit env enablement.
 - **Gradio localhost/proxy issues**: set `AUTOBANNER_SHARE=true` and `GRADIO_ANALYTICS_ENABLED=false`.
 - **Coverage flag errors**: ensure dev deps are installed (`requirements-dev.txt`).
 

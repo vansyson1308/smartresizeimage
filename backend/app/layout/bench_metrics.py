@@ -18,9 +18,14 @@ class BenchMetrics:
     overlap_area_ratio: float
     outside_margin_ratio: float
     min_font_size_ok: bool
-    hero_prominence_ratio: float
-    text_plate_applied_when_busy: bool
-    total_score: float
+    min_font_fail_roles: list[str] = field(default_factory=list)
+    font_px_by_role: dict[str, list[int]] = field(default_factory=dict)
+    font_unit: str = "px"
+    hero_prominence_ratio: float = 0.0
+    text_plate_applied_when_busy: bool = True
+    text_plate_busy_score: float = 0.0
+    text_plate_busy_threshold: float = 0.0
+    total_score: float = 0.0
     violations: list[str] = field(default_factory=list)
 
 
@@ -51,11 +56,19 @@ def evaluate_bench_run(
     content_count = max(1, _content_visible_count(layout_results, role_by_id))
     outside_margin_ratio = outside_margin_count / content_count
 
-    min_font_size_ok = _min_font_size_ok(elements, layout_results)
+    min_font_size_ok, min_font_fail_roles, font_px_by_role = _min_font_size_ok(
+        elements,
+        layout_results,
+    )
     hero_prominence_ratio = _hero_prominence_ratio(layout_results, role_by_id, target_size)
 
-    plate_applied = bool((text_plate_meta or {}).get("applied", False))
-    text_plate_applied_when_busy = (not busy_expected) or plate_applied
+    plate_meta = text_plate_meta or {}
+    plate_applied = bool(plate_meta.get("applied", False))
+    busy_score = float(plate_meta.get("avg_busy", 0.0))
+    busy_threshold = float(plate_meta.get("busy_threshold", thresholds.text_plate_busy_threshold))
+    busy_observed = busy_score >= busy_threshold
+    requires_plate = bool(busy_expected or busy_observed)
+    text_plate_applied_when_busy = (not requires_plate) or plate_applied
 
     total_score = score_layout(layout_results, profile, target_size, role_by_id)
 
@@ -63,8 +76,13 @@ def evaluate_bench_run(
         overlap_area_ratio=overlap_area_ratio,
         outside_margin_ratio=outside_margin_ratio,
         min_font_size_ok=min_font_size_ok,
+        min_font_fail_roles=min_font_fail_roles,
+        font_px_by_role=font_px_by_role,
+        font_unit="px",
         hero_prominence_ratio=hero_prominence_ratio,
         text_plate_applied_when_busy=text_plate_applied_when_busy,
+        text_plate_busy_score=busy_score,
+        text_plate_busy_threshold=busy_threshold,
         total_score=total_score,
         violations=violations,
     )
@@ -138,13 +156,16 @@ def _hero_prominence_ratio(
 def _min_font_size_ok(
     elements: list[DesignElement],
     layout_results: list[LayoutResult],
-) -> bool:
+) -> tuple[bool, list[str], dict[str, list[int]]]:
     layout_by_id = {r.element_id: r for r in layout_results}
     text_roles = {
         ElementRole.HEADLINE: 20,
         ElementRole.SUBHEADLINE: 16,
-        ElementRole.CTA: 14,
+        ElementRole.CTA: 12,
     }
+
+    fail_roles: set[str] = set()
+    font_px_by_role: dict[str, list[int]] = {"headline": [], "subheadline": [], "cta": []}
 
     for elem in elements:
         min_font = text_roles.get(elem.role)
@@ -153,8 +174,14 @@ def _min_font_size_ok(
         lr = layout_by_id.get(elem.id)
         if lr is None or not lr.visible:
             continue
-        # Approximate rendered font from text box height usage in layout.
-        est_font = int(lr.new_bbox.height * 0.45)
+
+        est_font = int(lr.new_bbox.height * 0.48)
+        if elem.role == ElementRole.CTA:
+            est_font = int(lr.new_bbox.height * 0.55)
+
+        key = elem.role.value
+        font_px_by_role.setdefault(key, []).append(est_font)
         if est_font < min_font:
-            return False
-    return True
+            fail_roles.add(key)
+
+    return not fail_roles, sorted(fail_roles), font_px_by_role

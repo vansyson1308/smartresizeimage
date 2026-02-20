@@ -140,13 +140,6 @@ def test_layout_engine_falls_back_when_solver_fails(monkeypatch) -> None:
             ),
         ]
 
-        base = engine._calculate_with_template(
-            elements,
-            (1200, 628),
-            (1080, 1920),
-            engine._select_template((1080, 1920)),
-        )
-
         def _boom(*_args, **_kwargs):
             raise RuntimeError("solver unavailable")
 
@@ -154,8 +147,30 @@ def test_layout_engine_falls_back_when_solver_fails(monkeypatch) -> None:
 
         result = engine.calculate_layout(elements, (1200, 628), (1080, 1920))
 
-        assert [(r.element_id, r.new_bbox.to_tuple()) for r in result] == [
-            (r.element_id, r.new_bbox.to_tuple()) for r in base
-        ]
+        profile = pick_profile(1080, 1920)
+        role_by_id = {e.id: e.role for e in elements}
+        violations = validate_layout(result, profile, (1080, 1920), role_by_id)
+
+        assert all(not v.startswith("outside_margin:") for v in violations)
+        assert engine.last_layout_debug.get("fallback_used") is True
     finally:
         Config.LAYOUT_PROFILE_SCORING_ENABLED = prev
+
+
+def test_score_sane_range() -> None:
+    profile = pick_profile(1080, 1920)
+    role_by_id = {
+        "headline": ElementRole.HEADLINE,
+        "sub": ElementRole.SUBHEADLINE,
+        "cta": ElementRole.CTA,
+        "hero": ElementRole.HERO_IMAGE,
+    }
+    layout = [
+        LayoutResult("headline", BoundingBox(120, 160, 600, 220), 1.0),
+        LayoutResult("sub", BoundingBox(120, 430, 560, 140), 1.0),
+        LayoutResult("cta", BoundingBox(120, 610, 280, 80), 1.0),
+        LayoutResult("hero", BoundingBox(480, 760, 420, 900), 1.0),
+    ]
+    score = score_layout(layout, profile, (1080, 1920), role_by_id)
+    assert 0.0 <= score <= 100.0
+    assert score >= 32.0

@@ -144,6 +144,23 @@ def create_interface() -> object:
                     custom_height = gr.Number(value=628, label="Custom Height")
                     custom_name = gr.Textbox(value="Custom", label="Name")
 
+                generation_mode = gr.Radio(
+                    choices=["phase21", "phase3"],
+                    value="phase21",
+                    label="Generation Mode",
+                    info="phase21=deterministic relayout, phase3=target-first redesign",
+                )
+                anchor_preset = gr.Dropdown(
+                    choices=["none", "flat_banner_3anchors"],
+                    value="none",
+                    label="Anchor preset",
+                )
+                manual_anchors_json = gr.Textbox(
+                    label="Manual anchors JSON (for flat images, optional)",
+                    placeholder='[{"id":"logo","role":"logo","x":10,"y":10,"width":120,"height":60}]',
+                    lines=3,
+                )
+
                 generate_btn = gr.Button(
                     "GENERATE ALL LAYOUTS",
                     variant="primary",
@@ -203,7 +220,13 @@ def create_interface() -> object:
         )
 
         def generate_layouts(
-            presets: list, cw: float, ch: float, cname: str
+            presets: list,
+            cw: float,
+            ch: float,
+            cname: str,
+            mode: str,
+            anchor_preset_selected: str,
+            manual_json: str,
         ) -> tuple:
             if not engine.elements:
                 return [], None, "Please load a design file first"
@@ -215,10 +238,10 @@ def create_interface() -> object:
                 # Build target sizes list
                 targets = []
 
-                for preset in presets:
-                    if preset in SIZE_PRESETS:
-                        w, h = SIZE_PRESETS[preset]
-                        name = preset.split("(")[0].strip()
+                for size_preset in presets:
+                    if size_preset in SIZE_PRESETS:
+                        w, h = SIZE_PRESETS[size_preset]
+                        name = size_preset.split("(")[0].strip()
                         targets.append((w, h, name))
 
                 # Add custom size
@@ -228,8 +251,50 @@ def create_interface() -> object:
                 if not targets:
                     return [], None, "Please select at least one size"
 
+                manual_anchors = None
+                if anchor_preset_selected == "flat_banner_3anchors" and (
+                    not manual_json or not manual_json.strip()
+                ):
+                    sw, sh = engine.source_size
+                    manual_anchors = [
+                        {
+                            "id": "Mascot",
+                            "role": "hero_image",
+                            "x": int(0.56 * sw),
+                            "y": int(0.22 * sh),
+                            "width": int(0.32 * sw),
+                            "height": int(0.66 * sh),
+                        },
+                        {
+                            "id": "MainText",
+                            "role": "headline",
+                            "x": int(0.06 * sw),
+                            "y": int(0.10 * sh),
+                            "width": int(0.50 * sw),
+                            "height": int(0.34 * sh),
+                        },
+                        {
+                            "id": "CTA",
+                            "role": "cta",
+                            "x": int(0.08 * sw),
+                            "y": int(0.64 * sh),
+                            "width": int(0.28 * sw),
+                            "height": int(0.18 * sh),
+                        },
+                    ]
+                elif manual_json and manual_json.strip():
+                    import json
+
+                    manual_anchors = json.loads(manual_json)
+                    if not isinstance(manual_anchors, list):
+                        return [], None, "manual anchors JSON must be a list"
+
                 # Generate
-                results = engine.batch_relayout(targets)
+                results = engine.batch_relayout(
+                    targets,
+                    mode=mode or "phase21",
+                    manual_anchors=manual_anchors,
+                )
 
                 # Prepare gallery
                 gallery_items = []
@@ -263,7 +328,15 @@ def create_interface() -> object:
 
         generate_btn.click(
             generate_layouts,
-            inputs=[size_presets, custom_width, custom_height, custom_name],
+            inputs=[
+                size_presets,
+                custom_width,
+                custom_height,
+                custom_name,
+                generation_mode,
+                anchor_preset,
+                manual_anchors_json,
+            ],
             outputs=[gallery, download_zip, status],
         )
 
