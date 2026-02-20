@@ -5,11 +5,13 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
+import numpy as np
 from PIL import Image
 
 from ..config import Config
 from ..constants import BACKGROUND_ROLES
 from ..enums import ElementRole
+from ..generative.text_plate import TextPlateConfig, apply_text_safe_plates
 from ..models import CompositionResult, DesignElement, LayoutResult
 from .background import BackgroundExtender
 from .color import BlendMode, composite_pil_over, parse_blend_mode
@@ -178,6 +180,8 @@ class CompositionEngine:
             except Exception as e:
                 warnings.append(f"Background outpaint failed: {e}")
 
+        canvas = self._apply_text_safe_plate(canvas, content_elements, target_size)
+
         # Sort content by z_index
         content_elements.sort(key=lambda x: x[0].z_index if x[0] else 0)
 
@@ -196,6 +200,64 @@ class CompositionEngine:
             layout_results=layout_results,
             warnings=warnings,
         )
+
+    def _apply_text_safe_plate(
+        self,
+        canvas: Image.Image,
+        content_elements: list[tuple[DesignElement, LayoutResult | None]],
+        target_size: tuple[int, int],
+    ) -> Image.Image:
+        """Apply optional readability plate behind text roles on busy backgrounds."""
+        if not Config.TEXT_SAFE_PLATE_ENABLED:
+            return canvas
+
+        text_roles = {
+            ElementRole.HEADLINE,
+            ElementRole.SUBHEADLINE,
+            ElementRole.BODY_TEXT,
+            ElementRole.CTA,
+            ElementRole.LABEL,
+        }
+        avoid_roles = {ElementRole.LOGO, ElementRole.HERO_IMAGE}
+
+        text_boxes: list[tuple[int, int, int, int]] = []
+        avoid_mask = np.zeros((target_size[1], target_size[0]), dtype=bool)
+
+        for elem, layout in content_elements:
+            if layout is None or not layout.visible:
+                continue
+            box = layout.new_bbox
+            x1 = max(0, box.x)
+            y1 = max(0, box.y)
+            x2 = min(target_size[0], box.x2)
+            y2 = min(target_size[1], box.y2)
+            if x2 <= x1 or y2 <= y1:
+                continue
+            if elem.role in text_roles:
+                text_boxes.append((x1, y1, x2 - x1, y2 - y1))
+            if elem.role in avoid_roles:
+                avoid_mask[y1:y2, x1:x2] = True
+
+        if not text_boxes:
+            return canvas
+
+        plate_cfg = TextPlateConfig(
+            enabled=Config.TEXT_SAFE_PLATE_ENABLED,
+            style=Config.TEXT_SAFE_PLATE_STYLE,
+            busy_threshold=Config.TEXT_SAFE_BUSY_THRESHOLD,
+            padding=Config.TEXT_SAFE_PLATE_PADDING,
+            feather_radius=Config.TEXT_SAFE_PLATE_FEATHER,
+            opacity=Config.TEXT_SAFE_PLATE_OPACITY,
+            corner_radius=Config.TEXT_SAFE_PLATE_RADIUS,
+        )
+
+        plated, _meta = apply_text_safe_plates(
+            background=canvas,
+            text_boxes=text_boxes,
+            avoid_mask=avoid_mask,
+            config=plate_cfg,
+        )
+        return plated
 
     def _compose_background(
         self,

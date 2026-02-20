@@ -43,6 +43,15 @@ class Config:
     LAYOUT_DEBUG_ENABLED = False
     LAYOUT_DEBUG_DIR = "backend/tests/fixtures/outputs"
 
+    # Text-safe background plate (Phase 2.1-E)
+    TEXT_SAFE_PLATE_ENABLED = True
+    TEXT_SAFE_PLATE_STYLE = "blur"  # blur | gradient | solid
+    TEXT_SAFE_BUSY_THRESHOLD = 0.22
+    TEXT_SAFE_PLATE_PADDING = 12
+    TEXT_SAFE_PLATE_FEATHER = 10
+    TEXT_SAFE_PLATE_OPACITY = 110
+    TEXT_SAFE_PLATE_RADIUS = 10
+
     # Generative background outpainting (Phase 2)
     GENERATIVE_BG_ENABLED = False
     GENERATIVE_BG_POLICY = "BG_ONLY"

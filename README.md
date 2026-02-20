@@ -113,6 +113,11 @@ Quality-gate outcomes are exposed on each `CompositionResult`:
 - `fail_reasons`
 - `used_fallback`
 
+Text-safe readability plate controls (Phase 2.1-E):
+- `TEXT_SAFE_PLATE_ENABLED`: enable/disable clean-plate generation behind text zones.
+- `TEXT_SAFE_PLATE_STYLE`: `blur` (default), `gradient`, `solid`.
+- `TEXT_SAFE_BUSY_THRESHOLD`: trigger only when local background clutter exceeds threshold.
+
 ## Reproducibility notes
 
 For deterministic/auditable runs, keep and report:
