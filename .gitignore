@@ -1,11 +1,16 @@
-# Python
+# Python bytecode/cache
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Build artifacts
 *.egg-info/
+.eggs/
 dist/
 build/
-.eggs/
 
 # Virtual environments
 .venv/
@@ -16,16 +21,21 @@ Lib/
 Scripts/
 pyvenv.cfg
 
-# Cache/output
+# Runtime/model/output artifacts
 cache/
 outputs/
+**/outputs/
 models/
 *.log
+*.zip
+
+# Inputs that should not be committed by default
+*.psd
 
 # Node.js
 node_modules/
 
-# IDE
+# IDE/editor
 .idea/
 .vscode/
 *.swp
@@ -41,12 +51,15 @@ nul
 .env.local
 .env.*.local
 
-# Test/coverage
+# Coverage
 .coverage
 htmlcov/
-.pytest_cache/
+
+# Test fixture outputs (generated)
 backend/tests/fixtures/outputs/*
 !backend/tests/fixtures/outputs/.gitkeep
+backend/tests/bench_fixtures/*/
+!backend/tests/bench_fixtures/.gitkeep
 
 # Docker
 docker-compose.override.yml

@@ -248,3 +248,53 @@ class TestHeadlessFallback:
         result = strategy.fit(_solid_image(300, 120), (300, 600), FitMode.CONTAIN)
         assert result.size == (300, 600)
         assert result.mode == "RGBA"
+
+
+def _hero_center_distance(img: Image.Image) -> float:
+    """Distance of bright-red synthetic hero centroid to image center."""
+    import numpy as np
+
+    arr = np.array(img.convert("RGB"))
+    mask = (arr[:, :, 0] > 220) & (arr[:, :, 1] < 60) & (arr[:, :, 2] < 60)
+    ys, xs = np.where(mask)
+    assert len(xs) > 0
+    cx = float(xs.mean())
+    cy = float(ys.mean())
+    h, w = arr.shape[:2]
+    return ((cx - (w / 2.0)) ** 2 + (cy - (h / 2.0)) ** 2) ** 0.5
+
+
+class TestSmartFocusCrop:
+    """Smart crop/zoom keeps hero focus better for portrait outputs."""
+
+    def setup_method(self) -> None:
+        extender = BackgroundExtender(use_ai_inpainting=False)
+        self.strategy = ContentAwareFitStrategy(extender=extender)
+
+    def test_focus_bbox_corner_is_better_centered_than_baseline(self) -> None:
+        src = Image.new("RGBA", (800, 500), (40, 40, 40, 255))
+        # synthetic hero in top-left corner
+        for x in range(20, 180):
+            for y in range(20, 180):
+                src.putpixel((x, y), (255, 0, 0, 255))
+
+        target = (400, 600)
+        baseline = self.strategy.fit(src, target, mode=FitMode.COVER, focus_bbox=None)
+        focused = self.strategy.fit(src, target, mode=FitMode.COVER, focus_bbox=(20, 20, 160, 160))
+
+        assert baseline.size == target
+        assert focused.size == target
+        assert _hero_center_distance(focused) < _hero_center_distance(baseline)
+
+    def test_focus_detector_failure_falls_back_without_crash(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        src = _solid_image(600, 400)
+
+        def _boom(_img: Image.Image) -> tuple[int, int, int, int] | None:
+            raise RuntimeError("detector missing")
+
+        monkeypatch.setattr(self.strategy, "_detect_focus_bbox", _boom)
+        result = self.strategy.fit(src, (300, 250), mode=FitMode.COVER)
+        assert result.size == (300, 250)
+        assert result.mode == "RGBA"
