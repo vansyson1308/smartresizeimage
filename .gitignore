@@ -45,6 +45,8 @@ nul
 .coverage
 htmlcov/
 .pytest_cache/
+backend/tests/fixtures/outputs/*
+!backend/tests/fixtures/outputs/.gitkeep
 
 # Docker
 docker-compose.override.yml
@@ -54,3 +56,6 @@ docker-compose.override.yml
 metadata.json
 0.2.0
 requirements_light.txt
+
+# Golden fixture binaries (generate in tests; keep repo text-only)
+backend/tests/fixtures/golden/**/*.png

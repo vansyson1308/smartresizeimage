@@ -5,12 +5,11 @@ from __future__ import annotations
 import pytest
 from PIL import Image
 
-from backend.app.composition.background import BackgroundExtender
+from backend.app.composition.background import BackgroundExtender, _get_cv2
 from backend.app.composition.content_aware_fit import (
     ContentAwareFitStrategy,
     FitMode,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -144,20 +143,35 @@ class TestOpenCVInpaint:
         self.extender = BackgroundExtender(use_ai_inpainting=False)
 
     def test_opencv_inpaint_creates_correct_size(self) -> None:
-        """cv2.inpaint output should match target size."""
+        """cv2.inpaint output should match target size when cv2 is present."""
         img = _solid_image(100, 100)
+        if _get_cv2() is None:
+            with pytest.raises(RuntimeError, match="cv2 unavailable"):
+                self.extender._extend_with_opencv_inpaint(img, (200, 300))
+            return
+
         result = self.extender._extend_with_opencv_inpaint(img, (200, 300))
         assert result.size == (200, 300)
 
     def test_opencv_inpaint_rgba_output(self) -> None:
-        """Output should be RGBA."""
+        """Output should be RGBA when cv2 inpaint path is available."""
         img = _solid_image(100, 100)
+        if _get_cv2() is None:
+            with pytest.raises(RuntimeError, match="cv2 unavailable"):
+                self.extender._extend_with_opencv_inpaint(img, (200, 300))
+            return
+
         result = self.extender._extend_with_opencv_inpaint(img, (200, 300))
         assert result.mode == "RGBA"
 
     def test_opencv_inpaint_zero_source(self) -> None:
-        """Zero-dimension source returns blank canvas."""
+        """Zero-dimension source returns blank canvas when cv2 exists."""
         img = Image.new("RGBA", (0, 0))
+        if _get_cv2() is None:
+            with pytest.raises(RuntimeError, match="cv2 unavailable"):
+                self.extender._extend_with_opencv_inpaint(img, (100, 100))
+            return
+
         result = self.extender._extend_with_opencv_inpaint(img, (100, 100))
         assert result.size == (100, 100)
 
@@ -202,3 +216,35 @@ class TestExtendPriority:
         img = _solid_image(100, 100)
         result = extender.extend(img, (200, 300))
         assert result.size == (200, 300)
+
+
+class TestHeadlessFallback:
+    """Fallback behavior when cv2 cannot be imported."""
+
+    def test_background_extender_falls_back_without_cv2(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        extender = BackgroundExtender(use_ai_inpainting=False)
+        from backend.app.composition import background as bg_mod
+
+        monkeypatch.setattr(bg_mod, "_cv2_checked", True)
+        monkeypatch.setattr(bg_mod, "_cv2_module", None)
+
+        img = _solid_image(120, 80)
+        result = extender.extend(img, (220, 220))
+        assert result.size == (220, 220)
+        assert result.mode == "RGBA"
+
+    def test_content_aware_fit_falls_back_without_cv2(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        extender = BackgroundExtender(use_ai_inpainting=False)
+        strategy = ContentAwareFitStrategy(extender=extender)
+        from backend.app.composition import content_aware_fit as fit_mod
+
+        monkeypatch.setattr(fit_mod, "_cv2_checked", True)
+        monkeypatch.setattr(fit_mod, "_cv2_module", None)
+
+        result = strategy.fit(_solid_image(300, 120), (300, 600), FitMode.CONTAIN)
+        assert result.size == (300, 600)
+        assert result.mode == "RGBA"

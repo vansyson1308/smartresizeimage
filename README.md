@@ -6,6 +6,12 @@ AI-powered banner re-layout engine. Upload a design (PSD, PNG, JPG, WEBP) and ge
 
 Python service using Gradio for the web UI. Parses PSD files with full layer extraction (and flat PNG/JPG/WEBP), classifies layer semantics with CLIP, calculates adaptive layouts for any target aspect ratio, and composes the final output with gamma-correct LANCZOS resizing, content-aware fit strategy (SMART mode: auto COVER/CONTAIN), and tiered background extension (LaMa AI inpainting, OpenCV TELEA inpainting, edge-pixel repetition with feathered blending).
 
+Recent rendering upgrades include:
+- Headless-safe composition imports (no import-time crash when `cv2`/`libGL` is unavailable).
+- Linear-light premultiplied-alpha compositing utilities.
+- Blend mode MVP in linear space (`normal`, `multiply`, `screen`, `overlay`).
+- Drop shadow renderer MVP (`effects.drop_shadow`) with synthetic golden coverage.
+
 ## Prerequisites
 
 | Tool | Version | Notes |
@@ -37,18 +43,58 @@ python -m app.main
 > pip install -r requirements-ci.txt
 > ```
 > The backend will still work but skip AI-based CLIP classification (falls back to rule-based + heuristic classification).
+>
+> **Headless note**: `opencv-python-headless` is used for CI/headless runs. If OpenCV cannot load at runtime, composition falls back to edge-repeat extension paths with warnings instead of crashing.
+>
+> **Proxy/localhost note**: In restricted environments where localhost checks fail, set:
+> ```bash
+> AUTOBANNER_SHARE=true
+> ```
+> or configure `NO_PROXY` for localhost.
 
 ## Testing
+
+### Full test suite
+
+```bash
+pytest -q
+```
+
+### Coverage run (CI-style)
 
 ```bash
 pytest backend/tests/ -v --cov=backend/app --cov-report=term-missing
 ```
 
+If `--cov` is not recognized, install dev dependencies first:
+
+```bash
+pip install -r backend/requirements-dev.txt
+```
+
 ### Linting
 
 ```bash
-ruff check backend/app/
+ruff check backend/app backend/tests
 ```
+
+## Golden visual regression tests
+
+Golden fixtures and helper docs are in:
+
+- `backend/tests/fixtures/golden/README.md`
+
+Run golden tests:
+
+```bash
+pytest -q backend/tests/test_golden_regression.py
+```
+
+How to add a golden case (short):
+1. Add deterministic inputs/expected under `backend/tests/fixtures/golden/case_*`.
+2. Add a test using `backend/tests/image_diff_utils.py::compare_images`.
+3. Keep strict thresholds unless cross-platform variance is proven.
+4. Diff artifacts are written to `backend/tests/fixtures/outputs/` when comparisons fail.
 
 ## Supported Input Formats
 
@@ -89,4 +135,4 @@ autobanner/
 
 GitHub Actions runs on every push/PR to `main`:
 
-- Lint (ruff) + Test (pytest, 101 tests) + Coverage
+- Lint (ruff) + Tests + Coverage (`.github/workflows/ci.yml`).

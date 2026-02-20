@@ -6,11 +6,14 @@ import logging
 
 from PIL import Image
 
+from ..config import Config
 from ..constants import BACKGROUND_ROLES
 from ..enums import ElementRole
 from ..models import CompositionResult, DesignElement, LayoutResult
 from .background import BackgroundExtender
+from .color import BlendMode, composite_pil_over, parse_blend_mode
 from .content_aware_fit import ContentAwareFitStrategy, FitMode
+from .effects import parse_drop_shadow_effect, render_drop_shadow
 from .resize import high_quality_resize
 
 logger = logging.getLogger("autobanner.composition")
@@ -197,14 +200,26 @@ class CompositionEngine:
                 y = (new_h - target_h) // 2
                 bg_image = bg_image.crop((x, y, x + target_w, y + target_h))
 
-        canvas.paste(bg_image, (0, 0))
+        canvas = composite_pil_over(
+            canvas,
+            bg_image,
+            (0, 0),
+            use_linear=Config.USE_LINEAR_COMPOSITING,
+            blend_mode=BlendMode.NORMAL,
+        )
 
         # Add overlays
         for elem, _layout in bg_elements[1:]:
             if elem.role == ElementRole.OVERLAY and elem.image:
                 overlay = elem.image.convert("RGBA")
                 overlay = high_quality_resize(overlay, target_size)
-                canvas = Image.alpha_composite(canvas, overlay)
+                canvas = composite_pil_over(
+                    canvas,
+                    overlay,
+                    (0, 0),
+                    use_linear=Config.USE_LINEAR_COMPOSITING,
+                    blend_mode=BlendMode.NORMAL,
+                )
 
         return canvas
 
@@ -233,7 +248,34 @@ class CompositionEngine:
             alpha = alpha.point(lambda p: int(p * element.opacity))
             resized.putalpha(alpha)
 
-        # Paste with alpha
-        canvas.paste(resized, (layout.new_bbox.x, layout.new_bbox.y), resized)
+        # Optional drop-shadow (rendered below element)
+        drop_shadow = parse_drop_shadow_effect(element.effects)
+        if drop_shadow is not None:
+            scaled_shadow = drop_shadow.scaled(layout.scale_factor)
+            shadow_img, shadow_off = render_drop_shadow(resized, scaled_shadow)
+            canvas = composite_pil_over(
+                canvas,
+                shadow_img,
+                (layout.new_bbox.x + shadow_off[0], layout.new_bbox.y + shadow_off[1]),
+                use_linear=Config.USE_LINEAR_COMPOSITING,
+                blend_mode=BlendMode.NORMAL,
+            )
+
+        # Blend main element
+        blend_mode, supported = parse_blend_mode(element.blend_mode)
+        if not supported:
+            logger.warning(
+                "Unsupported blend mode '%s' on element '%s'; falling back to normal",
+                element.blend_mode,
+                element.name,
+            )
+
+        canvas = composite_pil_over(
+            canvas,
+            resized,
+            (layout.new_bbox.x, layout.new_bbox.y),
+            use_linear=Config.USE_LINEAR_COMPOSITING,
+            blend_mode=blend_mode,
+        )
 
         return canvas
