@@ -102,3 +102,60 @@ def test_layout_engine_logs_profile_scoring(caplog) -> None:
     assert "profile=PORTRAIT" in caplog.text
     assert "candidates=" in caplog.text
     assert "best_score=" in caplog.text
+
+
+def test_layout_engine_falls_back_when_solver_fails(monkeypatch) -> None:
+    from backend.app.layout import engine as layout_engine_mod
+    from backend.app.layout.engine import LayoutEngine
+
+    prev = Config.LAYOUT_PROFILE_SCORING_ENABLED
+    Config.LAYOUT_PROFILE_SCORING_ENABLED = True
+    try:
+        engine = LayoutEngine()
+        elements = [
+            DesignElement(
+                id="bg",
+                name="bg",
+                layer_type="pixel",
+                bbox=BoundingBox(0, 0, 1200, 628),
+                role=ElementRole.BACKGROUND,
+                priority=9,
+            ),
+            DesignElement(
+                id="headline",
+                name="headline",
+                layer_type="type",
+                bbox=BoundingBox(100, 60, 600, 120),
+                role=ElementRole.HEADLINE,
+                priority=1,
+                text_content="Launch today",
+            ),
+            DesignElement(
+                id="hero",
+                name="hero",
+                layer_type="pixel",
+                bbox=BoundingBox(700, 80, 420, 520),
+                role=ElementRole.HERO_IMAGE,
+                priority=2,
+            ),
+        ]
+
+        base = engine._calculate_with_template(
+            elements,
+            (1200, 628),
+            (1080, 1920),
+            engine._select_template((1080, 1920)),
+        )
+
+        def _boom(*_args, **_kwargs):
+            raise RuntimeError("solver unavailable")
+
+        monkeypatch.setattr(layout_engine_mod, "solve_layout", _boom)
+
+        result = engine.calculate_layout(elements, (1200, 628), (1080, 1920))
+
+        assert [(r.element_id, r.new_bbox.to_tuple()) for r in result] == [
+            (r.element_id, r.new_bbox.to_tuple()) for r in base
+        ]
+    finally:
+        Config.LAYOUT_PROFILE_SCORING_ENABLED = prev

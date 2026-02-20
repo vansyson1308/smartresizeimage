@@ -118,6 +118,25 @@ Text-safe readability plate controls (Phase 2.1-E):
 - `TEXT_SAFE_PLATE_STYLE`: `blur` (default), `gradient`, `solid`.
 - `TEXT_SAFE_BUSY_THRESHOLD`: trigger only when local background clutter exceeds threshold.
 
+## Phase 2.1 adaptive layout (designer-like)
+
+Profile modes (`backend/app/layout/profiles.py`):
+- `LANDSCAPE`: wider safe regions and balanced hero/text split.
+- `SQUARE`: centered hierarchy with moderated margins.
+- `PORTRAIT`: stronger vertical stacking with larger hero prominence target.
+
+Typography reflow rules (`backend/app/layout/typography.py` + `layout/engine.py`):
+- Auto font scaling between role-specific min/max bounds.
+- Width-aware wrapping with max-lines constraints by role.
+- No text rewriting; original content is preserved.
+- Text-first overflow handling: shrink to min font, then expand text block height if needed.
+
+Debug mode:
+- Enable `Config.LAYOUT_DEBUG_ENABLED=True` and optionally set `Config.LAYOUT_DEBUG_DIR`.
+- Each relayout exports:
+  - `layout_debug.json` (profile, candidate count, best score, violations, bboxes)
+  - `layout_debug_overlay.png` (bbox/role visualization)
+
 ## Reproducibility notes
 
 For deterministic/auditable runs, keep and report:
@@ -137,6 +156,10 @@ These fields indicate backend usage, fallback reasons, and gate outcomes.
   - headless fallback paths are expected and should still render output.
 - **Generative disabled fallback check**:
   - set `GENERATIVE_BG_ENABLED=False` and verify `used_fallback`/metadata in outputs.
+- **Adaptive solver fallback behavior**:
+  - if scoring/solver fails for candidates, engine logs fallback and returns rigid template layout.
+- **Focus detector fallback behavior**:
+  - SMART crop falls back to deterministic center crop when focus detection is unavailable.
 
 ## Supported Input Formats
 

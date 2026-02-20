@@ -59,21 +59,33 @@ class LayoutEngine:
         best_score = float("-inf")
         best_violations: list[str] = []
 
+        had_candidate_error = False
         for candidate in candidates:
-            solved, solver_meta = solve_layout(
-                candidate,
-                target_size=target_size,
-                profile=profile,
-                role_by_id=role_by_id,
-                iterations=Config.LAYOUT_SOLVER_MAX_ITERS,
-            )
-            violations = validate_layout(solved, profile, target_size, role_by_id)
-            score = score_layout(solved, profile, target_size, role_by_id)
-            score -= solver_meta.get("overlap_area", 0.0) * 0.01
-            if score > best_score:
-                best_score = score
-                best_results = solved
-                best_violations = violations
+            try:
+                solved, solver_meta = solve_layout(
+                    candidate,
+                    target_size=target_size,
+                    profile=profile,
+                    role_by_id=role_by_id,
+                    iterations=Config.LAYOUT_SOLVER_MAX_ITERS,
+                )
+                violations = validate_layout(solved, profile, target_size, role_by_id)
+                score = score_layout(solved, profile, target_size, role_by_id)
+                score -= solver_meta.get("overlap_area", 0.0) * 0.01
+                if score > best_score:
+                    best_score = score
+                    best_results = solved
+                    best_violations = violations
+            except Exception as e:
+                had_candidate_error = True
+                logger.warning(
+                    "Adaptive solver candidate failed; using template fallback path: %s",
+                    e,
+                )
+
+        if best_score == float("-inf"):
+            logger.warning("Adaptive solver failed for all candidates; using rigid template")
+            return base_results
 
         logger.info(
             "profile=%s, candidates=%d, best_score=%.2f, violations=%d",
@@ -104,6 +116,9 @@ class LayoutEngine:
         if len(best_violations) >= 6:
             logger.warning("Adaptive scoring fallback to rigid template due to heavy violations")
             return base_results
+
+        if had_candidate_error:
+            logger.info("Adaptive scoring completed with fallback on failed candidates")
 
         return best_results
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ..constants import BACKGROUND_ROLES
 from ..enums import ElementRole
 from ..models import LayoutResult
 from .profiles import LayoutProfile
@@ -21,9 +22,14 @@ def validate_layout(
     margin_y = int(profile.margin_pct * height)
 
     visible = [r for r in layout_results if r.visible]
+    content_visible = [
+        r
+        for r in visible
+        if role_by_id.get(r.element_id, ElementRole.UNKNOWN) not in BACKGROUND_ROLES
+    ]
 
     # Bounds & min-size checks
-    for r in visible:
+    for r in content_visible:
         b = r.new_bbox
         role = role_by_id.get(r.element_id, ElementRole.UNKNOWN)
 
@@ -45,16 +51,18 @@ def validate_layout(
                 violations.append(f"max_size:{r.element_id}")
 
     # Overlap checks
-    for i in range(len(visible)):
-        for j in range(i + 1, len(visible)):
-            a = visible[i].new_bbox
-            b = visible[j].new_bbox
+    for i in range(len(content_visible)):
+        for j in range(i + 1, len(content_visible)):
+            a = content_visible[i].new_bbox
+            b = content_visible[j].new_bbox
             ix1 = max(a.x, b.x)
             iy1 = max(a.y, b.y)
             ix2 = min(a.x2, b.x2)
             iy2 = min(a.y2, b.y2)
             if ix1 < ix2 and iy1 < iy2:
-                violations.append(f"overlap:{visible[i].element_id}:{visible[j].element_id}")
+                violations.append(
+                    f"overlap:{content_visible[i].element_id}:{content_visible[j].element_id}"
+                )
 
     # Hero prominence check
     hero_area = 0
