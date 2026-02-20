@@ -284,15 +284,35 @@ def main() -> None:
 
     logger.info("Starting web interface...")
 
+    server_name = os.environ.get(
+        "AUTOBANNER_SERVER_NAME", os.environ.get("GRADIO_SERVER_NAME", "127.0.0.1")
+    )
+    server_port = int(
+        os.environ.get("AUTOBANNER_SERVER_PORT", os.environ.get("GRADIO_SERVER_PORT", "7860"))
+    )
+    share = os.environ.get("AUTOBANNER_SHARE", "false").lower() == "true"
+    inbrowser = os.environ.get("AUTOBANNER_INBROWSER", "false").lower() == "true"
+
     try:
         interface = create_interface()
         interface.launch(
-            server_name="0.0.0.0",
-            server_port=7860,
-            share=False,
-            inbrowser=True,
+            server_name=server_name,
+            server_port=server_port,
+            share=share,
+            inbrowser=inbrowser,
             show_error=True,
         )
+    except ValueError as e:
+        msg = str(e)
+        if "localhost is not accessible" in msg and not share:
+            logger.warning(
+                "Launch blocked by localhost accessibility check. "
+                "Set AUTOBANNER_SHARE=true (or adjust proxy/NO_PROXY) in this environment."
+            )
+            return
+        logger.error("Failed to start: %s", e)
+        traceback.print_exc()
+        sys.exit(1)
     except Exception as e:
         logger.error("Failed to start: %s", e)
         traceback.print_exc()

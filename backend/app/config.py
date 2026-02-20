@@ -27,6 +27,7 @@ class Config:
     # Quality
     RESIZE_QUALITY = Image.Resampling.LANCZOS
     GAMMA = 2.2
+    USE_LINEAR_COMPOSITING = True
 
     # AI
     CLIP_MODEL = "openai/clip-vit-base-patch32"
@@ -34,3 +35,17 @@ class Config:
 
     # Zone assignment
     MAX_ELEMENTS_PER_ZONE = 2
+    LAYOUT_PROFILE_SCORING_ENABLED = False
+    LAYOUT_SOLVER_MAX_ITERS = 24
+    LAYOUT_DEBUG_ENABLED = False
+    LAYOUT_DEBUG_DIR = "backend/tests/fixtures/outputs"
+
+    # Generative background outpainting (Phase 2)
+    GENERATIVE_BG_ENABLED = False
+    GENERATIVE_BG_POLICY = "BG_ONLY"
+    GENERATIVE_BG_SEED = 42
+    GENERATIVE_BG_MODEL_ID = "none"
+
+    # Optional decor synthesis (Phase 2 PR-D)
+    GENERATIVE_DECOR_POLICY = "OFF"  # OFF | BG_PLUS_DECOR
+    GENERATIVE_DECOR_SEED = 123
