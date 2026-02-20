@@ -15,7 +15,7 @@ AutoBanner là công cụ **tự bố cục lại banner** để chuyển từ 1
 ## AutoBanner KHÔNG phải là gì?
 - Không phải Photoshop full-render tất cả layer effects.
 - Không phải công cụ “đổi style / đổi concept” theo kiểu thiết kế mới hoàn toàn.
-- Không cam kết 100% giống designer cho mọi trường hợp (nhưng Phase 3 đã tối ưu cho banner minh hoạ flat kiểu công ty bạn).
+
 
 ---
 
