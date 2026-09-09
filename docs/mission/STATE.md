@@ -134,14 +134,20 @@ inputs only. Numbers are synthetic-fixture engineering results, not customer val
   revisions (156/180 before) and in all five regression-set edits; copy that no longer fits
   falls back to a fresh plan with a `layout_change` warning. Test suite: 253 tests.
 
+- H5 rules from correction history shipped and measured (`design/corrections.py`,
+  rejection snapshots per project, `GET .../learned` corrections + unresolved,
+  one-click apply; `results/corrections_2026-09-09.md`): with a rule-based reviewer,
+  carried rules cut repeat rejections 28 → 0 over 14 later campaigns. Human reasons and
+  brand taste unmeasured. Test suite: 259 tests.
+
 ## Next actions (in order)
 
 1. Real-design corpus when access exists (licensed PSDs/photos); decomposition on
    photographs; human calibration of verdicts and correction-time measurement via the pilot
    instruments (this is also what turns the H1 proxy into a measured correction rate).
-2. H5 retrieval from correction history (rejection reasons and the accepted follow-up per
-   project become reviewable rules for the next generation); H1 with more than one example
-   per orientation (confidence above 0.5) and with real designer examples; per-element
-   text plates so a revision on a busy background stays local.
-3. Roles within an owner (viewer/approver), retention policy, rate limiting; Docker image
-   build verification on a machine with a Docker daemon.
+2. Commercial completeness still open: roles within an owner (viewer/approver), retention
+   policy for projects and events, rate limiting per key; Docker image build verification on
+   a machine with a Docker daemon.
+3. Research follow-ups: brand-level rule carry-over across projects (H5), H1 with more than
+   one example per orientation and with real designer examples, per-element text plates so
+   a revision on a busy background stays local (H3 residual).

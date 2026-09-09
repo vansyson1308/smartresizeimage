@@ -42,6 +42,7 @@ python backend/tools/run_ablations.py --configs joint,designer_ref,learned \
   --sizes 1200x628,1500x500,300x250,1080x1080,600x600,1080x1920,1080x1350 \
   --outdir /tmp/ablations_h1                                       # H1: learn from one approved example
 python backend/tools/run_local_edits.py --outdir /tmp/local_edits   # H3: out-of-scope change on revisions
+python backend/tools/run_corrections.py --outdir /tmp/corrections  # H5: repeat rejections with carried rules
 ```
 
 ## Splits
@@ -98,6 +99,11 @@ regenerating with the previous plan as reference leaves pixels outside the edite
 padded box unchanged in 174/180 revisions (156/180 when re-planning; 21 of those move other
 text). The residual is the per-stack text plate on busy backgrounds. Pixel locality is not a
 quality judgement; the verdict pipeline still runs on every revision.
+
+Correction rules (H5, `results/corrections_2026-09-09.md`, rule-based reviewer, 15 campaigns ×
+3 sizes): carrying rules derived from rejection + approved fix into later campaigns cuts
+repeat rejections 28 → 0 (30 → 3 rejections overall). A deterministic reviewer measures
+that the mechanism closes the loop, not that the rules match a brand's taste.
 
 ## Family-consistency checks (contract v2, cross-variant)
 

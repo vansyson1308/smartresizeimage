@@ -10,7 +10,7 @@ lands behind flags with a rollback path.
 | H2 | Joint planning across a variant family improves consistency and reduces corrections vs independent resizing. | DesignAsCode retargeting, iPoster constraints | ABLATED, ADOPTED: joint family choice cuts family-consistency issues 9 → 3 runs at equal acceptance and compute (below); correction-time effect unmeasured (no humans) | CPU only | Adopt if family-consistency errors drop without lowering acceptance; equal compute/review budget. |
 | H3 | A local-edit representation reduces unintended changes on campaign revision. | Layered editing (Qwen-Image-Layered) | ABLATED, ADOPTED: regenerating with the previous plan as reference gives zero out-of-scope pixel change on the 5-edit regression set and on 174/180 corpus revisions (156/180 when re-planning); residual = stack plates on busy backgrounds (below) | CPU only | Adopt if pixel diff outside edited scope is zero on the regression set. |
 | H4 | Calibrated verification + targeted repair improves throughput vs missed critical errors. | Verification-driven repair | ABLATED (below): repair helps a weak planner, adds nothing to the constraint planner on this corpus; calibration vs humans still unmeasured | CPU only | Measure missed-error rate on held-out set before/after repair; report sample size. |
-| H5 | Retrieval from approved correction history reduces recurring mistakes per brand without training. | RAG-style retrieval | PLANNED (needs correction store) | CPU only | Adopt if repeat-correction rate drops on the same brand's held-out campaigns. |
+| H5 | Retrieval from approved correction history reduces recurring mistakes per brand without training. | RAG-style retrieval | ABLATED (rule-based reviewer), ADOPTED as a reviewable mechanism: rules derived from rejection + approved fix cut repeat rejections 28 → 0 over 14 later campaigns (below); effect with human reviewers unmeasured | CPU only | Adopt if repeat-correction rate drops on the same brand's held-out campaigns. |
 
 ## Results log
 
@@ -133,3 +133,29 @@ lands behind flags with a rollback path.
   Decision rule met; adopted as the default for regeneration. Not measured: human
   perception of "unintended change", revisions on real designs, edits that change an
   element's role or add elements (new elements are planned fresh and reported).
+- 2026-09-09 — H5 rules from correction history (`results/corrections_2026-09-09.md`; 15
+  fixture cases as successive campaigns of one synthetic brand × 3 sizes; run from the
+  working tree committed as `2c3b943`). Mechanism: a rejection snapshots the rejected plan
+  and reason; the next approved variant of the same size is paired with it and the
+  difference becomes a proposal (`scale_range` at the approved fraction, `min_text_size`
+  at the approved px scaled by the size it was measured on, `clear_space` when an overlap
+  complaint is resolved). Protocol: a rule-based reviewer rejects "logo too small" (logo
+  height < 9% of canvas height) and "CTA hard to read" (CTA font < 3.2% of canvas height);
+  after each rejection the tool applies the designer's fix (the matching constraint),
+  re-plans, approves if the reviewer accepts, derives the rule, and — with memory on —
+  carries rules by role into later campaigns.
+
+  | Memory | Variants | Rejections | Repeat rejections (reason already seen) | Rules carried by the end |
+  |---|---:|---:|---:|---:|
+  | off | 45 | 30 (all "logo too small", 1080×1080 and 300×250 of every campaign) | 28 | 0 |
+  | on | 45 | 3 (2 first occurrences in campaign 1, 1 new "CTA hard to read" in campaign 3) | 0 | 2 |
+
+  Reading: the loop closes deterministically because the reviewer is a rule and the derived
+  rule is exactly the approved value; the new CTA rejection in campaign 3 is a knock-on of
+  the larger logo (less room for the long CTA) and was itself learned. Decision rule met on
+  this protocol; what it does not show is whether a human's reasons parse (keywords only:
+  logo/CTA/headline/subheadline/hero, small/big, overlap words) or whether the derived rule
+  is what the brand wants — unparseable reasons are listed as unresolved, never invented.
+  In the product, rules are per project and applied only after a person adds them
+  (`POST .../learned/corrections/{i}/apply`); brand-level carry-over across projects is
+  the next step.

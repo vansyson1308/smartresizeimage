@@ -40,24 +40,30 @@ needed; launch Chromium with `executable_path="/opt/pw-browsers/chromium"` in th
 
 ## Next executable task
 
-H5 — retrieval from correction history: rejection reasons already land in the event log
-(`api/events.py`, kind `approval` with `reason`) and every variant keeps its plan. Add
-`backend/app/design/corrections.py` that, per project, pairs a rejected variant with the
-next accepted variant of the same size and derives a reviewable rule from the difference
-(e.g. reason mentions "logo" and the logo's scale grew → `scale_range` proposal on the logo;
-reason mentions "text"/"read" and a plate or larger font followed → `min_text_size`
-proposal), stored with provenance `recovered` and confidence 0.5. Expose them next to the
-learned families (`GET /api/projects/{id}/learned` → `corrections`), let the planner apply
-confirmed ones as constraints, and add a regression test where a rejected "logo too small"
-variant makes the next generation keep the logo above the accepted scale. Then measure on
-the synthetic corpus whether repeat rejections for the same reason drop (record in
-`EXPERIMENTS.md`, H5). After that: roles within an owner, retention, rate limiting.
+Commercial completeness, in this order, each with tests in `test_ownership_and_jobs.py`:
+
+1. Rate limiting per API key/owner in `backend/app/api/server.py` (token bucket per owner
+   for `POST` routes, `429` with `Retry-After`, limits from `AUTOBANNER_RATE_LIMIT` such as
+   `60/minute`, disabled when unset); record limit hits in the event log.
+2. Retention policy in `backend/app/api/service.py`: `AUTOBANNER_RETENTION_DAYS` removes
+   projects (and their variants, corrections, history) untouched for longer than that on
+   startup and once a day from the job manager thread; document in `docs/OPERATIONS.md`
+   with the restore path (project zip export before deletion is the operator's job — say
+   so).
+3. Roles within an owner: API keys map to `owner:role` (`editor` | `approver` | `viewer`)
+   in `AUTOBANNER_API_KEYS`; viewers get `403` on document edits, generation and
+   approvals; only approvers may approve/reject; editors may do everything but approve.
+   Keep `LOCAL_OWNER` as editor+approver when no keys are configured.
+
+Then update `CAPABILITIES.md` (auth/roles/retention/rate limiting → VERIFIED_LOCAL),
+`docs/OPERATIONS.md`, and `ECONOMICS.md` if limits change the cost model.
 
 ## Files to know
 
 - `backend/app/quality/` — contract v2 (checks, verdict rules)
 - `backend/app/design/` — document, serialize, fonts, text_render, adapter, assets, project,
-  render, variant (incl. H3 reference plans), planner, examples (H1), decompose
+  render, variant (incl. H3 reference plans), planner, examples (H1), corrections (H5),
+  decompose
 - `backend/app/api/` — service (domain ops), server (FastAPI), jobs, presets
 - `backend/app/web/` — index.html, app.js, styles.css
 - `backend/tools/run_layout_bench.py` — modes baseline/phase21/phase3/design
