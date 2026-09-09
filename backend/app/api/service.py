@@ -41,6 +41,7 @@ from ..design.render import render_master
 from ..design.serialize import document_from_dict, document_to_dict
 from ..design.variant import VariantBrief, generate_variant
 from ..parser import get_parser
+from .events import EventLog
 from .jobs import Job, JobItem, JobManager
 from .presets import find_preset
 
@@ -140,6 +141,7 @@ class ProjectService:
         self.registry = FontRegistry(extra_dirs=[self.fonts_dir])
         self.jobs = JobManager(max_workers=max_workers, persist_dir=self.data_dir / "jobs")
         self.usage = UsageMeter(self.data_dir / "usage")
+        self.events = EventLog(self.data_dir / "events")
         self.quota = quota or Quota.from_env()
         self.use_ai = use_ai
         self._locks: dict[str, threading.RLock] = {}
@@ -341,6 +343,10 @@ class ProjectService:
                 self._cache[project_id] = project
             self.usage.add(owner, "projects")
             self.usage.add(owner, "upload_bytes", len(data))
+            self.events.record(
+                owner, "project_created", project_id=project_id, source=ext,
+                elements=len(doc.elements),
+            )
             return project
 
     def create_blank_project(
@@ -513,6 +519,10 @@ class ProjectService:
                 raise ServiceError("invalid document after edit: " + "; ".join(problems), 400)
             project.document = doc
             project.save(snapshot=True, label=label)
+        self.events.record(
+            owner or LOCAL_OWNER, "document_ops", project_id=project_id, count=len(ops),
+            kinds=sorted({str(o.get("op")) for o in ops}),
+        )
         return project
 
     def undo(self, project_id: str, owner: str | None = LOCAL_OWNER) -> bool:
@@ -645,6 +655,11 @@ class ProjectService:
                 verdict=result.verdict,
             )
             project.save()
+        self.events.record(
+            job.owner or LOCAL_OWNER, "variant_done", project_id=project_id,
+            variant_id=variant_id, verdict=rec.verdict, size=f"{rec.width}x{rec.height}",
+            repair_steps=len(result.repair_steps),
+        )
         return {"variant_id": rec.id, "verdict": rec.verdict}
 
     def regenerate_variant(
@@ -709,6 +724,10 @@ class ProjectService:
         with self._lock(project_id):
             rec = project.set_approval(variant_id, approval, reason)
             project.save()
+        self.events.record(
+            owner or LOCAL_OWNER, "approval", project_id=project_id, variant_id=variant_id,
+            approval=approval, reason=reason[:200], verdict=rec.verdict,
+        )
         return rec
 
     def delete_variant(
@@ -801,6 +820,10 @@ class ProjectService:
                     }
                 )
             zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+        self.events.record(
+            owner or LOCAL_OWNER, "export", project_id=project_id, fmt=pil_fmt, only=only,
+            count=len(manifest["variants"]),
+        )
         return buf.getvalue()
 
     def export_project(self, project_id: str, owner: str | None = LOCAL_OWNER) -> bytes:
@@ -854,6 +877,9 @@ class ProjectService:
         with self._lock(project_id):
             self._cache[project_id] = project
         return project
+
+    def pilot_summary(self, owner: str) -> dict:
+        return self.events.summary(owner)
 
     def get_job(self, job_id: str, owner: str | None = LOCAL_OWNER) -> Job:
         job = self.jobs.get(job_id)

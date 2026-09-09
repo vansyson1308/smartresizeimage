@@ -111,6 +111,11 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
     def usage(owner: str = Owner) -> dict:
         return service.usage_summary(owner)
 
+    @app.get("/api/pilot/summary", dependencies=dep)
+    def pilot_summary(owner: str = Owner) -> dict:
+        """Local pilot instruments: first-pass acceptance, time to decision, corrections."""
+        return service.pilot_summary(owner)
+
     @app.get("/api/presets", dependencies=dep)
     def presets() -> dict:
         return preset_catalog()

@@ -173,3 +173,43 @@ def test_upload_size_limit_is_enforced_before_buffering(tmp_path: Path) -> None:
         res = c.post("/api/projects", files={"file": ("big.png", big, "image/png")})
         assert res.status_code == 413
     app.state.service.shutdown()
+
+
+def test_pilot_event_log_measures_acceptance(tmp_path: Path) -> None:
+    from backend.app.api.events import EventLog
+
+    log = EventLog(tmp_path / "events")
+    log.record("o", "variant_done", project_id="p", variant_id="v1", verdict="accepted")
+    log.record("o", "variant_done", project_id="p", variant_id="v2", verdict="needs_review")
+    log.record("o", "approval", project_id="p", variant_id="v1", approval="approved", reason="")
+    log.record("o", "variant_done", project_id="p", variant_id="v2", verdict="accepted")  # regen
+    log.record("o", "approval", project_id="p", variant_id="v2", approval="approved", reason="")
+    log.record("o", "document_ops", project_id="p", count=3, kinds=["set_text"])
+    s = log.summary("o")
+    assert s["variants_generated"] == 2 and s["variants_decided"] == 2
+    assert s["approved"] == 2
+    # v2 was regenerated before approval -> not first-pass
+    assert s["first_pass_acceptance"] == 0.5
+    assert s["corrections_per_project"] == {"p": 3}
+    assert s["median_seconds_to_decision"] is not None
+    off = EventLog(tmp_path / "events2", enabled=False)
+    off.record("o", "approval", approval="approved")
+    assert off.summary("o")["events"] == 0
+
+
+def test_pilot_summary_endpoint_reflects_journey(two_owner_client: TestClient) -> None:
+    c = two_owner_client
+    res = c.post("/api/projects/blank", json={"name": "P", "width": 300, "height": 300}, headers=A)
+    pid = res.json()["project"]["id"]
+    res = c.post(
+        f"/api/projects/{pid}/variants",
+        json={"targets": [{"width": 300, "height": 250}]},
+        headers=A,
+    )
+    c.app.state.service.jobs.wait(res.json()["job"]["id"], timeout=120)
+    vid = c.get(f"/api/projects/{pid}/variants", headers=A).json()["variants"][0]["id"]
+    c.post(f"/api/projects/{pid}/variants/{vid}/approval", json={"approval": "approved"}, headers=A)
+    s = c.get("/api/pilot/summary", headers=A).json()
+    assert s["variants_generated"] == 1 and s["approved"] == 1
+    assert s["first_pass_acceptance"] == 1.0
+    assert c.get("/api/pilot/summary", headers=B).json()["events"] == 0
