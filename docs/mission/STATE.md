@@ -36,7 +36,7 @@ This file is a checkpoint, not a completion claim.
 Environment: Python 3.11.15, Pillow 10.4.0, NumPy 1.26.4, SciPy 1.17.1, opencv-headless
 4.11.0.86, psd-tools 1.19.0, tesseract 5.3.4, FastAPI 0.141.1. 4 CPUs, no GPU.
 
-- `ruff check backend` clean; `pytest backend/tests` → **269 passed** (API round trips, roles,
+- `ruff check backend` clean; `pytest backend/tests` → **271 passed** (API round trips, roles,
   rate limit, retention, planner, examples, local edits, corrections, decomposition).
 - Measurement tools (all synthetic, seed 42): `run_layout_bench.py` (modes), `run_ablations.py`
   (planner/repair/plates, joint, H1 protocol), `run_local_edits.py` (H3), `run_corrections.py`
@@ -156,6 +156,10 @@ inputs only. Numbers are synthetic-fixture engineering results, not customer val
   (stricter wins, keyed by role) and proposed into a project of that brand when it is
   uploaded or first planned; `GET /api/brands/{brand}/rules`; unconfirmed proposals never
   propagate. API + unit tests.
+
+- PDF export (`format=pdf`, one page per variant at 150 dpi inside the deliverables zip,
+  page numbers in the manifest). Docker CLI exists here but no daemon: image build stays
+  BLOCKED_EXTERNAL.
 
 ## Release-criteria check (2026-09-09, end of this session)
 
