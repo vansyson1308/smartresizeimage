@@ -34,27 +34,28 @@ The Playwright script used for verification lives outside the repo during the se
 (file input) → add elements via API → mark price verbatim → drag/nudge/undo → add rule →
 brief with custom size + copy override → generate → review → approve / reject with reason →
 per-variant override regenerate → export approved zip → save project zip → reopen via import
-→ 900px viewport without horizontal scroll → no console errors. Re-create it from this list if
+→ learned-rules panel shows the approved variant → 900px viewport without horizontal scroll
+→ no console errors. Re-create it from this list if
 needed; launch Chromium with `executable_path="/opt/pw-browsers/chromium"` in this environment.
 
 ## Next executable task
 
-H1 — learn from approved examples: add `backend/app/design/examples.py` with
-`match_elements(master_doc, approved_variant_doc)` (by asset hash for images, by normalised
-text for text elements, by role as fallback) and `infer_family(master_doc, examples)` that
-derives, per aspect class, region fractions (text column, subject slot, logo slot) and a
-hierarchy scale from the approved variants, emitting a `Family` plus `Constraint`
-proposals with `provenance.origin = "recovered"` and a confidence based on agreement across
-examples. Feed inferred families into `choose_families` ahead of the hand-written ones.
-Evaluate on the synthetic corpus by treating one generated size as the "approved example"
-and holding out the others (`run_ablations.py --configs full,learned`). Record H1 in
-`EXPERIMENTS.md` with the setup time counted (import + match + confirm).
+H1 follow-up — content pressure for learned stacked families: in
+`backend/app/design/examples.py`, when the example is a stacked composition
+(`subject_first` or text below subject), record the text stack's share of the canvas height
+and let `_plan_family` in `planner.py` grow the learned text region on smaller canvases the
+way `_stacked_family` does for hand-written families (square/portrait agreement with the
+designer plan is 0.58/0.59 vs 0.85 for landscape in
+`docs/mission/results/ablations_h1_2026-09-09.md`). Re-run
+`run_ablations.py --configs joint,designer_ref,learned` with the seven sizes listed in
+`EVALUATION.md` and record the delta in `EXPERIMENTS.md`. Then start H3 (local-edit
+regression set: pixel diff outside the edited scope must be zero).
 
 ## Files to know
 
 - `backend/app/quality/` — contract v2 (checks, verdict rules)
 - `backend/app/design/` — document, serialize, fonts, text_render, adapter, assets, project,
-  render, variant
+  render, variant, planner, examples (H1), decompose
 - `backend/app/api/` — service (domain ops), server (FastAPI), jobs, presets
 - `backend/app/web/` — index.html, app.js, styles.css
 - `backend/tools/run_layout_bench.py` — modes baseline/phase21/phase3/design

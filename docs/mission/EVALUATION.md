@@ -38,6 +38,9 @@ python backend/tools/run_layout_bench.py --mode both  --seed 42   # baseline + p
 python backend/tools/run_layout_bench.py --mode phase3 --seed 42  # phase3, production n_candidates
 python backend/tools/run_layout_bench.py --mode design --seed 42  # document pipeline
 python backend/tools/run_ablations.py --outdir /tmp/ablations     # planner/repair/plates ablations
+python backend/tools/run_ablations.py --configs joint,designer_ref,learned \
+  --sizes 1200x628,1500x500,300x250,1080x1080,600x600,1080x1920,1080x1350 \
+  --outdir /tmp/ablations_h1                                       # H1: learn from one approved example
 ```
 
 ## Splits
@@ -80,6 +83,12 @@ matters only for the zone planner; plates matter on busy backgrounds.
 Second run on the 15-case corpus (holdout now 6 cases incl. a busy background, 24 runs):
 `results/ablations_joint_2026-09-09.md`. Joint family planning: same acceptance (32/36,
 22/24), family-consistency issues 9 → 3 of 60 runs, mixed-family orientations 3 → 0.
+
+Third run, H1 protocol (`results/ablations_h1_2026-09-09.md`, 15 cases × 7 sizes): one
+approved example per orientation (rendered with a composition the planner would not pick)
+raises agreement with that composition on the four held-out sizes from 0.24 to 0.65
+(designer ceiling 0.99); held-out sizes that would need a re-layout drop from 60/60 to 18/60.
+Agreement is IoU of planned boxes, a proxy for corrections, not a human measurement.
 
 ## Family-consistency checks (contract v2, cross-variant)
 

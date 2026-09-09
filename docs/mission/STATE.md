@@ -61,8 +61,10 @@ inputs only. Numbers are synthetic-fixture engineering results, not customer val
 - No PSD fixture in the repo: PSD import is unit-tested with synthetic layers only; real
   customer PSDs are `BLOCKED_EXTERNAL`.
 - Flat-image decomposition is validated on a synthetic banner only; real photography untested.
-- The constraint planner uses three hand-written layout families per aspect class; families
-  are not yet learned from approved variants (H1).
+- The constraint planner uses three hand-written layout families per aspect class plus, per
+  project, families learned from approved variants (H1). Learning is validated on synthetic
+  examples only (same assets and copy as the master); real designer examples with manual
+  edits are untested, and one example per orientation stays at confidence 0.5.
 - No multi-tenant auth, metering, billing, or durable job queue across restarts (jobs are
   in-process; interrupted variants are marked failed on restart).
 - Human calibration of the verdict and operator-time measurements not performed.
@@ -118,13 +120,20 @@ inputs only. Numbers are synthetic-fixture engineering results, not customer val
   busy background included). Family-consistency issues 9 → 3 of 60 runs at equal
   acceptance and compute.
 
+- H1 learning from approved examples shipped and ablated (`design/examples.py`,
+  `results/ablations_h1_2026-09-09.md`): approved variants of a project become examples;
+  per orientation the planner infers a family, a hierarchy scale and soft constraint
+  proposals with confidence; `GET /api/projects/{id}/learned` and the rules panel show them.
+  On held-out sizes agreement with the designer's composition rises 0.24 → 0.65 and sizes
+  needing a re-layout drop 60/60 → 18/60 at +3.8 s setup per case. Test suite: 248 tests.
+
 ## Next actions (in order)
 
 1. Real-design corpus when access exists (licensed PSDs/photos); decomposition on
    photographs; human calibration of verdicts and correction-time measurement via the pilot
-   instruments.
-2. H1: learn layout families/breakpoints from a few approved variants (element matching
-   across examples, executable rule proposals with provenance); evaluate against hand-written
-   families on held-out sizes.
+   instruments (this is also what turns the H1 proxy into a measured correction rate).
+2. H1 follow-ups: carry content pressure from a stacked example to smaller canvases (square
+   and portrait agreement 0.58/0.59 vs landscape 0.85); more than one example per
+   orientation raises confidence; H3 local-edit regression set; H5 correction retrieval.
 3. Roles within an owner (viewer/approver), retention policy, rate limiting; Docker image
    build verification on a machine with a Docker daemon.

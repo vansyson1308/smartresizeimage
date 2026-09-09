@@ -439,8 +439,6 @@
   }
   async function renderLearned() {
     const wrap = $("#learned-list");
-    const anyApproved = (state.project.variants || []).some((v) => v.approval === "approved" && v.status === "done");
-    if (!anyApproved) { wrap.innerHTML = ""; return; }
     try {
       const res = await api(`/api/projects/${pid()}/learned`);
       if (!res.families.length) { wrap.innerHTML = ""; return; }

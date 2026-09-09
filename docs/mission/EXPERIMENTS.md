@@ -6,7 +6,7 @@ lands behind flags with a rollback path.
 
 | ID | Hypothesis | Prior art | Status | Budget | Decision rule |
 |---|---|---|---|---|---|
-| H1 | A few approved variants yield reusable adaptation rules with less setup than manual responsive templates. | PosterO (example-conditioned layouts), CHILI/Celtra template rules | PLANNED (needs multi-variant fixtures + IR) | CPU only | Adopt if held-out sizes need >= 30% fewer corrections vs one-master, counting import/match/approve time. |
+| H1 | A few approved variants yield reusable adaptation rules with less setup than manual responsive templates. | PosterO (example-conditioned layouts), CHILI/Celtra template rules | ABLATED, ADOPTED (proxy): one approved example per orientation lifts agreement with the designer's plan on held-out sizes 0.24 → 0.65 and cuts held-out sizes needing a re-layout 60/60 → 18/60 (−70%) at +3.8 s setup per case; human correction counts still unmeasured (below) | CPU only | Adopt if held-out sizes need >= 30% fewer corrections vs one-master, counting import/match/approve time. |
 | H2 | Joint planning across a variant family improves consistency and reduces corrections vs independent resizing. | DesignAsCode retargeting, iPoster constraints | ABLATED, ADOPTED: joint family choice cuts family-consistency issues 9 → 3 runs at equal acceptance and compute (below); correction-time effect unmeasured (no humans) | CPU only | Adopt if family-consistency errors drop without lowering acceptance; equal compute/review budget. |
 | H3 | A local-edit representation reduces unintended changes on campaign revision. | Layered editing (Qwen-Image-Layered) | PLANNED | CPU only | Adopt if pixel diff outside edited scope is zero on the regression set. |
 | H4 | Calibrated verification + targeted repair improves throughput vs missed critical errors. | Verification-driven repair | ABLATED (below): repair helps a weak planner, adds nothing to the constraint planner on this corpus; calibration vs humans still unmeasured | CPU only | Measure missed-error rate on held-out set before/after repair; report sample size. |
@@ -53,3 +53,32 @@ lands behind flags with a rollback path.
   bug. Consistency is measured on plans (reading order, ratios, identity, family), not on
   human judgement; correction-time impact remains unmeasured. Adopted as the default for
   multi-size jobs (`ProjectService.request_variants`).
+- 2026-09-09 — H1 learning from approved examples (`results/ablations_h1_2026-09-09.md`;
+  15 cases × 7 sizes, tuning cases 1–9, frozen holdout 10–15; run from the working tree
+  later committed as `7ffbd5d`). Protocol: the "designer" composition is the second-best
+  hand-written family per orientation (one the planner would not pick on its own); the
+  largest size of each orientation (1500×500, 1080×1080, 1080×1920) rendered with it is the
+  single approved example; the other four sizes (1200×628, 300×250, 600×600, 1080×1350) are
+  held out. `agreement` = mean IoU of planned element boxes against the designer plan on the
+  held-out sizes; a held-out size with agreement < 0.5 counts as "needs a re-layout" (the
+  correction proxy).
+
+  | Config | Agreement, tuning | Agreement, holdout | Held-out sizes with agreement < 0.5 | Accepted (tuning / holdout) | Family-issue runs | Mean s on example sizes |
+  |---|---:|---:|---:|---:|---:|---:|
+  | joint (no example) | 0.24 | 0.24 | 60/60 | 59/63 / 40/42 | 6 | 1.52 |
+  | learned (one example per orientation) | 0.65 | 0.66 | 18/60 (tuning 11/36, holdout 7/24) | 62/63 / 42/42 | 0 | 5.29 |
+  | designer_ref (ceiling) | 0.99 | 0.99 | 0/60 | 59/63 / 40/42 | 0 | 1.57 |
+
+  Per orientation (learned vs joint): landscape 0.85 vs 0.17, square 0.58 vs 0.25, portrait
+  0.59 vs 0.27. Reading: one example is enough to make the planner follow the designer's
+  side-by-side composition almost exactly; stacked compositions (square/portrait) transfer
+  only partially because the example's union regions do not carry content pressure to a
+  smaller canvas. Setup cost is ≈3.8 s per case for three orientations (render example ≈1.2 s
+  each; matching and inference < 0.1 s); held-out sizes cost the same 0.77 s as before. The
+  higher acceptance of `learned` (the three `large_logo_long_cta` 300×250 failures disappear)
+  is a side effect of the different composition, not evidence of better layouts. Decision
+  rule met on the proxy (−70% ≥ −30%), so learning is on by default in the product (approved
+  variants of a project are the examples; `GET /api/projects/{id}/learned` shows the rules).
+  Not measured: human correction counts, real designer examples with manual edits (matching
+  here is trivial because example and master share assets and copy), more than one example
+  per orientation (confidence stays 0.5 with one).
