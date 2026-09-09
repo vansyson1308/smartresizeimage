@@ -41,6 +41,7 @@ python backend/tools/run_ablations.py --outdir /tmp/ablations     # planner/repa
 python backend/tools/run_ablations.py --configs joint,designer_ref,learned \
   --sizes 1200x628,1500x500,300x250,1080x1080,600x600,1080x1920,1080x1350 \
   --outdir /tmp/ablations_h1                                       # H1: learn from one approved example
+python backend/tools/run_local_edits.py --outdir /tmp/local_edits   # H3: out-of-scope change on revisions
 ```
 
 ## Splits
@@ -91,6 +92,12 @@ that composition on the four held-out sizes from 0.24 to 0.65 with tight regions
 with slot expansion (designer ceiling 0.99); held-out sizes that would need a re-layout drop
 from 60/60 to 6/60. Agreement is IoU of planned boxes, a proxy for corrections, not a human
 measurement.
+
+Local edits (H3, `results/local_edits_2026-09-09.md`, 15 cases × 3 sizes × 4 revisions):
+regenerating with the previous plan as reference leaves pixels outside the edited element's
+padded box unchanged in 174/180 revisions (156/180 when re-planning; 21 of those move other
+text). The residual is the per-stack text plate on busy backgrounds. Pixel locality is not a
+quality judgement; the verdict pipeline still runs on every revision.
 
 ## Family-consistency checks (contract v2, cross-variant)
 

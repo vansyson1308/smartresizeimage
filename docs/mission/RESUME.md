@@ -40,21 +40,24 @@ needed; launch Chromium with `executable_path="/opt/pw-browsers/chromium"` in th
 
 ## Next executable task
 
-H3 — local-edit representation: build a regression set for campaign revisions (change one
-copy string, swap one asset, move one element on the master) in
-`backend/tests/test_local_edits.py`: regenerate the same variant before and after the edit
-with the same seed and assert that pixels outside the edited element's box (plus its text
-plate) are identical, and that `planner_meta.family` and the other elements' placements do
-not change. Where the assertion fails, make the planner and repair loop deterministic with
-respect to unrelated elements (the likely culprits: content pressure re-planning the whole
-stack, plate clustering merging neighbours). Record H3 in `EXPERIMENTS.md` with the number
-of edits whose out-of-scope diff is zero.
+H5 — retrieval from correction history: rejection reasons already land in the event log
+(`api/events.py`, kind `approval` with `reason`) and every variant keeps its plan. Add
+`backend/app/design/corrections.py` that, per project, pairs a rejected variant with the
+next accepted variant of the same size and derives a reviewable rule from the difference
+(e.g. reason mentions "logo" and the logo's scale grew → `scale_range` proposal on the logo;
+reason mentions "text"/"read" and a plate or larger font followed → `min_text_size`
+proposal), stored with provenance `recovered` and confidence 0.5. Expose them next to the
+learned families (`GET /api/projects/{id}/learned` → `corrections`), let the planner apply
+confirmed ones as constraints, and add a regression test where a rejected "logo too small"
+variant makes the next generation keep the logo above the accepted scale. Then measure on
+the synthetic corpus whether repeat rejections for the same reason drop (record in
+`EXPERIMENTS.md`, H5). After that: roles within an owner, retention, rate limiting.
 
 ## Files to know
 
 - `backend/app/quality/` — contract v2 (checks, verdict rules)
 - `backend/app/design/` — document, serialize, fonts, text_render, adapter, assets, project,
-  render, variant, planner, examples (H1), decompose
+  render, variant (incl. H3 reference plans), planner, examples (H1), decompose
 - `backend/app/api/` — service (domain ops), server (FastAPI), jobs, presets
 - `backend/app/web/` — index.html, app.js, styles.css
 - `backend/tools/run_layout_bench.py` — modes baseline/phase21/phase3/design

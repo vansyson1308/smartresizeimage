@@ -8,7 +8,7 @@ lands behind flags with a rollback path.
 |---|---|---|---|---|---|
 | H1 | A few approved variants yield reusable adaptation rules with less setup than manual responsive templates. | PosterO (example-conditioned layouts), CHILI/Celtra template rules | ABLATED, ADOPTED (proxy): one approved example per orientation lifts agreement with the designer's plan on held-out sizes 0.24 → 0.85 and cuts held-out sizes needing a re-layout 60/60 → 6/60 (−90%) at +3.7 s setup per case; human correction counts still unmeasured (below) | CPU only | Adopt if held-out sizes need >= 30% fewer corrections vs one-master, counting import/match/approve time. |
 | H2 | Joint planning across a variant family improves consistency and reduces corrections vs independent resizing. | DesignAsCode retargeting, iPoster constraints | ABLATED, ADOPTED: joint family choice cuts family-consistency issues 9 → 3 runs at equal acceptance and compute (below); correction-time effect unmeasured (no humans) | CPU only | Adopt if family-consistency errors drop without lowering acceptance; equal compute/review budget. |
-| H3 | A local-edit representation reduces unintended changes on campaign revision. | Layered editing (Qwen-Image-Layered) | PLANNED | CPU only | Adopt if pixel diff outside edited scope is zero on the regression set. |
+| H3 | A local-edit representation reduces unintended changes on campaign revision. | Layered editing (Qwen-Image-Layered) | ABLATED, ADOPTED: regenerating with the previous plan as reference gives zero out-of-scope pixel change on the 5-edit regression set and on 174/180 corpus revisions (156/180 when re-planning); residual = stack plates on busy backgrounds (below) | CPU only | Adopt if pixel diff outside edited scope is zero on the regression set. |
 | H4 | Calibrated verification + targeted repair improves throughput vs missed critical errors. | Verification-driven repair | ABLATED (below): repair helps a weak planner, adds nothing to the constraint planner on this corpus; calibration vs humans still unmeasured | CPU only | Measure missed-error rate on held-out set before/after repair; report sample size. |
 | H5 | Retrieval from approved correction history reduces recurring mistakes per brand without training. | RAG-style retrieval | PLANNED (needs correction store) | CPU only | Adopt if repeat-correction rate drops on the same brand's held-out campaigns. |
 
@@ -106,3 +106,30 @@ lands behind flags with a rollback path.
   not accepted are `busy_bg` 300×250 reviews (OCR agreement 0%), the same honest reviews as
   every other config. Decision rule met on the proxy (−90% ≥ −30%); correction counts with
   humans remain unmeasured.
+- 2026-09-09 — H3 local edits (`results/local_edits_2026-09-09.md`; 15 cases × 3 sizes ×
+  4 revisions, run from the working tree committed as `25c794c`). A revision regenerates
+  the variant with its previous plan as reference (`generate_variant(reference=...)`,
+  `keep_layout` on `POST .../regenerate`, on by default): elements keep their boxes and
+  font sizes; copy that no longer fits its box falls back to a fresh plan and is reported
+  as `layout_change`. Scope = the edited element's box before and after, padded 36 px;
+  OCR off (pixels decide locality).
+
+  | Mode | Revisions | Zero out-of-scope change | Mean out-of-scope change | Revisions where other elements moved |
+  |---|---:|---:|---:|---:|
+  | reference (keep layout) | 180 | 174 | 0.0007 | 0 |
+  | replan (previous behaviour) | 180 | 156 | 0.0033 | 21 |
+
+  By revision kind (reference vs replan, zero out-of-scope): headline copy 45/45 vs 21/45
+  (re-planning re-centres the text stack, so the other lines move), longer CTA 39/45 vs
+  45/45, logo swap 45/45 vs 45/45, subheadline colour 45/45 vs 45/45. The six residual
+  `reference` cases are the three `busy_bg` fixtures at 1200×628 and 1080×1080 with the
+  longer CTA: text plates are computed per text stack, so widening the CTA widens the
+  stack's plate beyond the CTA's own box (≤ 7.7% of out-of-scope pixels, no element
+  moved). Re-planning happens to keep the CTA local here because the longer copy still
+  fits on one line. No revision needed the `layout_change` fallback on this corpus.
+  Regression set (`test_local_edits.py`, synthetic master, 1080×1080): copy override,
+  master copy edit, asset swap, colour change and hidden element all give exactly zero
+  out-of-scope change; a copy that cannot fit triggers the fallback and the warning.
+  Decision rule met; adopted as the default for regeneration. Not measured: human
+  perception of "unintended change", revisions on real designs, edits that change an
+  element's role or add elements (new elements are planned fresh and reported).

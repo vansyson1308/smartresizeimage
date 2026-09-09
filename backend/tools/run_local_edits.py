@@ -176,7 +176,7 @@ def summarize(records: list[EditRecord]) -> dict:
                 sum(r.out_of_scope_diff for r in subset) / len(subset), 5
             ),
             "runs_with_moved_elements": sum(1 for r in subset if r.moved_elements > 0),
-            "accepted": sum(1 for r in subset if r.verdict == "accepted"),
+            "failed": sum(1 for r in subset if r.verdict == "failed"),
             "replanned_runs": sum(1 for r in subset if r.replanned > 0),
             "mean_s": round(sum(r.elapsed_s for r in subset) / len(subset), 3),
         }
@@ -206,14 +206,14 @@ def build_report(records: list[EditRecord], run_meta: dict) -> str:
         f"- sizes: {', '.join(run_meta['sizes'])}; cases: {run_meta['cases']}",
         "",
         "| Mode | Runs | Zero out-of-scope diff | Mean out-of-scope diff | "
-        "Runs with moved elements | Accepted | Re-planned (copy no longer fit) | Mean s |",
+        "Runs with moved elements | Failed | Re-planned (copy no longer fit) | Mean s |",
         "|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for mode, m in s.items():
         lines.append(
             f"| {mode} | {m['runs']} | {m['zero_out_of_scope']} | "
             f"{m['mean_out_of_scope_diff']:.4f} | {m['runs_with_moved_elements']} | "
-            f"{m['accepted']} | {m['replanned_runs']} | {m['mean_s']:.2f} |"
+            f"{m['failed']} | {m['replanned_runs']} | {m['mean_s']:.2f} |"
         )
     lines += [
         "",
@@ -236,6 +236,8 @@ def build_report(records: list[EditRecord], run_meta: dict) -> str:
         "revision touched anything but the edited element, not whether the result is good.",
         "- `Re-planned` counts revisions where the new copy did not fit its previous box and the "
         "element fell back to a fresh plan (reported as `layout_change`).",
+        "- OCR is off in this measurement (pixels decide locality), so verdicts are `needs_review` "
+        "by contract unless a structural check fails; only `Failed` is reported.",
     ]
     return "\n".join(lines)
 
