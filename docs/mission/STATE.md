@@ -140,14 +140,21 @@ inputs only. Numbers are synthetic-fixture engineering results, not customer val
   carried rules cut repeat rejections 28 → 0 over 14 later campaigns. Human reasons and
   brand taste unmeasured. Test suite: 259 tests.
 
+- Commercial completeness: roles within an owner (viewer/editor/approver/admin via
+  `AUTOBANNER_API_KEYS=key:owner:role`, 403 on disallowed actions), per-owner rate limiting
+  on mutating requests (`AUTOBANNER_RATE_LIMIT`, 429 + `Retry-After`, logged), retention
+  policy (`AUTOBANNER_RETENTION_DAYS`, purge at startup and daily, logged, no undo).
+  `test_ownership_and_jobs.py` 13 tests; `docs/OPERATIONS.md` updated. Test suite: 264 tests.
+
 ## Next actions (in order)
 
 1. Real-design corpus when access exists (licensed PSDs/photos); decomposition on
    photographs; human calibration of verdicts and correction-time measurement via the pilot
    instruments (this is also what turns the H1 proxy into a measured correction rate).
-2. Commercial completeness still open: roles within an owner (viewer/approver), retention
-   policy for projects and events, rate limiting per key; Docker image build verification on
-   a machine with a Docker daemon.
+2. Still open on the commercial side: Docker image build verification on a machine with a
+   Docker daemon; event-log retention (projects are purged, events are not); multi-node
+   rate limits and job records (per process today); billing remains out of scope without
+   authorization.
 3. Research follow-ups: brand-level rule carry-over across projects (H5), H1 with more than
    one example per orientation and with real designer examples, per-element text plates so
    a revision on a busy background stays local (H3 residual).

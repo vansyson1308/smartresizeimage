@@ -213,3 +213,154 @@ def test_pilot_summary_endpoint_reflects_journey(two_owner_client: TestClient) -
     assert s["variants_generated"] == 1 and s["approved"] == 1
     assert s["first_pass_acceptance"] == 1.0
     assert c.get("/api/pilot/summary", headers=B).json()["events"] == 0
+
+
+# ---- roles, rate limiting, retention ----------------------------------------------------
+
+
+@pytest.fixture()
+def role_client(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv(
+        "AUTOBANNER_API_KEYS",
+        "k-admin:acme:admin, k-editor:acme:editor, k-approver:acme:approver, k-viewer:acme:viewer",
+    )
+    monkeypatch.delenv("AUTOBANNER_API_KEY", raising=False)
+    monkeypatch.delenv("AUTOBANNER_RATE_LIMIT", raising=False)
+    app = create_app(tmp_path / "data", max_workers=1)
+    with TestClient(app) as c:
+        yield c
+    app.state.service.shutdown()
+
+
+ADMIN = {"X-API-Key": "k-admin"}
+EDITOR = {"X-API-Key": "k-editor"}
+APPROVER = {"X-API-Key": "k-approver"}
+VIEWER = {"X-API-Key": "k-viewer"}
+
+
+def test_roles_within_an_owner(role_client: TestClient) -> None:
+    c = role_client
+    assert c.get("/api/health").json()["roles"] == ["admin", "approver", "editor", "viewer"]
+    # viewer: read only
+    assert (
+        c.post(
+            "/api/projects/blank", json={"name": "V", "width": 600, "height": 300}, headers=VIEWER
+        ).status_code
+        == 403
+    )
+    # editor creates and edits, approver and viewer see the same project (same owner)
+    res = c.post(
+        "/api/projects/blank", json={"name": "E", "width": 600, "height": 300}, headers=EDITOR
+    )
+    assert res.status_code == 201, res.text
+    pid = res.json()["project"]["id"]
+    assert c.get(f"/api/projects/{pid}", headers=VIEWER).status_code == 200
+    assert c.get(f"/api/projects/{pid}", headers=APPROVER).status_code == 200
+    ops = {"ops": [{"op": "rename", "name": "renamed"}]}
+    assert c.patch(f"/api/projects/{pid}/document", json=ops, headers=VIEWER).status_code == 403
+    assert c.patch(f"/api/projects/{pid}/document", json=ops, headers=APPROVER).status_code == 403
+    assert c.patch(f"/api/projects/{pid}/document", json=ops, headers=EDITOR).status_code == 200
+    # generation is an edit
+    targets = {"targets": [{"width": 300, "height": 250, "name": "M"}]}
+    assert (
+        c.post(f"/api/projects/{pid}/variants", json=targets, headers=APPROVER).status_code == 403
+    )
+    res = c.post(f"/api/projects/{pid}/variants", json=targets, headers=EDITOR)
+    assert res.status_code == 202, res.text
+    job = c.app.state.service.jobs.wait(res.json()["job"]["id"], timeout=300)
+    assert job.status == "done"
+    vid = c.get(f"/api/projects/{pid}/variants", headers=VIEWER).json()["variants"][0]["id"]
+    # approvals: approver or admin only
+    body = {"approval": "approved"}
+    assert (
+        c.post(
+            f"/api/projects/{pid}/variants/{vid}/approval", json=body, headers=EDITOR
+        ).status_code
+        == 403
+    )
+    assert (
+        c.post(
+            f"/api/projects/{pid}/variants/{vid}/approval", json=body, headers=VIEWER
+        ).status_code
+        == 403
+    )
+    assert (
+        c.post(
+            f"/api/projects/{pid}/variants/{vid}/approval", json=body, headers=APPROVER
+        ).status_code
+        == 200
+    )
+    assert (
+        c.post(
+            f"/api/projects/{pid}/variants/{vid}/approval", json={"approval": "none"}, headers=ADMIN
+        ).status_code
+        == 200
+    )
+    # deletion is an edit; a bad key is still 401
+    assert c.delete(f"/api/projects/{pid}", headers=VIEWER).status_code == 403
+    assert c.delete(f"/api/projects/{pid}", headers={"X-API-Key": "nope"}).status_code == 401
+    assert c.delete(f"/api/projects/{pid}", headers=EDITOR).status_code == 204
+
+
+def test_unknown_role_is_rejected_at_startup(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTOBANNER_API_KEYS", "k:acme:owner")
+    with pytest.raises(ValueError):
+        create_app(tmp_path / "data", max_workers=1)
+
+
+def test_rate_limit_returns_429_with_retry_after(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTOBANNER_API_KEYS", "key-a:owner-a, key-b:owner-b")
+    monkeypatch.setenv("AUTOBANNER_RATE_LIMIT", "2/minute")
+    app = create_app(tmp_path / "data", max_workers=1)
+    with TestClient(app) as c:
+        assert c.get("/api/health").json()["rate_limit"] == "2/60s"
+        body = {"name": "R", "width": 600, "height": 300}
+        assert c.post("/api/projects/blank", json=body, headers=A).status_code == 201
+        assert c.post("/api/projects/blank", json=body, headers=A).status_code == 201
+        res = c.post("/api/projects/blank", json=body, headers=A)
+        assert res.status_code == 429 and int(res.headers["Retry-After"]) >= 1
+        # reads are never limited; other owners have their own bucket
+        assert c.get("/api/projects", headers=A).status_code == 200
+        assert c.post("/api/projects/blank", json=body, headers=B).status_code == 201
+        events = app.state.service.events.read("owner-a")
+        assert any(e["kind"] == "rate_limited" for e in events)
+    app.state.service.shutdown()
+
+
+def test_rate_parser_and_bucket() -> None:
+    from backend.app.api.ratelimit import RateLimiter, parse_rate
+
+    assert parse_rate(None) is None and parse_rate("") is None
+    assert parse_rate("60/minute").per_seconds == 60 and parse_rate("600/hour").count == 600
+    assert parse_rate("5/10s").per_seconds == 10
+    with pytest.raises(ValueError):
+        parse_rate("fast")
+    now = [0.0]
+    rl = RateLimiter(parse_rate("2/second"), clock=lambda: now[0])
+    assert rl.allow("o") == (True, 0) and rl.allow("o") == (True, 0)
+    allowed, retry = rl.allow("o")
+    assert not allowed and retry >= 1
+    now[0] += 1.0
+    assert rl.allow("o")[0]
+
+
+def test_retention_purges_untouched_projects(tmp_path: Path) -> None:
+    service = ProjectService(tmp_path / "data", max_workers=1)
+    try:
+        old = service.create_blank_project(name="old", width=600, height=300, owner="local")
+        fresh = service.create_blank_project(name="fresh", width=600, height=300, owner="local")
+        # backdate the old project's last touch
+        meta_path = service.projects_dir / old.id / "project.json"
+        payload = json.loads(meta_path.read_text())
+        payload["updated_at"] = "2020-01-01T00:00:00+00:00"
+        meta_path.write_text(json.dumps(payload))
+        service._cache.pop(old.id, None)
+        deleted = service.purge_stale_projects(30)
+        assert deleted == [old.id]
+        assert not (service.projects_dir / old.id).exists()
+        assert (service.projects_dir / fresh.id).exists()
+        assert service.purge_stale_projects(0) == []
+        events = service.events.read("local")
+        assert any(e["kind"] == "project_purged" and e["project_id"] == old.id for e in events)
+    finally:
+        service.shutdown()

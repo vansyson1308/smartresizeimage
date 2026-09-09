@@ -20,7 +20,9 @@ auth mode and limits. API docs: `/api/docs`.
 | Variable | Default | Meaning |
 |---|---|---|
 | `AUTOBANNER_DATA_DIR` | `data` | Root for projects, jobs, usage, fonts. One directory = one deployment. |
-| `AUTOBANNER_API_KEYS` | unset | `key1:owner-a,key2:owner-b`. Requests must send `X-API-Key`; each owner sees only its own projects/jobs. |
+| `AUTOBANNER_API_KEYS` | unset | `key1:owner-a[:role],key2:owner-b[:role]`. Requests must send `X-API-Key`; each owner sees only its own projects/jobs. Roles: `viewer` (read), `editor` (edit, generate, export; no approvals), `approver` (approve/reject only), `admin` (all, default). An unknown role fails startup. |
+| `AUTOBANNER_RATE_LIMIT` | unset | Per-owner token bucket for mutating requests, e.g. `60/minute`, `600/hour`, `5/10s` → HTTP 429 with `Retry-After`; reads are never limited; hits are logged as `rate_limited` events. In-memory, per process. |
+| `AUTOBANNER_RETENTION_DAYS` | unset | Delete projects (variants, history, corrections) untouched for longer than this, at startup and once a day. Logged as `project_purged`. No undo: export a project zip first if you want to keep it. |
 | `AUTOBANNER_API_KEY` | unset | Single-key form (owner `default`). Without any key the server is **open** (owner `local`) — development only. |
 | `AUTOBANNER_JOB_WORKERS` | `2` | Concurrent variant jobs. Each variant is CPU-bound (1–4 s on 4 cores). |
 | `AUTOBANNER_QUOTA_VARIANTS_PER_DAY` | unlimited | Per-owner daily variant cap → HTTP 429. |
@@ -61,6 +63,8 @@ Everything is plain files. Backup = copy the directory (or export projects as `.
 - Jobs are in-process threads; a restart marks running jobs and variants as `interrupted`/
   `failed` (never silently pending). Re-run them from the UI ("Regenerate").
 - Idempotency: send `Idempotency-Key` on `POST /variants` to make retries safe.
+- Roles limit what a key may do within an owner (403), rate limits bound write traffic per
+  owner (429), retention removes untouched projects; all three are off unless configured.
 
 ## Deploy / rollback
 
@@ -81,5 +85,6 @@ Everything is plain files. Backup = copy the directory (or export projects as `.
 
 ## Not yet provided
 
-Multi-node job queue, billing, SSO, audit trail, retention policies beyond manual delete,
-rate limiting per IP. See `docs/mission/CAPABILITIES.md` for status.
+Multi-node job queue (rate limits and job records are per process), billing, SSO, a full audit
+trail beyond the event log, rate limiting per IP (limits are per owner/key). See
+`docs/mission/CAPABILITIES.md` for status.

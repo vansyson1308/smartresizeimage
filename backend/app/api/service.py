@@ -1102,7 +1102,83 @@ class ProjectService:
             raise ServiceError("job not found", 404)
         return job
 
+    # ---- retention -----------------------------------------------------------------------
+    def purge_stale_projects(self, days: int, *, now: str | None = None) -> list[str]:
+        """Delete projects (with variants, history, corrections) untouched for ``days``.
+
+        "Untouched" = neither the project nor any of its variants was updated after the
+        cutoff and no job of the project is pending/running. Returns the deleted ids.
+        Operators are expected to export project zips they want to keep; there is no
+        undo for a purge.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        if days <= 0:
+            return []
+        cutoff = (
+            datetime.fromisoformat(now) if now else datetime.now(UTC)
+        ) - timedelta(days=days)
+        deleted: list[str] = []
+        if not self.projects_dir.exists():
+            return deleted
+        for root in sorted(self.projects_dir.iterdir()):
+            if not (root / "project.json").exists():
+                continue
+            try:
+                project = self.get_project(root.name, owner=None)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("retention: skip unreadable project %s: %s", root, exc)
+                continue
+            stamps = [str(project.meta.get("updated_at") or project.meta.get("created_at") or "")]
+            stamps += [str(v.updated_at) for v in project.variants.values()]
+            latest = max((t for t in stamps if t), default="")
+            if not latest:
+                continue
+            try:
+                last_touch = datetime.fromisoformat(latest)
+            except ValueError:
+                continue
+            if last_touch.tzinfo is None:
+                last_touch = last_touch.replace(tzinfo=UTC)
+            if last_touch >= cutoff:
+                continue
+            active = any(
+                j.project_id == project.id and j.status in ("pending", "running")
+                for j in self.jobs.list()
+            )
+            if active:
+                continue
+            owner = project.meta.get("owner") or LOCAL_OWNER
+            with self._lock(project.id):
+                project.delete()
+                self._cache.pop(project.id, None)
+            self.events.record(
+                owner, "project_purged", project_id=project.id, last_touch=latest, days=days
+            )
+            deleted.append(project.id)
+        if deleted:
+            logger.info("retention: purged %d project(s) older than %d days", len(deleted), days)
+        return deleted
+
+    def start_retention(self, days: int, interval_s: float = 24 * 3600) -> None:
+        """Purge now, then once per ``interval_s`` on a daemon thread until shutdown."""
+        self._retention_stop = threading.Event()
+
+        def _loop() -> None:
+            while not self._retention_stop.is_set():
+                try:
+                    self.purge_stale_projects(days)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("retention sweep failed: %s", exc)
+                self._retention_stop.wait(interval_s)
+
+        self._retention_thread = threading.Thread(target=_loop, name="retention", daemon=True)
+        self._retention_thread.start()
+
     def shutdown(self) -> None:
+        stop = getattr(self, "_retention_stop", None)
+        if stop is not None:
+            stop.set()
         self.jobs.shutdown()
 
 

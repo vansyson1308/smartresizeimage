@@ -40,23 +40,20 @@ needed; launch Chromium with `executable_path="/opt/pw-browsers/chromium"` in th
 
 ## Next executable task
 
-Commercial completeness, in this order, each with tests in `test_ownership_and_jobs.py`:
+Two small, independent items, then a consolidation pass:
 
-1. Rate limiting per API key/owner in `backend/app/api/server.py` (token bucket per owner
-   for `POST` routes, `429` with `Retry-After`, limits from `AUTOBANNER_RATE_LIMIT` such as
-   `60/minute`, disabled when unset); record limit hits in the event log.
-2. Retention policy in `backend/app/api/service.py`: `AUTOBANNER_RETENTION_DAYS` removes
-   projects (and their variants, corrections, history) untouched for longer than that on
-   startup and once a day from the job manager thread; document in `docs/OPERATIONS.md`
-   with the restore path (project zip export before deletion is the operator's job — say
-   so).
-3. Roles within an owner: API keys map to `owner:role` (`editor` | `approver` | `viewer`)
-   in `AUTOBANNER_API_KEYS`; viewers get `403` on document edits, generation and
-   approvals; only approvers may approve/reject; editors may do everything but approve.
-   Keep `LOCAL_OWNER` as editor+approver when no keys are configured.
-
-Then update `CAPABILITIES.md` (auth/roles/retention/rate limiting → VERIFIED_LOCAL),
-`docs/OPERATIONS.md`, and `ECONOMICS.md` if limits change the cost model.
+1. Event-log retention: `EventLog.trim(owner, days)` keeping the last N days of
+   `data/events/<owner>.jsonl`, called from `ProjectService.purge_stale_projects` with the
+   same `AUTOBANNER_RETENTION_DAYS`; test in `test_ownership_and_jobs.py`; note in
+   `docs/OPERATIONS.md`.
+2. Per-element text plates (H3 residual): in `generative/text_plate.py`, cluster boxes per
+   element instead of per stack when `TextPlateConfig.per_element` is set, and use that
+   mode for reference-plan revisions so a longer CTA on a busy background stays inside its
+   own padded box; re-run `run_local_edits.py` and update the H3 entry in `EXPERIMENTS.md`.
+3. Consolidation: re-run the browser journey and all three measurement tools on the final
+   head, refresh `CAPABILITIES.md` statuses and the PR description, and record the release
+   criteria check in `STATE.md` (what is VERIFIED_LOCAL vs BLOCKED_EXTERNAL: real corpus,
+   human calibration, provider credentials, Docker daemon).
 
 ## Files to know
 
@@ -64,7 +61,8 @@ Then update `CAPABILITIES.md` (auth/roles/retention/rate limiting → VERIFIED_L
 - `backend/app/design/` — document, serialize, fonts, text_render, adapter, assets, project,
   render, variant (incl. H3 reference plans), planner, examples (H1), corrections (H5),
   decompose
-- `backend/app/api/` — service (domain ops), server (FastAPI), jobs, presets
+- `backend/app/api/` — service (domain ops, retention), server (FastAPI, roles, rate limit),
+  jobs, presets, events, ratelimit
 - `backend/app/web/` — index.html, app.js, styles.css
 - `backend/tools/run_layout_bench.py` — modes baseline/phase21/phase3/design
 - `docs/mission/` — this workspace; `evidence/` holds the preserved false positive

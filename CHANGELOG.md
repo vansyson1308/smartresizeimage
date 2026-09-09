@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 ### Added
+- Roles within an owner (`AUTOBANNER_API_KEYS=key:owner:role`, viewer/editor/approver/admin),
+  per-owner rate limiting on mutating requests (`AUTOBANNER_RATE_LIMIT`, 429 + `Retry-After`)
+  and a retention policy (`AUTOBANNER_RETENTION_DAYS`, purge untouched projects at startup and
+  daily, logged as `project_purged`).
 - Rules from correction history (H5, `design/corrections.py`): a rejection snapshots the
   rejected plan and reason; once a variant of the same size is approved, the difference
   becomes a reviewable proposal (`scale_range`, `min_text_size` scaled by the size it was

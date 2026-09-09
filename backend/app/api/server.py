@@ -31,6 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from ..config import Config
 from ..logging_config import setup_logging
 from .presets import preset_catalog
+from .ratelimit import RateLimiter, parse_rate
 from .service import LOCAL_OWNER, MAX_UPLOAD_BYTES, ProjectService, ServiceError, env_flag
 
 logger = logging.getLogger("autobanner.api.server")
@@ -46,10 +47,15 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
     service = ProjectService(
         data_root, max_workers=workers, use_ai=env_flag("AUTOBANNER_USE_AI", False)
     )
-    key_owners = _key_owner_map()
+    key_principals = _key_owner_map()
+    key_owners = {k: owner for k, (owner, _role) in key_principals.items()}
+    limiter = RateLimiter(parse_rate(os.environ.get("AUTOBANNER_RATE_LIMIT")))
+    retention_days = _int_env("AUTOBANNER_RETENTION_DAYS")
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        if retention_days:
+            service.start_retention(retention_days)
         yield
         service.shutdown()
 
@@ -70,8 +76,45 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
             raise HTTPException(status_code=401, detail="invalid or missing API key")
         return owner
 
+    async def current_role(x_api_key: str | None = Header(default=None)) -> str:
+        if not key_principals:
+            return "admin"
+        principal = key_principals.get(x_api_key or "")
+        if principal is None:
+            raise HTTPException(status_code=401, detail="invalid or missing API key")
+        return principal[1]
+
+    def require(*roles: str):
+        async def _guard(role: str = Depends(current_role)) -> None:
+            if role != "admin" and role not in roles:
+                needs = "/".join(roles)
+                raise HTTPException(
+                    status_code=403, detail=f"role '{role}' may not do this (needs {needs})"
+                )
+
+        return Depends(_guard)
+
     dep = [Depends(current_owner)]
+    edit = [Depends(current_owner), require("editor")]
+    approve = [Depends(current_owner), require("approver")]
     Owner = Depends(current_owner)  # noqa: N806
+
+    @app.middleware("http")
+    async def rate_limit(request: Request, call_next):
+        if limiter.enabled and request.method in ("POST", "PATCH", "PUT", "DELETE"):
+            key = request.headers.get("x-api-key") or ""
+            owner = key_owners.get(key, LOCAL_OWNER if not key_owners else "anonymous")
+            allowed, retry = limiter.allow(owner)
+            if not allowed:
+                service.events.record(
+                    owner, "rate_limited", path=request.url.path, retry_after=retry
+                )
+                return JSONResponse(
+                    {"detail": "rate limit exceeded", "retry_after": retry},
+                    status_code=429,
+                    headers={"Retry-After": str(retry)},
+                )
+        return await call_next(request)
 
     async def read_limited(upload: UploadFile, limit: int) -> bytes:
         """Read an upload without buffering more than ``limit`` bytes."""
@@ -101,6 +144,9 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
             "version": app.version,
             "environment": environment_fingerprint(),
             "auth": "api_key" if key_owners else "open",
+            "roles": sorted({role for _o, role in key_principals.values()}) or ["admin"],
+            "rate_limit": limiter.describe(),
+            "retention_days": retention_days,
             "limits": {
                 "max_target_side": Config.MAX_IMAGE_SIZE,
                 "max_upload_bytes": MAX_UPLOAD_BYTES,
@@ -129,7 +175,7 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
     def list_projects(owner: str = Owner) -> dict:
         return {"projects": service.list_projects(owner)}
 
-    @app.post("/api/projects", dependencies=dep, status_code=201)
+    @app.post("/api/projects", dependencies=edit, status_code=201)
     async def create_project(
         file: UploadFile = _UPLOAD,
         name: str | None = Form(default=None),
@@ -142,7 +188,7 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
         )
         return service.project_payload(project)
 
-    @app.post("/api/projects/blank", dependencies=dep, status_code=201)
+    @app.post("/api/projects/blank", dependencies=edit, status_code=201)
     async def create_blank(request: Request, owner: str = Owner) -> dict:
         body = await request.json()
         if not isinstance(body, dict):
@@ -157,7 +203,7 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
         )
         return service.project_payload(project)
 
-    @app.post("/api/projects/{project_id}/elements", dependencies=dep, status_code=201)
+    @app.post("/api/projects/{project_id}/elements", dependencies=edit, status_code=201)
     async def add_element(
         project_id: str,
         kind: str = Form(...),
@@ -195,7 +241,7 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
         )
         return service.project_payload(project)
 
-    @app.post("/api/projects/import", dependencies=dep, status_code=201)
+    @app.post("/api/projects/import", dependencies=edit, status_code=201)
     async def import_project(file: UploadFile = _UPLOAD, owner: str = Owner) -> dict:
         data = await read_limited(file, MAX_UPLOAD_BYTES * 4)
         project = service.import_project(data, owner=owner)
@@ -209,17 +255,17 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
     def learned_rules(project_id: str, owner: str = Owner) -> dict:
         return service.learned_rules(project_id, owner)
 
-    @app.post("/api/projects/{project_id}/learned/corrections/{index}/apply", dependencies=dep)
+    @app.post("/api/projects/{project_id}/learned/corrections/{index}/apply", dependencies=edit)
     def apply_correction(project_id: str, index: int, owner: str = Owner) -> dict:
         return service.apply_correction(project_id, index, owner)
 
-    @app.delete("/api/projects/{project_id}", dependencies=dep, status_code=204)
+    @app.delete("/api/projects/{project_id}", dependencies=edit, status_code=204)
     def delete_project(project_id: str, owner: str = Owner) -> Response:
         service.delete_project(project_id, owner)
         return Response(status_code=204)
 
     # ---- document ------------------------------------------------------------------------
-    @app.patch("/api/projects/{project_id}/document", dependencies=dep)
+    @app.patch("/api/projects/{project_id}/document", dependencies=edit)
     async def patch_document(project_id: str, request: Request, owner: str = Owner) -> dict:
         body = await request.json()
         ops = body.get("ops") if isinstance(body, dict) else None
@@ -227,14 +273,14 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
         project = service.apply_operations(project_id, ops or [], label=label, owner=owner)
         return service.project_payload(project)
 
-    @app.post("/api/projects/{project_id}/undo", dependencies=dep)
+    @app.post("/api/projects/{project_id}/undo", dependencies=edit)
     def undo(project_id: str, owner: str = Owner) -> dict:
         changed = service.undo(project_id, owner)
         payload = service.project_payload(service.get_project(project_id, owner))
         payload["undone"] = changed
         return payload
 
-    @app.post("/api/projects/{project_id}/restore/{version}", dependencies=dep)
+    @app.post("/api/projects/{project_id}/restore/{version}", dependencies=edit)
     def restore(project_id: str, version: int, owner: str = Owner) -> dict:
         service.restore(project_id, version, owner)
         return service.project_payload(service.get_project(project_id, owner))
@@ -256,7 +302,7 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
         )
 
     # ---- variants ------------------------------------------------------------------------
-    @app.post("/api/projects/{project_id}/variants", dependencies=dep, status_code=202)
+    @app.post("/api/projects/{project_id}/variants", dependencies=edit, status_code=202)
     async def request_variants(
         project_id: str,
         request: Request,
@@ -286,7 +332,7 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
         return FileResponse(service.variant_image_path(project_id, variant_id, owner),
                             media_type="image/png", headers={"Cache-Control": "no-store"})
 
-    @app.post("/api/projects/{project_id}/variants/{variant_id}/approval", dependencies=dep)
+    @app.post("/api/projects/{project_id}/variants/{variant_id}/approval", dependencies=approve)
     async def approval(
         project_id: str, variant_id: str, request: Request, owner: str = Owner
     ) -> dict:
@@ -300,7 +346,7 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
         )
         return {"variant": rec.to_dict()}
 
-    @app.post("/api/projects/{project_id}/variants/{variant_id}/regenerate", dependencies=dep,
+    @app.post("/api/projects/{project_id}/variants/{variant_id}/regenerate", dependencies=edit,
               status_code=202)
     async def regenerate(
         project_id: str, variant_id: str, request: Request, owner: str = Owner
@@ -312,7 +358,7 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
         job = service.regenerate_variant(project_id, variant_id, spec, owner=owner)
         return {"job": job.to_dict()}
 
-    @app.delete("/api/projects/{project_id}/variants/{variant_id}", dependencies=dep,
+    @app.delete("/api/projects/{project_id}/variants/{variant_id}", dependencies=edit,
                 status_code=204)
     def delete_variant(project_id: str, variant_id: str, owner: str = Owner) -> Response:
         service.delete_variant(project_id, variant_id, owner)
@@ -323,7 +369,7 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
     def job_status(job_id: str, owner: str = Owner) -> dict:
         return {"job": service.get_job(job_id, owner).to_dict()}
 
-    @app.post("/api/jobs/{job_id}/cancel", dependencies=dep)
+    @app.post("/api/jobs/{job_id}/cancel", dependencies=edit)
     def cancel_job(job_id: str, owner: str = Owner) -> dict:
         job = service.get_job(job_id, owner)
         ok = service.jobs.cancel(job.id)
@@ -365,23 +411,39 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
     return app
 
 
-def _key_owner_map() -> dict[str, str]:
-    """Parse AUTOBANNER_API_KEYS ("key:owner,key2:owner2") and AUTOBANNER_API_KEY."""
-    mapping: dict[str, str] = {}
+ROLES = ("viewer", "editor", "approver", "admin")
+
+
+def _key_owner_map() -> dict[str, tuple[str, str]]:
+    """Parse AUTOBANNER_API_KEYS ("key:owner[:role],...") and AUTOBANNER_API_KEY.
+
+    Roles: ``viewer`` (read only), ``editor`` (edit, generate, export; no approvals),
+    ``approver`` (approve/reject only), ``admin`` (everything, the default).
+    """
+    mapping: dict[str, tuple[str, str]] = {}
     multi = os.environ.get("AUTOBANNER_API_KEYS", "").strip()
     if multi:
-        for pair in multi.split(","):
-            pair = pair.strip()
-            if not pair:
+        for entry in multi.split(","):
+            entry = entry.strip()
+            if not entry:
                 continue
-            key, _, owner = pair.partition(":")
-            key = key.strip()
+            parts = [x.strip() for x in entry.split(":")]
+            key = parts[0]
+            owner = (parts[1] if len(parts) > 1 and parts[1] else "default")[:64]
+            role = parts[2].lower() if len(parts) > 2 and parts[2] else "admin"
+            if role not in ROLES:
+                raise ValueError(f"unknown role '{role}' in AUTOBANNER_API_KEYS (use {ROLES})")
             if key:
-                mapping[key] = (owner.strip() or "default")[:64]
+                mapping[key] = (owner, role)
     single = os.environ.get("AUTOBANNER_API_KEY", "").strip()
     if single:
-        mapping.setdefault(single, "default")
+        mapping.setdefault(single, ("default", "admin"))
     return mapping
+
+
+def _int_env(name: str) -> int | None:
+    raw = os.environ.get(name, "").strip()
+    return int(raw) if raw.isdigit() and int(raw) > 0 else None
 
 
 app = create_app()
