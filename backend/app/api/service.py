@@ -673,7 +673,8 @@ class ProjectService:
         return job
 
     def _run_variant(self, project_id: str, variant_id: str, brief: VariantBrief, job: Job,
-                     progress, family: Family | None = None) -> dict:
+                     progress, family: Family | None = None,
+                     reference: dict | None = None) -> dict:
         project = self.get_project(project_id, owner=None)
         with self._lock(project_id):
             project.mark_variant(variant_id, "running")
@@ -686,6 +687,7 @@ class ProjectService:
             progress=progress,
             cancel=job.cancel,
             family=family,
+            reference=reference,
         )
         with self._lock(project_id):
             rec = project.store_variant_output(
@@ -834,6 +836,18 @@ class ProjectService:
             for key in ("text_overrides", "hidden_elements", "locale"):
                 if key in spec:
                     brief_dict[key] = spec[key]
+        # Local edits (H3): keep the previous layout of this variant unless asked to re-plan.
+        keep_layout = bool((spec or {}).get("keep_layout", True))
+        reference: dict | None = None
+        if keep_layout and rec.status == "done":
+            detail = project.variant_detail(variant_id) or {}
+            plan = detail.get("plan") or {}
+            if plan.get("placements") and plan.get("planner") == "constraints":
+                reference = {
+                    "placements": plan["placements"],
+                    "typography": plan.get("typography") or {},
+                    "variant_id": variant_id,
+                }
         brief = VariantBrief(
             width=rec.width,
             height=rec.height,
@@ -853,7 +867,9 @@ class ProjectService:
             project.save()
 
         def runner(job: Job, item: JobItem, progress) -> dict:
-            return self._run_variant(project_id, item.item_id, brief, job, progress)
+            return self._run_variant(
+                project_id, item.item_id, brief, job, progress, reference=reference
+            )
 
         job = self.jobs.submit(
             "regenerate", project_id, [(variant_id, rec.name)], runner, owner=meter_owner

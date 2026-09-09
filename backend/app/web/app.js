@@ -594,8 +594,8 @@
   $("#detail-compare").addEventListener("change", (e) => { $("#detail-single").classList.toggle("hidden", e.target.checked); $("#detail-compare-wrap").classList.toggle("hidden", !e.target.checked); });
   $("#detail-approve").addEventListener("click", () => setApproval(state.detailId, "approved", ""));
   $("#detail-reject").addEventListener("click", () => { const r = $("#detail-reason").value.trim(); if (!r) { toast("Give a reason for rejecting.", true); return; } setApproval(state.detailId, "rejected", r); });
-  $("#detail-regenerate").addEventListener("click", () => regenerate(state.detailId));
-  $("#detail-apply-overrides").addEventListener("click", () => { const o = {}; $$("#detail-overrides input[data-dov]").forEach((i) => { if (i.value.trim()) o[i.dataset.dov] = i.value; }); regenerate(state.detailId, { text_overrides: o }); });
+  $("#detail-regenerate").addEventListener("click", () => regenerate(state.detailId, { keep_layout: $("#detail-keep-layout").checked }));
+  $("#detail-apply-overrides").addEventListener("click", () => { const o = {}; $$("#detail-overrides input[data-dov]").forEach((i) => { if (i.value.trim()) o[i.dataset.dov] = i.value; }); regenerate(state.detailId, { text_overrides: o, keep_layout: $("#detail-keep-layout").checked }); });
   async function exportZip(only) {
     try { const fmt = $("#export-format").value; const blob = await api(`/api/projects/${pid()}/export?format=${fmt}&only=${only}`); downloadBlob(blob, `${state.project.project.name}_${only}.zip`); } catch (e) { toast(e.message, true); }
   }

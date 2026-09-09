@@ -442,3 +442,44 @@ def test_approved_variant_teaches_the_next_generation(client: TestClient, tmp_pa
         return [p["element_id"] for p in placed if p["visible"]]
 
     assert order(first) == order(second)
+
+
+def test_regenerate_keeps_layout_unless_asked_to_replan(client: TestClient, tmp_path: Path) -> None:
+    """H3 in the product: a copy revision on one variant keeps its layout by default."""
+    payload = _layered_project(client, tmp_path)
+    pid = payload["project"]["id"]
+    res = client.post(
+        f"/api/projects/{pid}/variants",
+        json={"targets": [{"width": 1080, "height": 1080, "name": "S1"}]},
+    )
+    assert res.status_code == 202, res.text
+    service = client.app.state.service
+    job = service.jobs.wait(res.json()["job"]["id"], timeout=300)
+    assert job.status == "done", job.to_dict()
+    vid = client.get(f"/api/projects/{pid}/variants").json()["variants"][0]["id"]
+    before = client.get(f"/api/projects/{pid}/variants/{vid}").json()
+    doc = client.get(f"/api/projects/{pid}").json()["document"]
+    cta = next(e["id"] for e in doc["elements"] if e["role"] == "cta")
+
+    res = client.post(
+        f"/api/projects/{pid}/variants/{vid}/regenerate",
+        json={"text_overrides": {cta: "BUY NOW"}},
+    )
+    assert res.status_code == 202, res.text
+    job = service.jobs.wait(res.json()["job"]["id"], timeout=300)
+    assert job.status == "done", job.to_dict()
+    after = client.get(f"/api/projects/{pid}/variants/{vid}").json()
+    ref = after["plan"]["planner_meta"]["reference"]
+    assert cta in ref["kept"] and ref["replanned"] == []
+    boxes_before = {p["element_id"]: (p["x"], p["y"]) for p in before["plan"]["placements"]}
+    boxes_after = {p["element_id"]: (p["x"], p["y"]) for p in after["plan"]["placements"]}
+    assert all(boxes_after[k] == boxes_before[k] for k in boxes_before if k != cta)
+
+    res = client.post(
+        f"/api/projects/{pid}/variants/{vid}/regenerate",
+        json={"text_overrides": {cta: "BUY NOW"}, "keep_layout": False},
+    )
+    job = service.jobs.wait(res.json()["job"]["id"], timeout=300)
+    assert job.status == "done", job.to_dict()
+    replanned = client.get(f"/api/projects/{pid}/variants/{vid}").json()
+    assert "reference" not in replanned["plan"]["planner_meta"]

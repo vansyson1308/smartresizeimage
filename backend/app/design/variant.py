@@ -109,7 +109,17 @@ def generate_variant(
     quality_config: QualityConfig | None = None,
     planner: str | None = None,
     family: Family | None = None,
+    reference: dict | None = None,
 ) -> VariantResult:
+    """Generate one variant.
+
+    ``reference`` is a previous variant's plan (``placements`` + ``typography``) for
+    the same target. When given, elements present in it keep their placed boxes and
+    font sizes, so a campaign revision (copy, asset, style, hidden element) changes
+    pixels only inside the edited elements' boxes (H3, local edits). A text whose
+    new copy no longer fits its reference box falls back to the fresh plan and is
+    reported as ``layout_change``.
+    """
     reg = registry or default_registry()
     target = (int(brief.width), int(brief.height))
     report_progress = progress or (lambda _stage, _frac: None)
@@ -147,13 +157,57 @@ def generate_variant(
     _check_cancel(cancel)
     report_progress("typeset", 0.35)
 
+    # 2b) Local edits: keep the reference variant's boxes for elements it placed.
+    fresh_boxes = {r.element_id: r for r in layout}
+    kept: list[str] = []
+    replanned: list[str] = []
+    ref_px: dict[str, int] = {}
+    if reference and planner_name == "constraints":
+        layout, kept, replanned, ref_px = _apply_reference(elements, layout, reference, by_id)
+
     # 3) Fit + rasterize native text at the planned boxes.
     typography: dict[str, dict] = {}
     layout, warnings = _typeset_text(
-        elements, layout, doc_by_id, target, reg, typography, doc.constraints,
+        elements,
+        layout,
+        doc_by_id,
+        target,
+        reg,
+        typography,
+        doc.constraints,
         canvas=(doc.canvas_width, doc.canvas_height),
+        px_caps=ref_px,
     )
-    compact_steps = _compact_groups(doc, layout)
+    if kept:
+        # A text whose new copy no longer fits the reference box gets its fresh box.
+        layout_map = {r.element_id: r for r in layout}
+        for eid in list(kept):
+            typo = typography.get(eid)
+            if typo is None or not typo.get("overflow"):
+                continue
+            lr, fresh = layout_map.get(eid), fresh_boxes.get(eid)
+            if lr is None or fresh is None:
+                continue
+            lr.new_bbox = fresh.new_bbox
+            lr.visible = fresh.visible
+            elem = by_id[eid]
+            warnings.extend(
+                _typeset_one(
+                    elem,
+                    lr,
+                    doc_by_id.get(eid),
+                    target,
+                    reg,
+                    typography,
+                    doc.constraints,
+                    (doc.canvas_width, doc.canvas_height),
+                )
+            )
+            warnings.append(f"layout_change:{eid}: copy no longer fits its previous box")
+            kept.remove(eid)
+            replanned.append(eid)
+        plan_meta["reference"] = {"kept": kept, "replanned": replanned}
+    compact_steps = _compact_groups(doc, layout) if not kept else []
     _check_cancel(cancel)
 
     # 4) Render, verify, repair (bounded).
@@ -179,7 +233,12 @@ def generate_variant(
         report_progress("verify", 0.65 + 0.1 * attempt)
         final_round = attempt == max_repairs
         report = _verify(
-            doc, elements, layout, image, target, typography,
+            doc,
+            elements,
+            layout,
+            image,
+            target,
+            typography,
             base_cfg if final_round else quick_cfg,
         )
         structural_ok = not any(
@@ -242,9 +301,11 @@ def _typeset_text(
     typography: dict[str, dict],
     doc_constraints: list | None = None,
     canvas: tuple[int, int] | None = None,
+    px_caps: dict[str, int] | None = None,
 ) -> tuple[list[LayoutResult], list[str]]:
     warnings: list[str] = []
     layout_map = {r.element_id: r for r in layout}
+    caps = px_caps or {}
     for elem in elements:
         if elem.layer_type != "type" or not elem.text_content:
             continue
@@ -253,11 +314,66 @@ def _typeset_text(
             continue
         warnings.extend(
             _typeset_one(
-                elem, lr, doc_by_id.get(elem.id), target, reg, typography,
-                doc_constraints or [], canvas or target,
+                elem,
+                lr,
+                doc_by_id.get(elem.id),
+                target,
+                reg,
+                typography,
+                doc_constraints or [],
+                canvas or target,
+                max_px_cap=caps.get(elem.id),
             )
         )
     return layout, warnings
+
+
+def _apply_reference(
+    elements: list[DesignElement],
+    layout: list[LayoutResult],
+    reference: dict,
+    by_id: dict[str, DesignElement],
+) -> tuple[list[LayoutResult], list[str], list[str], dict[str, int]]:
+    """Replace planned boxes with the reference variant's boxes where it placed the element.
+
+    Backgrounds always fill the canvas; images whose asset aspect changed are refitted
+    uniformly inside the reference box (never distorted). Returns the new layout, the
+    ids kept from the reference, the ids planned fresh, and the reference font sizes.
+    """
+    ref_boxes = {p["element_id"]: p for p in reference.get("placements", [])}
+    ref_typo = reference.get("typography", {}) or {}
+    kept: list[str] = []
+    replanned: list[str] = []
+    px: dict[str, int] = {}
+    out: list[LayoutResult] = []
+    for r in layout:
+        e = by_id.get(r.element_id)
+        p = ref_boxes.get(r.element_id)
+        if e is None or e.role in BACKGROUND_ROLES:
+            out.append(r)
+            continue
+        if p is None:
+            out.append(r)
+            replanned.append(r.element_id)
+            continue
+        box = BoundingBox(
+            int(p["x"]), int(p["y"]), max(1, int(p["width"])), max(1, int(p["height"]))
+        )
+        if e.layer_type != "type" and e.image is not None:
+            ia = e.image.width / max(1, e.image.height)
+            ba = box.width / max(1, box.height)
+            if abs(ia - ba) / max(ia, ba) > 0.02:
+                k = min(box.width / max(1, e.image.width), box.height / max(1, e.image.height))
+                w = max(1, int(e.image.width * k))
+                h = max(1, int(e.image.height * k))
+                box = BoundingBox(box.x + (box.width - w) // 2, box.y + (box.height - h) // 2, w, h)
+        out.append(
+            LayoutResult(r.element_id, box, r.scale_factor, visible=bool(p.get("visible", True)))
+        )
+        kept.append(r.element_id)
+        if r.element_id in ref_typo and ref_typo[r.element_id].get("font_px"):
+            px[r.element_id] = int(ref_typo[r.element_id]["font_px"])
+    return out, kept, replanned, px
 
 
 def _typeset_one(
@@ -528,8 +644,10 @@ def constraint_checks(
             ratio = float(c.params.get("ratio", 0.5))
             pad = int(lr.new_bbox.height * ratio)
             zone = BoundingBox(
-                lr.new_bbox.x - pad, lr.new_bbox.y - pad,
-                lr.new_bbox.width + 2 * pad, lr.new_bbox.height + 2 * pad,
+                lr.new_bbox.x - pad,
+                lr.new_bbox.y - pad,
+                lr.new_bbox.width + 2 * pad,
+                lr.new_bbox.height + 2 * pad,
             )
             intruders = []
             for other in layout:
@@ -633,8 +751,10 @@ def _repair(
             continue
         handled.add(eid)
 
-        text_side = (elem, lr) if elem.layer_type == "type" else (
-            (b_elem, blocker) if b_elem.layer_type == "type" else None
+        text_side = (
+            (elem, lr)
+            if elem.layer_type == "type"
+            else ((b_elem, blocker) if b_elem.layer_type == "type" else None)
         )
         other_side = (b_elem, blocker) if text_side and text_side[0] is elem else (elem, lr)
 
@@ -647,10 +767,19 @@ def _repair(
             if font_px > min_px:
                 cap = max(min_px, int(font_px * 0.85))
                 _typeset_one(
-                    t_elem, t_lr, doc_by_id.get(t_elem.id), target, reg, typography,
-                    doc.constraints, (doc.canvas_width, doc.canvas_height), max_px_cap=cap,
+                    t_elem,
+                    t_lr,
+                    doc_by_id.get(t_elem.id),
+                    target,
+                    reg,
+                    typography,
+                    doc.constraints,
+                    (doc.canvas_width, doc.canvas_height),
+                    max_px_cap=cap,
                 )
-                steps.append(f"shrink_text:{t_elem.id}:{font_px}->{typography[t_elem.id]['font_px']}")
+                steps.append(
+                    f"shrink_text:{t_elem.id}:{font_px}->{typography[t_elem.id]['font_px']}"
+                )
                 changed = True
                 if _overlap(t_lr.new_bbox, other_side[1].new_bbox) == 0:
                     continue
@@ -662,8 +791,10 @@ def _repair(
                 continue
 
         # 3) shrink the non-text element (or the lower-priority one when both are images)
-        victim_elem, victim_lr = other_side if text_side is not None else (
-            (elem, lr) if _priority(elem) >= _priority(b_elem) else (b_elem, blocker)
+        victim_elem, victim_lr = (
+            other_side
+            if text_side is not None
+            else ((elem, lr) if _priority(elem) >= _priority(b_elem) else (b_elem, blocker))
         )
         partner_lr = lr if victim_lr is blocker else blocker
         if victim_elem.layer_type != "type" and _shrink(victim_lr, victim_elem, w, h, margin):

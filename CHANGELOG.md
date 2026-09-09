@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 ### Added
+- Local edits on revision (H3): regenerating a variant keeps its previous plan by default
+  (`keep_layout`, on by default in the API and the detail view), so a copy, asset, style or
+  hidden-element change alters pixels only inside the edited element's box; copy that no
+  longer fits its box falls back to a fresh plan and is reported as `layout_change`.
+  Regression set in `test_local_edits.py`; corpus measurement in `tools/run_local_edits.py`.
 - Learning from approved variants (H1, `design/examples.py`): approved variants of a project
   become examples; per orientation the planner infers a layout family (text column, subject
   slot, logo slot, alignment, stacking order), a hierarchy scale and soft constraint

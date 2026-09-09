@@ -37,6 +37,7 @@ Separate tracks: **Engineering**, **Quality**, **Operations**, **Competitive**, 
 | Compose master from separated assets (blank canvas + add text/image) | VERIFIED_LOCAL | `POST /api/projects/blank`, `POST /api/projects/{id}/elements`; exercised by the browser journey. |
 | Learning from approved examples (H1): approved variants → per-orientation family, hierarchy scale, soft constraint proposals with confidence; used by the next generation | VERIFIED_LOCAL (product path) / EXPERIMENTAL (effect) | `design/examples.py`, `GET /api/projects/{id}/learned`, rules panel; `test_examples.py`, API test; ablation in `EXPERIMENTS.md` (agreement 0.24 → 0.85 on held-out sizes, synthetic examples only). |
 | Joint family planning across a size set (H2) with cross-variant consistency checks | VERIFIED_LOCAL | `planner.choose_families`, `quality/family.py`; ablation in `EXPERIMENTS.md`. |
+| Local edits on revision (H3): regenerate keeps the previous plan; copy/asset/style/hide changes stay inside the edited element's box; `layout_change` when copy no longer fits | VERIFIED_LOCAL | `variant.generate_variant(reference=...)`, `keep_layout` on `POST .../regenerate`, detail-view checkbox; `test_local_edits.py` (out-of-scope pixel diff 0 on 5 edit kinds), API test; corpus measurement in `EXPERIMENTS.md`. |
 | Real generative provider adapter | BLOCKED_EXTERNAL | No provider credentials/authorization in this environment; mock is labelled. |
 
 ## Quality
