@@ -25,6 +25,7 @@ from ..config import Config
 from ..constants import SUPPORTED_EXTENSIONS
 from ..design.adapter import document_from_elements
 from ..design.assets import AssetStore
+from ..design.decompose import decompose_flat_image
 from ..design.document import (
     AllowedTransforms,
     Constraint,
@@ -127,6 +128,7 @@ class ProjectService:
         name: str | None = None,
         brand: str | None = None,
         owner: str | None = None,
+        decompose: bool = True,
     ) -> Project:
         ext = Path(filename).suffix.lower()
         if ext not in SUPPORTED_EXTENSIONS:
@@ -157,6 +159,12 @@ class ProjectService:
                 raise ServiceError("design exceeds pixel limit", 413)
             classifier = SemanticClassifier(use_ai=self.use_ai)
             elements = classifier.classify_all(elements, source_size)
+            decomposition = None
+            if ext != ".psd" and decompose:
+                try:
+                    decomposition = decompose_flat_image(elements[0].image)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("decomposition failed, keeping flat import: %s", exc)
 
             project_id = new_id("proj")
             root = self._root(project_id)
@@ -175,12 +183,14 @@ class ProjectService:
                 origin="psd_layer" if ext == ".psd" else "flat_image",
                 registry=self.registry,
             )
+            if decomposition is not None:
+                _apply_decomposition(doc, decomposition, store, source_size)
             doc.metadata.update(
                 {
                     "source_filename": Path(filename).name,
                     "source_sha256": digest,
                     "source_path": f"source/original{ext}",
-                    "import_notes": _import_notes(doc, ext),
+                    "import_notes": _import_notes(doc, ext, decomposition),
                 }
             )
             project = Project.create(root, doc, name=name or doc.name, owner=owner, brand=brand)
@@ -674,13 +684,87 @@ def _now() -> str:
     return utc_now()
 
 
-def _import_notes(doc: DesignDocument, ext: str) -> list[str]:
+def _apply_decomposition(doc: DesignDocument, result, store: AssetStore, size) -> None:
+    """Replace the single flat element with recovered elements (provenance: recovered)."""
+    from ..design.document import Element
+
+    w, h = size
+    bg_ref = store.put(result.background, "background_inpainted")
+    doc.elements = [
+        Element(
+            id="background",
+            kind="image",
+            name="Background (inferred)",
+            role="background",
+            geometry=Geometry(0, 0, w, h),
+            z_index=0,
+            asset=bg_ref,
+            priority=9,
+            allowed=AllowedTransforms(move=False, scale_free=True, crop=True),
+            provenance=Provenance(
+                origin="recovered",
+                confidence=0.6,
+                notes=f"background fill: {result.method.get('background_fill')}",
+            ),
+            role_confidence=0.9,
+        )
+    ]
+    for i, rec in enumerate(result.elements, start=1):
+        ref = store.put(rec.image, f"{rec.role_guess}_{i}")
+        x, y, bw, bh = rec.bbox
+        effects = {}
+        if rec.text:
+            effects["recovered_text"] = rec.text
+            effects["recovered_text_confidence"] = round(rec.confidence, 3)
+        if rec.text_color:
+            effects["recovered_text_color"] = rec.text_color
+        priority = 1 if rec.role_guess in ("headline", "logo") else 2
+        doc.elements.append(
+            Element(
+                id=new_id("el"),
+                kind="image",
+                name=(
+                    rec.text.splitlines()[0][:32] if rec.text else rec.role_guess.replace("_", " ")
+                ),
+                role=rec.role_guess,
+                geometry=Geometry(x, y, bw, bh),
+                z_index=i,
+                asset=ref,
+                priority=priority,
+                allowed=AllowedTransforms(scale_free=False, crop=False),
+                provenance=Provenance(
+                    origin="recovered",
+                    confidence=rec.confidence,
+                    notes="; ".join(rec.notes)[:300],
+                ),
+                role_confidence=rec.confidence,
+                effects=effects,
+            )
+        )
+    doc.normalize_z()
+    from ..design.adapter import propose_constraints
+
+    doc.constraints = propose_constraints(doc)
+
+
+def _import_notes(doc: DesignDocument, ext: str, decomposition=None) -> list[str]:
     notes: list[str] = []
-    if ext != ".psd":
+    if ext != ".psd" and decomposition is None:
         notes.append(
             "Flat image imported as a single picture. Text, logo and product were not separated; "
             "variants will need review."
         )
+    elif ext != ".psd":
+        recovered = [
+            e for e in doc.elements if e.provenance.origin == "recovered" and not e.is_background
+        ]
+        texts = [e for e in recovered if e.effects.get("recovered_text")]
+        notes.append(
+            f"Flat image decomposed: {len(recovered)} element(s) recovered "
+            f"({len(texts)} text block(s) read by OCR, unverified). Confirm roles, then convert "
+            "text blocks to editable text."
+        )
+        notes.extend(decomposition.notes)
     low = [e for e in doc.elements if e.role_confidence < 0.6 and not e.is_background]
     if low:
         notes.append(f"{len(low)} element(s) have low-confidence roles; confirm them.")
@@ -763,6 +847,34 @@ def _apply_op(doc: DesignDocument, op: dict) -> None:
         if "locale" in op and op["locale"]:
             e.text.locale = str(op["locale"])[:16]
         e.provenance = Provenance(origin="user", confidence=1.0, notes="text edited")
+    elif kind == "convert_to_text":
+        e = doc.element(op["element_id"])
+        if e.kind == "text":
+            raise ServiceError("element is already text", 400)
+        from ..design.document import TextContent, TextRun, TextStyle
+
+        text = str(op.get("text") or e.effects.get("recovered_text") or "").strip()
+        if not text:
+            raise ServiceError("text is required to convert this element", 400)
+        style_in = op.get("style") or {}
+        lines = max(1, text.count("\n") + 1)
+        st = TextStyle(
+            font_family=str(style_in.get("font_family", "DejaVu Sans")),
+            font_size=float(style_in.get("font_size", max(8.0, e.geometry.height / lines * 0.75))),
+            weight=str(style_in.get("weight", "regular")),
+            color=str(style_in.get("color", e.effects.get("recovered_text_color", "#000000"))),
+            align=str(style_in.get("align", "left")),
+        )
+        e.kind = "text"
+        e.text = TextContent(runs=[TextRun(text=text, style=st)])
+        e.asset = None  # the raster crop is no longer the source of truth
+        e.allowed = AllowedTransforms(reflow=True)
+        e.role_confidence = 1.0
+        e.provenance = Provenance(
+            origin="user", confidence=1.0, notes="converted from recovered raster"
+        )
+        for key in ("recovered_text", "recovered_text_confidence", "recovered_text_color"):
+            e.effects.pop(key, None)
     elif kind == "set_role":
         e = doc.element(op["element_id"])
         e.role = str(op["role"])

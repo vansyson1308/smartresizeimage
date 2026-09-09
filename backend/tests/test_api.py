@@ -159,10 +159,14 @@ def test_flat_import_is_honest(client: TestClient) -> None:
     assert res.status_code == 201
     payload = res.json()
     doc = payload["document"]
-    assert len(doc["elements"]) == 1
-    assert doc["elements"][0]["provenance"]["origin"] == "flat_image"
+    # Every element of a flat import is either the (inferred) background or a recovered
+    # element carrying a confidence below 1; nothing is presented as verified.
+    for e in doc["elements"]:
+        assert e["provenance"]["origin"] in ("flat_image", "recovered")
+        if e["provenance"]["origin"] == "recovered" and e["role"] != "background":
+            assert e["role_confidence"] < 0.95
     notes = doc["metadata"]["import_notes"]
-    assert any("not separated" in n for n in notes)
+    assert any("not separated" in n or "decomposed" in n for n in notes)
     preview = client.get(f"/api/projects/{payload['project']['id']}/preview.png")
     assert preview.status_code == 200 and preview.headers["content-type"] == "image/png"
 

@@ -39,15 +39,12 @@ needed; launch Chromium with `executable_path="/opt/pw-browsers/chromium"` in th
 
 ## Next executable task
 
-Wire `backend/app/design/decompose.py` into `ProjectService.create_project_from_upload` for
-non-PSD files: run `decompose_flat_image`, store the inpainted background and each recovered
-crop as assets, create elements with `provenance.origin = "recovered"`, `role_confidence`
-from the decomposition, `effects["recovered_text"]` for OCR strings, and add a
-`convert_to_text` document operation (element becomes kind `text` with the confirmed string,
-estimated size/colour). Add tests in `backend/tests/test_decompose.py` (synthetic flat
-banner) and a UI button "Convert to editable text" in the element panel. Keep the
-`design_understood` check as `needs_review` until a user has confirmed the recovered
-elements.
+Phase D, step 1 — ownership and isolation: add an `owners` concept to `ProjectService`
+(API key → owner id via `AUTOBANNER_API_KEYS="key1:owner1,key2:owner2"`), scope
+`list_projects`/`get_project` by owner, store `owner` in project meta, and add tests that one
+owner cannot read or mutate another owner's project or jobs. Then durable job records:
+persist `Job.to_dict()` under `data/jobs/<id>.json` on every state change and load them on
+start (status `interrupted`).
 
 ## Files to know
 

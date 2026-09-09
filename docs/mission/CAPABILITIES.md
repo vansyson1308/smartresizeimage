@@ -13,7 +13,7 @@ Separate tracks: **Engineering**, **Quality**, **Operations**, **Competitive**, 
 | Capability | Status | Evidence |
 |---|---|---|
 | PSD import (pixel/type/shape/group layers, opacity, blend mode, drop shadow subset) | IMPLEMENTED | `backend/app/parser/psd_parser.py`; unit tests with synthetic layers only, no real customer PSD verified. |
-| Flat PNG/JPG/WEBP import | VERIFIED_LOCAL (as single picture) | `ImageParser` yields one background element; contract v2 flags every flat-image output `design_understood: NEEDS_REVIEW`. No decomposition. |
+| Flat PNG/JPG/WEBP import | VERIFIED_LOCAL (decomposed with confidence) | `ImageParser` + `decompose_flat_image`: recovered text/mark/subject elements with `provenance.origin = recovered`; variants stay `needs_review` (`recovered_unconfirmed`) until roles are confirmed or text converted. |
 | Semantic role classification (name rules -> optional CLIP -> heuristics) | IMPLEMENTED | CLIP path never exercised here (torch not installed). Rules/heuristics unit-tested. |
 | Template + adaptive layout (Phase 2.1) | VERIFIED_LOCAL | Fixed 2026-09-09: background excluded from solver, zone members stacked, side-by-side rhythm, zone overflow, raster text uniform scale. `backend/tests/test_layout_fixes.py`. |
 | Phase 3 target-first redesign (procedural background regeneration) | IMPLEMENTED | Deterministic procedural generator only. `GenerativeFillAdapter` is a visible mock (`is_mock: true`, `provider: none`). Selection status (`valid/degraded/last_resort`) now propagates to `used_fallback`. |
@@ -27,7 +27,7 @@ Separate tracks: **Engineering**, **Quality**, **Operations**, **Competitive**, 
 | Constraint-aware planner (layout families, reading order, hierarchy, clear space, content pressure) | VERIFIED_LOCAL | `design/planner.py`, `test_planner.py`; `Config.DESIGN_PLANNER`. |
 | Approved translations per locale + glyph-coverage fallback with disclosure | VERIFIED_LOCAL | `TextContent.translations`, `FontRegistry.resolve_for_text`; tests incl. CJK fallback to IPAGothic in this environment. |
 | Contrast-aware text plates (light/dark panel from text colour) | VERIFIED_LOCAL | busy-background fixtures read at OCR agreement 1.0 after plating. |
-| Flat-image decomposition (OCR text cut-outs, GrabCut subject, inpainted background) with confidence | IMPLEMENTED (module drafted, not wired) | `design/decompose.py`; no tests yet. |
+| Flat-image decomposition (OCR text cut-outs, GrabCut subject, inpainted background) with confidence, "convert to editable text" correction path | VERIFIED_LOCAL (synthetic banner) | `design/decompose.py`, `test_decompose.py`; recovered elements stay raster with `recovered_text` metadata and force `needs_review` until confirmed. Not validated on real photography. |
 | Project persistence / reopen / round trip (history, undo, restore) | VERIFIED_LOCAL | `design/project.py`; API test exports project zip, re-imports, edits, regenerates. |
 | Typed API + jobs (progress, cancel, idempotency, partial completion) | VERIFIED_LOCAL | `api/service.py`, `api/jobs.py`; `test_api.py` (8 tests). Jobs are in-process; restart marks running variants failed. |
 | Web review/edit UI (select, move, resize, nudge, text/style edit, rules, approve/reject, undo, export) | VERIFIED_LOCAL | Playwright journey against the real server (see `RESUME.md`); no console errors; 900px layout without horizontal scroll. |

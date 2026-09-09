@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 ### Added
+- Design representation (`backend/app/design`): typed document with native text, assets by
+  content hash, roles with confidence, constraints, allowed transforms and provenance;
+  constraint-aware planner with layout families; native text fitting/rendering with font
+  substitution disclosure and glyph-coverage checks; approved translations per locale;
+  variant pipeline (plan → typeset → render → verify → bounded repair); file-backed projects
+  with history/undo.
+- Honest flat-image decomposition (`design/decompose.py`): OCR text blocks cut with alpha
+  masks, salient subject via GrabCut, inpainted background; everything marked `recovered`
+  with confidence, kept as raster until "Convert to editable text".
+- FastAPI project API (`backend/app/api`) with jobs (progress, cancel, idempotency), approvals
+  with reasons, exports with manifest/report/font disclosure, editable project export/import,
+  blank canvas + add-element, optional API key; dependency-free web UI (`backend/app/web`).
+- Contrast-aware, resolution-independent text plates (light/dark panel by text colour).
 - Quality contract v2 (`backend/app/quality`): rendered-output checks (per-element visibility,
   canvas clipping, OCR legibility via tesseract when installed, dropped required elements,
   export dimensions) with explicit `pass / fail / needs_review / not_checked` statuses and an

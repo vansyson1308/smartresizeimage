@@ -60,7 +60,7 @@ inputs only. Numbers are synthetic-fixture engineering results, not customer val
 
 - No PSD fixture in the repo: PSD import is unit-tested with synthetic layers only; real
   customer PSDs are `BLOCKED_EXTERNAL`.
-- Flat images are not decomposed (always `needs_review`).
+- Flat-image decomposition is validated on a synthetic banner only; real photography untested.
 - The constraint planner uses three hand-written layout families per aspect class; families
   are not yet learned from approved variants (H1).
 - No multi-tenant auth, metering, billing, or durable job queue across restarts (jobs are
@@ -83,10 +83,17 @@ inputs only. Numbers are synthetic-fixture engineering results, not customer val
   colour, merged per text stack).
 - PR #7 CI: backend-tests and GitGuardian green on the first push.
 
+- Flat-image decomposition wired into import: OCR text blocks (alpha cut-outs, colour,
+  role guess), unreadable small blocks as logo marks, salient subject via edge energy +
+  GrabCut (other recovered regions excluded), inpainted background; every recovered element
+  carries confidence and `recovered_text`; `convert_to_text` op + UI button; variants stay
+  `needs_review` (`recovered_unconfirmed`) until confirmed. `test_decompose.py` (5 tests, one
+  end-to-end through the API).
+
 ## Next actions (in order)
 
-1. Flat-image decomposition (`backend/app/design/decompose.py` drafted: OCR text lines with
-   alpha cut-outs, salient subject via edge energy + GrabCut, inpainted background) — wire into
-   the import service with `recovered` provenance and a "convert to native text" operation,
-   add tests and a UI correction path.
-2. Phase D: auth/tenancy, durable jobs, metering; Phase E: held-out evaluation + ablations (H1/H2).
+1. Phase D: auth/tenancy (per-owner project scoping), durable job records, metering/quotas,
+   deploy docs; Phase E: held-out evaluation + ablations (H1 learned families, H2 joint
+   planning), real-design corpus when access exists.
+2. Decomposition on photographs: validate GrabCut/inpainting quality on licensed photos;
+   consider Qwen-Image-Layered only with GPU + licence review.

@@ -76,6 +76,11 @@
           <label>Name</label><input id="el-name" type="text">
           <label>Role <span id="el-confidence" class="badge neutral"></span></label>
           <select id="el-role"></select>
+          <div id="el-recovered" class="hidden" style="margin-top:8px">
+            <label>Text read by OCR (unverified)</label>
+            <textarea id="el-recovered-text"></textarea>
+            <button id="el-convert" type="button">Convert to editable text</button>
+          </div>
           <div id="el-text-wrap" class="hidden">
             <label>Text</label><textarea id="el-text"></textarea>
             <div class="row">

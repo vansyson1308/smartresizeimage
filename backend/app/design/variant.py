@@ -369,6 +369,7 @@ def _verify(
     # Constraint checks from the document.
     extra = constraint_checks(doc, layout, target, typography, required)
     extra.extend(_typography_checks(typography, doc))
+    extra.extend(_provenance_checks(doc, layout))
     if extra:
         checks = report.checks + extra
         report = QualityReport(
@@ -379,6 +380,33 @@ def _verify(
             summary=summarize(checks),
         )
     return report
+
+
+def _provenance_checks(doc: DesignDocument, layout: list[LayoutResult]) -> list[CheckResult]:
+    """Recovered (inferred) elements need a human confirmation before acceptance."""
+    placed = {r.element_id for r in layout if r.visible}
+    unconfirmed = [
+        e
+        for e in doc.elements
+        if e.id in placed
+        and not e.is_background
+        and e.provenance.origin == "recovered"
+        and e.role_confidence < 0.95
+    ]
+    if not unconfirmed:
+        return []
+    names = ", ".join(e.name for e in unconfirmed[:4])
+    return [
+        CheckResult(
+            "recovered_unconfirmed",
+            CheckStatus.NEEDS_REVIEW,
+            Severity.MAJOR,
+            f"{len(unconfirmed)} element(s) were recovered from a flat image and not yet "
+            f"confirmed: {names}",
+            subject_id=unconfirmed[0].id,
+            details={"element_ids": [e.id for e in unconfirmed]},
+        )
+    ]
 
 
 def _typography_checks(typography: dict[str, dict], doc: DesignDocument) -> list[CheckResult]:

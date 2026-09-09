@@ -188,9 +188,10 @@
     const items = [...d.elements].sort((a, b) => b.z_index - a.z_index);
     list.innerHTML = items.map((e) => {
       const low = e.role_confidence < 0.6 && !isBg(e);
+      const rec = e.provenance && e.provenance.origin === "recovered" && !isBg(e);
       return `<li data-id="${esc(e.id)}" class="${e.id === state.selectedId ? "selected" : ""}">
         <span class="grow">${esc(e.name)}${e.locked ? " 🔒" : ""}${e.visible ? "" : " (hidden)"}</span>
-        <span class="role">${esc(e.role)}${low ? ' <span class="badge warn">check</span>' : ""}</span></li>`;
+        <span class="role">${esc(e.role)}${rec ? ' <span class="badge neutral" title="Recovered from a flat image">recovered</span>' : ""}${low ? ' <span class="badge warn">check</span>' : ""}</span></li>`;
     }).join("");
     list.querySelectorAll("li").forEach((li) => li.addEventListener("click", () => selectElement(li.dataset.id)));
   }
@@ -217,6 +218,9 @@
     badge.className = `badge ${conf >= 90 ? "ok" : conf >= 60 ? "neutral" : "warn"}`;
     const isText = e.kind === "text" && e.text;
     $("#el-text-wrap").classList.toggle("hidden", !isText);
+    const recovered = !isText && e.effects && e.effects.recovered_text;
+    $("#el-recovered").classList.toggle("hidden", !recovered);
+    if (recovered) $("#el-recovered-text").value = e.effects.recovered_text;
     if (isText) {
       const st = e.text.runs[0] ? e.text.runs[0].style : {};
       $("#el-text").value = e.text.runs.map((r) => r.text).join("");
@@ -252,6 +256,13 @@
     }
     await patchDocument(ops, `edit ${e.name}`);
     toast("Saved.");
+  });
+  $("#el-convert").addEventListener("click", async () => {
+    const e = elementById(state.selectedId); if (!e) return;
+    const text = $("#el-recovered-text").value.trim();
+    if (!text) { toast("Enter the text first.", true); return; }
+    await patchDocument([{ op: "convert_to_text", element_id: e.id, text }], `convert ${e.name} to text`);
+    toast("Converted to editable text. Check font, size and colour.");
   });
   $("#el-delete").addEventListener("click", async () => {
     const e = elementById(state.selectedId); if (!e) return;
