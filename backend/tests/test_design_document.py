@@ -126,6 +126,8 @@ def test_migration_rejects_unknown_versions() -> None:
 
 def test_font_registry_resolves_and_discloses_substitution(tmp_path: Path) -> None:
     reg = FontRegistry(scan_system=True)
+    if "DejaVu Sans" not in reg.families:
+        pytest.skip("DejaVu Sans not installed on this machine")
     ok = reg.resolve("DejaVu Sans", "bold", False)
     assert ok.status == "available" and ok.path and "Bold" in ok.path
     missing = reg.resolve("Definitely Not A Font", "regular", False)
