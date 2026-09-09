@@ -397,7 +397,7 @@ def _typeset_one(
     warnings: list[str] = []
     content = _content_for(elem, de)
     min_px, max_px, max_lines = _TEXT_BOUNDS.get(elem.role, (12, 48, 6))
-    min_override = _min_text_px_constraint(doc_constraints, elem.id)
+    min_override = _min_text_px_constraint(doc_constraints, elem.id, target)
     if min_override:
         min_px = max(min_px, min_override)
     if de is not None and de.text is not None and de.text.max_lines:
@@ -459,11 +459,24 @@ def _content_for(elem: DesignElement, de: Element | None) -> TextContent:
     return content
 
 
-def _min_text_px_constraint(constraints: list, element_id: str) -> int | None:
+def _min_text_px_constraint(
+    constraints: list, element_id: str, target: tuple[int, int] | None = None
+) -> int | None:
+    """Largest enabled minimum size for ``element_id``.
+
+    A minimum learned from a correction carries ``measured_on`` (the size it was
+    observed at) and scales with the target canvas so it means the same thing on
+    every size.
+    """
     best: int | None = None
     for c in constraints:
         if c.enabled and c.type == "min_text_size" and element_id in c.elements:
             px = int(c.params.get("px", 0))
+            measured = c.params.get("measured_on")
+            if target is not None and measured and len(measured) == 2:
+                mw, mh = int(measured[0]), int(measured[1])
+                if mw > 0 and mh > 0:
+                    px = int(round(px * min(target[0] / mw, target[1] / mh)))
             best = px if best is None else max(best, px)
     return best
 

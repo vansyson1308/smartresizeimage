@@ -441,9 +441,26 @@
     const wrap = $("#learned-list");
     try {
       const res = await api(`/api/projects/${pid()}/learned`);
-      if (!res.families.length) { wrap.innerHTML = ""; return; }
-      wrap.innerHTML = `<div><strong>Learned from ${res.examples.length} approved variant${res.examples.length === 1 ? "" : "s"}</strong> (applied to the next generation):</div>` +
-        res.families.map((f) => `<div>· ${esc(f.aspect)}: text ${esc(f.text_align)}, ${f.subject_first ? "subject above text" : "text before subject"}, confidence ${f.confidence}${f.constraints.length ? ", proposes " + esc(f.constraints.join(", ")) : ""}${f.examples === 1 ? ' <span class="badge warn" title="One example is under-determined; approve another size of this orientation to confirm">single example</span>' : ""}</div>`).join("");
+      const corrections = res.corrections || [];
+      const unresolved = res.unresolved_corrections || [];
+      if (!res.families.length && !corrections.length && !unresolved.length) { wrap.innerHTML = ""; return; }
+      let html = "";
+      if (res.families.length) {
+        html += `<div><strong>Learned from ${res.examples.length} approved variant${res.examples.length === 1 ? "" : "s"}</strong> (applied to the next generation):</div>` +
+          res.families.map((f) => `<div>· ${esc(f.aspect)}: text ${esc(f.text_align)}, ${f.subject_first ? "subject above text" : "text before subject"}, confidence ${f.confidence}${f.constraints.length ? ", proposes " + esc(f.constraints.join(", ")) : ""}${f.examples === 1 ? ' <span class="badge warn" title="One example is under-determined; approve another size of this orientation to confirm">single example</span>' : ""}</div>`).join("");
+      }
+      const CORR = { scale_range: (c) => `${nameOf(c.element_id)} scale ${c.params.min}–${c.params.max}`, min_text_size: (c) => `${nameOf(c.element_id)} at least ${c.params.px}px (measured at ${(c.params.measured_on || []).join("×")})`, clear_space: (c) => `clear space around ${nameOf(c.element_id)}` };
+      if (corrections.length) {
+        html += `<div style="margin-top:4px"><strong>From your rejections</strong> (add as a rule to apply on the next generation):</div>` +
+          corrections.map((c, i) => `<div>· "${esc(c.reason)}" → ${esc((CORR[c.kind] || (() => c.kind))(c))} <span class="muted">(${esc(c.evidence)})</span> <button data-apply-correction="${i}" class="small" type="button">Add as rule</button></div>`).join("");
+      }
+      if (unresolved.length) {
+        html += unresolved.map((u) => `<div class="muted">· "${esc(u.reason)}": ${esc(u.note)}</div>`).join("");
+      }
+      wrap.innerHTML = html;
+      wrap.querySelectorAll("button[data-apply-correction]").forEach((b) => b.addEventListener("click", async () => {
+        try { state.project = await api(`/api/projects/${pid()}/learned/corrections/${b.dataset.applyCorrection}/apply`, { method: "POST" }); renderDesign(); toast("Rule added from correction"); } catch (e) { toast(e.message, true); }
+      }));
     } catch (e) { wrap.innerHTML = ""; }
   }
   function updateConstraintForm() {

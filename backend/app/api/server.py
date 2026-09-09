@@ -209,6 +209,10 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
     def learned_rules(project_id: str, owner: str = Owner) -> dict:
         return service.learned_rules(project_id, owner)
 
+    @app.post("/api/projects/{project_id}/learned/corrections/{index}/apply", dependencies=dep)
+    def apply_correction(project_id: str, index: int, owner: str = Owner) -> dict:
+        return service.apply_correction(project_id, index, owner)
+
     @app.delete("/api/projects/{project_id}", dependencies=dep, status_code=204)
     def delete_project(project_id: str, owner: str = Owner) -> Response:
         service.delete_project(project_id, owner)

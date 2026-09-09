@@ -483,3 +483,87 @@ def test_regenerate_keeps_layout_unless_asked_to_replan(client: TestClient, tmp_
     assert job.status == "done", job.to_dict()
     replanned = client.get(f"/api/projects/{pid}/variants/{vid}").json()
     assert "reference" not in replanned["plan"]["planner_meta"]
+
+
+def test_rejection_then_approval_yields_an_applicable_rule(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """H5 in the product: 'logo too small' + the approved fix becomes a reviewable rule."""
+    payload = _layered_project(client, tmp_path)
+    pid = payload["project"]["id"]
+    doc = client.get(f"/api/projects/{pid}").json()["document"]
+    logo = next(e["id"] for e in doc["elements"] if e["role"] == "logo")
+    service = client.app.state.service
+
+    res = client.post(
+        f"/api/projects/{pid}/variants",
+        json={"targets": [{"width": 1080, "height": 1080, "name": "S1"}]},
+    )
+    job = service.jobs.wait(res.json()["job"]["id"], timeout=300)
+    assert job.status == "done", job.to_dict()
+    vid = client.get(f"/api/projects/{pid}/variants").json()["variants"][0]["id"]
+    small = client.get(f"/api/projects/{pid}/variants/{vid}").json()
+    logo_h = next(p["height"] for p in small["plan"]["placements"] if p["element_id"] == logo)
+
+    res = client.post(
+        f"/api/projects/{pid}/variants/{vid}/approval",
+        json={"approval": "rejected", "reason": "logo too small"},
+    )
+    assert res.status_code == 200, res.text
+    learned = client.get(f"/api/projects/{pid}/learned").json()
+    assert learned["corrections"] == []
+    assert learned["unresolved_corrections"][0]["approved_variant"] is None
+
+    # the designer's fix: a scale rule on the logo, re-plan, approve
+    want = round(logo_h * 1.6 / 1080, 3)
+    res = client.patch(
+        f"/api/projects/{pid}/document",
+        json={
+            "ops": [
+                {
+                    "op": "add_constraint",
+                    "constraint": {
+                        "type": "scale_range",
+                        "elements": [logo],
+                        "params": {"min": want, "max": 1.0},
+                        "hard": False,
+                    },
+                }
+            ],
+            "label": "bigger logo",
+        },
+    )
+    assert res.status_code == 200, res.text
+    res = client.post(f"/api/projects/{pid}/variants/{vid}/regenerate", json={"keep_layout": False})
+    job = service.jobs.wait(res.json()["job"]["id"], timeout=300)
+    assert job.status == "done", job.to_dict()
+    bigger = client.get(f"/api/projects/{pid}/variants/{vid}").json()
+    assert (
+        next(p["height"] for p in bigger["plan"]["placements"] if p["element_id"] == logo) > logo_h
+    )
+    client.post(f"/api/projects/{pid}/variants/{vid}/approval", json={"approval": "approved"})
+
+    # remove the designer's rule so the derived one is not "already covered"
+    cid = next(
+        c["id"]
+        for c in client.get(f"/api/projects/{pid}").json()["document"]["constraints"]
+        if c["type"] == "scale_range"
+    )
+    client.patch(
+        f"/api/projects/{pid}/document",
+        json={"ops": [{"op": "remove_constraint", "constraint_id": cid}]},
+    )
+
+    learned = client.get(f"/api/projects/{pid}/learned").json()
+    assert len(learned["corrections"]) == 1
+    corr = learned["corrections"][0]
+    assert corr["kind"] == "scale_range" and corr["element_id"] == logo
+    assert corr["rejected_variant"] == vid and corr["approved_variant"] == vid
+    res = client.post(f"/api/projects/{pid}/learned/corrections/0/apply")
+    assert res.status_code == 200, res.text
+    constraints = res.json()["document"]["constraints"]
+    added = [c for c in constraints if c["type"] == "scale_range" and c["elements"] == [logo]]
+    assert len(added) == 1 and added[0]["provenance"]["origin"] == "recovered"
+    assert added[0]["hard"] is False
+    # applied rules are no longer proposed
+    assert client.get(f"/api/projects/{pid}/learned").json()["corrections"] == []

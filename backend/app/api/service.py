@@ -26,6 +26,7 @@ from ..config import Config
 from ..constants import SUPPORTED_EXTENSIONS
 from ..design.adapter import document_from_elements, elements_from_document
 from ..design.assets import AssetStore
+from ..design.corrections import RejectionSnapshot, derive_corrections
 from ..design.decompose import decompose_flat_image
 from ..design.document import (
     AllowedTransforms,
@@ -741,9 +742,12 @@ class ProjectService:
         project = self.get_project(project_id, owner)
         ids, examples = self._approved_examples(project)
         inferred = infer_families(project.document, examples) if examples else {}
+        proposals, unresolved = self._corrections(project)
         return {
             "examples": ids,
             "families": [inf.to_dict() for inf in inferred.values()],
+            "corrections": [p.to_dict() for p in proposals],
+            "unresolved_corrections": [u.to_dict() for u in unresolved],
             "note": (
                 "Approved variants are examples: their composition per orientation "
                 "competes with the built-in layout families on the next generation. "
@@ -893,12 +897,51 @@ class ProjectService:
             raise ServiceError("a rejection needs a reason", 400)
         with self._lock(project_id):
             rec = project.set_approval(variant_id, approval, reason)
+            if approval == "rejected":
+                # Keep the rejected plan as evidence for correction rules (H5).
+                detail = project.variant_detail(variant_id) or {}
+                plan = detail.get("plan") or {}
+                if plan.get("placements"):
+                    project.record_rejection(variant_id, reason, plan)
             project.save()
         self.events.record(
             owner or LOCAL_OWNER, "approval", project_id=project_id, variant_id=variant_id,
             approval=approval, reason=reason[:200], verdict=rec.verdict,
         )
         return rec
+
+    # ---- rules from correction history (H5) --------------------------------------------
+    def _corrections(self, project: Project):
+        rejections = [RejectionSnapshot.from_dict(d) for d in project.rejections()]
+        if not rejections:
+            return [], []
+        approved = []
+        for rec in project.variants.values():
+            if rec.status != "done" or rec.approval != "approved":
+                continue
+            plan = (project.variant_detail(rec.id) or {}).get("plan") or {}
+            if plan.get("placements"):
+                approved.append((rec.to_dict(), plan))
+        return derive_corrections(project.document, rejections, approved)
+
+    def apply_correction(
+        self, project_id: str, index: int, owner: str | None = LOCAL_OWNER
+    ) -> dict:
+        """Add a derived correction rule to the document as a reviewable soft constraint."""
+        project = self.get_project(project_id, owner)
+        proposals, _ = self._corrections(project)
+        if index < 0 or index >= len(proposals):
+            raise ServiceError("correction not found", 404)
+        proposal = proposals[index]
+        constraint = proposal.to_constraint()
+        with self._lock(project_id):
+            project.document.add_constraint(constraint)
+            project.save(snapshot=True, label=f"rule from correction: {proposal.reason[:40]}")
+        self.events.record(
+            owner or LOCAL_OWNER, "document_ops", project_id=project_id, ops=1,
+            kinds=["add_constraint"], source="correction",
+        )
+        return self.project_payload(project)
 
     def delete_variant(
         self, project_id: str, variant_id: str, owner: str | None = LOCAL_OWNER

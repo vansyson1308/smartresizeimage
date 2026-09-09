@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 ### Added
+- Rules from correction history (H5, `design/corrections.py`): a rejection snapshots the
+  rejected plan and reason; once a variant of the same size is approved, the difference
+  becomes a reviewable proposal (`scale_range`, `min_text_size` scaled by the size it was
+  measured on, `clear_space`) with its evidence, listed at `GET /api/projects/{id}/learned`
+  and in the rules panel with "Add as rule"; unparseable or unpaired rejections are reported,
+  never turned into rules. Corpus measurement in `tools/run_corrections.py`.
 - Local edits on revision (H3): regenerating a variant keeps its previous plan by default
   (`keep_layout`, on by default in the API and the detail view), so a copy, asset, style or
   hidden-element change alters pixels only inside the edited element's box; copy that no

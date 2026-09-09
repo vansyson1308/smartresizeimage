@@ -74,8 +74,10 @@ class Project:
         self.variants: dict[str, VariantRecord] = {}
         self._history_dir = self.root / "history"
         self._variants_dir = self.root / "variants"
+        self._corrections_dir = self.root / "corrections"
         self._history_dir.mkdir(parents=True, exist_ok=True)
         self._variants_dir.mkdir(parents=True, exist_ok=True)
+        self._corrections_dir.mkdir(parents=True, exist_ok=True)
 
     # ---- lifecycle -----------------------------------------------------------------
     @classmethod
@@ -258,6 +260,34 @@ class Project:
         rec.updated_at = utc_now()
         self._save_variant_index()
         return rec
+
+    # ---- correction history (H5) ------------------------------------------------------
+    def record_rejection(self, variant_id: str, reason: str, plan: dict) -> Path:
+        """Snapshot a rejected variant's plan and reason (the plan is overwritten on
+        regeneration, so the evidence must be kept here)."""
+        rec = self.variants[variant_id]
+        snap = {
+            "variant_id": variant_id,
+            "name": rec.name,
+            "width": rec.width,
+            "height": rec.height,
+            "reason": reason,
+            "ts": utc_now(),
+            "placements": list(plan.get("placements") or []),
+            "typography": dict(plan.get("typography") or {}),
+        }
+        path = self._corrections_dir / f"{snap['ts'].replace(':', '')}_{variant_id}.json"
+        _atomic_write_json(path, snap)
+        return path
+
+    def rejections(self) -> list[dict]:
+        out = []
+        for path in sorted(self._corrections_dir.glob("*.json")):
+            try:
+                out.append(json.loads(path.read_text(encoding="utf-8")))
+            except ValueError:
+                continue
+        return out
 
     def variant_image(self, variant_id: str) -> Image.Image | None:
         rec = self.variants.get(variant_id)
