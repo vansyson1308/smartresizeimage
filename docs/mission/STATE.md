@@ -100,11 +100,24 @@ inputs only. Numbers are synthetic-fixture engineering results, not customer val
   backup/restore, deploy/rollback, monitoring and what is not provided.
 - Tests: `test_ownership_and_jobs.py` (6 tests).
 
+## Phase E progress
+
+- Ablation harness with frozen holdout (`backend/tools/run_ablations.py`); results in
+  `EXPERIMENTS.md` and `results/ablations_2026-09-09.md`: constraint planner 44/48 accepted
+  (holdout 12/12) vs zone planner 36/48 (holdout 9/12); repair only helps the zone planner;
+  plates +6 accepted on busy backgrounds; 433 s wall for 240 runs.
+- Local pilot instruments: append-only event log per owner, `GET /api/pilot/summary`
+  (first-pass acceptance, median time to decision, corrections per project, rejection
+  reasons). No external telemetry.
+- `ECONOMICS.md`: measured compute (≈1.3–1.5 s CPU per accepted variant) and storage
+  (≈350 KB per synthetic 4-variant project) with explicit, labelled pricing scenarios.
+
 ## Next actions (in order)
 
-1. Phase E: freeze a holdout split of the synthetic corpus; run ablations (zones vs
-   constraints planner, repair on/off, plates on/off) with equal budgets; record cost per
-   accepted variant; write pilot instruments (task timing, acceptance capture).
-2. Real-design corpus when access exists; decomposition on photographs (GrabCut/inpainting
-   quality); Qwen-Image-Layered only with GPU + licence review.
-3. Roles within an owner (viewer/approver), retention policy, rate limiting.
+1. Real-design corpus when access exists (licensed PSDs/photos); decomposition on
+   photographs; add a busy-background case to the holdout scenario mix.
+2. H2 proper: joint family planning (shared family choice + consistent hierarchy across a
+   size set) and a family-consistency check in the contract; compare with per-variant
+   planning under the ablation harness.
+3. Roles within an owner (viewer/approver), retention policy, rate limiting; Docker image
+   build verification on a machine with a Docker daemon.

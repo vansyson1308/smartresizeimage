@@ -71,6 +71,13 @@ Machine-readable: `summary.json` of each run (not committed; regenerate with the
 Historical claim "31/36 (86.1%) Phase 3 pass" (`BENCH_DELTA_PHASE3_QUALITY.md`) came from the
 legacy evaluator and included the preserved false positive; it is not comparable.
 
+## Ablations (2026-09-09, 48 runs per configuration incl. 300×250; tuning/holdout split)
+
+See `results/ablations_2026-09-09.md` (verbatim harness output) and the summary in
+`EXPERIMENTS.md`. Headline: constraint planner 44/48 accepted vs zone planner 36/48; repair
+matters only for the zone planner; plates matter on busy backgrounds; holdout lacks a
+busy-background case.
+
 ## Metrics still to instrument
 
 Critical content-error rate and missed-error rate vs human labels; first-pass human acceptance;

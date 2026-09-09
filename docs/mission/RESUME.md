@@ -39,12 +39,14 @@ needed; launch Chromium with `executable_path="/opt/pw-browsers/chromium"` in th
 
 ## Next executable task
 
-Phase E, step 1 — ablation harness: add `backend/tools/run_ablations.py` that runs the
-design pipeline over the fixture corpus under named configurations (planner=zones|constraints,
-repair on|off, plates on|off, OCR on|off) with identical seeds, writes one `summary.json` per
-configuration plus a comparison table (accepted / needs_review / failed, mean seconds, repair
-rounds), and freezes a holdout split (cases 10–12 held out from any tuning). Record results in
-`docs/mission/EVALUATION.md` and `EXPERIMENTS.md` (H2/H4 rows).
+H2 joint family planning: add `plan_family(doc, targets)` in `backend/app/design/planner.py`
+that chooses one layout family per aspect class for the whole size set with a shared text
+hierarchy scale (headline:sub:cta ratios fixed across sizes) and returns per-target plans;
+add a `family_consistency` check to `backend/app/quality` (same relative hierarchy, same
+subject/logo identity, same reading order across variants of one job); expose it through
+`ProjectService.request_variants` (one job = one family) and compare against independent
+per-variant planning with `run_ablations.py` (new config `joint`). Also add a busy-background
+scenario to the holdout split in `generate_bench_fixtures.py` (keep tuning cases unchanged).
 
 ## Files to know
 

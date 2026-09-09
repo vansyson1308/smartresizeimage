@@ -45,6 +45,8 @@ Separate tracks: **Engineering**, **Quality**, **Operations**, **Competitive**, 
 | Evaluator detects known-bad output (occlusion, clipping, dropped element, size mismatch) | VERIFIED_LOCAL | `backend/tests/test_quality_contract.py` |
 | Evaluator calibration vs human judgement | BLOCKED_EXTERNAL | No human reviewers available. |
 | Synthetic 12-case benchmark (36 runs per mode) with contract v2 | VERIFIED_LOCAL | See `EVALUATION.md` for the numbers and configuration. Synthetic fixtures; not customer validation. |
+| Ablations with frozen holdout (planner / repair / plates) | VERIFIED_LOCAL | `run_ablations.py`; `results/ablations_2026-09-09.md`. Wide intervals (n=36/12). |
+| Pilot instruments (first-pass acceptance, time to decision, corrections) | VERIFIED_LOCAL | `api/events.py`, `GET /api/pilot/summary`; local log only, no blinded reviewers yet. |
 | Real design corpus (~30 masters, >= 5 brands) | BLOCKED_EXTERNAL | No licensed/owner-authorized designs in the repository. |
 | First-pass human acceptance >= 80% | PLANNED (target, untested) | — |
 | Operator-time reduction >= 70% vs baseline | PLANNED (target, untested) | — |

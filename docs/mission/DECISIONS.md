@@ -2,6 +2,12 @@
 
 Format: date, decision, alternatives rejected, reason. Newest first.
 
+## 2026-09-09 — Keep the repair loop enabled despite no measured gain with the constraint planner
+Rejected: removing repair to simplify.
+Reason: ablations show repair adds +11 pp for the zone planner and costs nothing measurable
+with the constraint planner (same acceptance, +0.02 s); real designs will be harder than the
+synthetic corpus and the loop is bounded (3 rounds) and reported in the plan.
+
 ## 2026-09-09 — Owner scoping by API key, foreign resources read as 404
 Rejected: full user accounts with sessions; returning 403 for other owners' projects.
 Reason: a key→owner map isolates tenants today without a user database, and 404 avoids
