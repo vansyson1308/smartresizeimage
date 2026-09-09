@@ -567,3 +567,97 @@ def test_rejection_then_approval_yields_an_applicable_rule(
     assert added[0]["hard"] is False
     # applied rules are no longer proposed
     assert client.get(f"/api/projects/{pid}/learned").json()["corrections"] == []
+
+
+def test_brand_rules_carry_across_projects_of_the_same_owner(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """A rule confirmed in one project is proposed in the brand's next project."""
+    from PIL import Image as PILImage
+
+    def blank_with_logo(name: str, brand: str | None = "Acme") -> tuple[str, str]:
+        res = client.post(
+            "/api/projects/blank",
+            json={"name": name, "brand": brand, "width": 600, "height": 300},
+        )
+        assert res.status_code == 201, res.text
+        pid = res.json()["project"]["id"]
+        buf = io.BytesIO()
+        PILImage.new("RGBA", (120, 60), (20, 20, 20, 255)).save(buf, format="PNG")
+        res = client.post(
+            f"/api/projects/{pid}/elements",
+            data={
+                "kind": "image",
+                "name": "Logo",
+                "role": "logo",
+                "x": 20,
+                "y": 20,
+                "width": 120,
+                "height": 60,
+            },
+            files={"file": ("logo.png", buf.getvalue(), "image/png")},
+        )
+        assert res.status_code == 201, res.text
+        logo = next(e["id"] for e in res.json()["document"]["elements"] if e["role"] == "logo")
+        return pid, logo
+
+    pid_a, logo_a = blank_with_logo("Spring")
+    res = client.patch(
+        f"/api/projects/{pid_a}/document",
+        json={
+            "ops": [
+                {
+                    "op": "add_constraint",
+                    "constraint": {
+                        "type": "scale_range",
+                        "elements": [logo_a],
+                        "params": {"min": 0.12, "max": 1.0},
+                        "hard": False,
+                    },
+                }
+            ],
+            "label": "brand logo size",
+        },
+    )
+    assert res.status_code == 200, res.text
+    rules = client.get("/api/brands/acme/rules").json()["rules"]  # case-insensitive
+    assert rules == [
+        {
+            "type": "scale_range",
+            "role": "logo",
+            "params": {"min": 0.12, "max": 1.0},
+            "sources": ["Spring"],
+            "notes": [],
+        }
+    ]
+    assert client.get("/api/brands/other/rules").json()["rules"] == []
+
+    pid_b, logo_b = blank_with_logo("Summer")
+    doc_b = client.get(f"/api/projects/{pid_b}").json()["document"]
+    assert doc_b["constraints"] == []  # nothing until the project is planned
+    res = client.post(
+        f"/api/projects/{pid_b}/variants",
+        json={"targets": [{"width": 300, "height": 250, "name": "M"}]},
+    )
+    assert res.status_code == 202, res.text
+    job = client.app.state.service.jobs.wait(res.json()["job"]["id"], timeout=300)
+    assert job.status == "done", job.to_dict()
+    doc_b = client.get(f"/api/projects/{pid_b}").json()["document"]
+    proposed = [c for c in doc_b["constraints"] if c["type"] == "scale_range"]
+    assert len(proposed) == 1 and proposed[0]["elements"] == [logo_b]
+    assert proposed[0]["provenance"]["origin"] == "generated"
+    assert "brand rule (Acme) from Spring" in proposed[0]["provenance"]["notes"]
+    assert proposed[0]["hard"] is False and proposed[0]["params"]["min"] == 0.12
+    # unconfirmed proposals never propagate further: a third project sees only Spring's rule
+    pid_c, _ = blank_with_logo("Autumn")
+    rules = client.get("/api/brands/Acme/rules").json()["rules"]
+    assert rules[0]["sources"] == ["Spring"]
+    # a project without a brand gets nothing
+    pid_d, _ = blank_with_logo("NoBrand", brand=None)
+    res = client.post(
+        f"/api/projects/{pid_d}/variants",
+        json={"targets": [{"width": 300, "height": 250, "name": "M"}]},
+    )
+    job = client.app.state.service.jobs.wait(res.json()["job"]["id"], timeout=300)
+    assert job.status == "done"
+    assert client.get(f"/api/projects/{pid_d}").json()["document"]["constraints"] == []

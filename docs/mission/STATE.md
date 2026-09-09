@@ -151,6 +151,12 @@ inputs only. Numbers are synthetic-fixture engineering results, not customer val
   policy (`AUTOBANNER_RETENTION_DAYS`, purge at startup and daily, logged, no undo).
   `test_ownership_and_jobs.py` 13 tests; `docs/OPERATIONS.md` updated. Test suite: 264 tests.
 
+- Brand-level rules (H5 follow-up, `design/brand.py`): confirmed `scale_range` /
+  `min_text_size` / `clear_space` rules are unioned across the owner's projects of one brand
+  (stricter wins, keyed by role) and proposed into a project of that brand when it is
+  uploaded or first planned; `GET /api/brands/{brand}/rules`; unconfirmed proposals never
+  propagate. API + unit tests.
+
 ## Release-criteria check (2026-09-09, end of this session)
 
 | Criterion (MISSION.md priorities / brief) | Status | Evidence |
@@ -171,5 +177,5 @@ inputs only. Numbers are synthetic-fixture engineering results, not customer val
    Docker daemon; event-log retention (projects are purged, events are not); multi-node
    rate limits and job records (per process today); billing remains out of scope without
    authorization.
-3. Research follow-ups: brand-level rule carry-over across projects (H5), H1 with more than
-   one example per orientation and with real designer examples.
+3. Research follow-ups: H1 with more than one example per orientation and with real designer
+   examples; brand rules for layout families (only constraints carry today).

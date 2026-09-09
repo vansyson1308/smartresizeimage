@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 ### Added
+- Brand-level rules: confirmed `scale_range` / `min_text_size` / `clear_space` rules carry
+  across an owner's projects with the same brand as reviewable proposals when a project is
+  uploaded or first planned (`GET /api/brands/{brand}/rules`); unconfirmed proposals never
+  propagate.
 - Revisions pin the previous render's text-plate rectangles (`plan.text_plate_rects`), so a
   longer copy on a busy background no longer moves the plate of the whole text stack; the
   retention sweep also trims event-log lines older than `AUTOBANNER_RETENTION_DAYS`.

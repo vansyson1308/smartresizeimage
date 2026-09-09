@@ -26,6 +26,7 @@ from ..config import Config
 from ..constants import SUPPORTED_EXTENSIONS
 from ..design.adapter import document_from_elements, elements_from_document
 from ..design.assets import AssetStore
+from ..design.brand import collect_brand_rules, propose_brand_rules
 from ..design.corrections import RejectionSnapshot, derive_corrections
 from ..design.decompose import decompose_flat_image
 from ..design.document import (
@@ -346,6 +347,10 @@ class ProjectService:
             project.save()
             with self._lock(project_id):
                 self._cache[project_id] = project
+            try:
+                self._apply_brand_rules(project, owner)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("brand rule proposal failed: %s", exc)
             self.usage.add(owner, "projects")
             self.usage.add(owner, "upload_bytes", len(data))
             self.events.record(
@@ -589,6 +594,13 @@ class ProjectService:
                 raise ServiceError(f"unknown element '{eid}' in text_overrides", 400)
         hidden = list(spec.get("hidden_elements") or [])
         locale = spec.get("locale")
+
+        # Brand rules (H5 follow-up): rules confirmed in the owner's other projects of the
+        # same brand are proposed into this document before planning (reviewable, soft).
+        try:
+            self._apply_brand_rules(project, meter_owner)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("brand rule proposal failed: %s", exc)
 
         # Joint planning (H2): one layout family per orientation for the whole job.
         # Approved variants of this project act as examples (H1): their inferred
@@ -910,6 +922,59 @@ class ProjectService:
             approval=approval, reason=reason[:200], verdict=rec.verdict,
         )
         return rec
+
+    # ---- brand-level rules (H5 follow-up) ----------------------------------------------
+    @staticmethod
+    def _brand_key(brand: str | None) -> str:
+        return (brand or "").strip().lower()
+
+    def brand_rules(
+        self, owner: str | None, brand: str, *, exclude_project: str | None = None
+    ) -> list[dict]:
+        """Union of carried rules across the owner's projects with this brand."""
+        docs = self._brand_documents(owner, brand, exclude_project=exclude_project)
+        return [r.to_dict() for r in collect_brand_rules(docs)]
+
+    def _apply_brand_rules(self, project: Project, owner: str | None) -> list[str]:
+        brand = project.meta.get("brand")
+        if not self._brand_key(brand):
+            return []
+        rules = collect_brand_rules(
+            [
+                (name, doc)
+                for name, doc in self._brand_documents(owner, brand, exclude_project=project.id)
+            ]
+        )
+        if not rules:
+            return []
+        with self._lock(project.id):
+            added = propose_brand_rules(project.document, rules, brand=str(brand))
+            if added:
+                project.save(snapshot=True, label=f"brand rules proposed ({len(added)})")
+        if added:
+            self.events.record(
+                owner or LOCAL_OWNER, "brand_rules_proposed", project_id=project.id,
+                brand=str(brand), count=len(added),
+            )
+        return [c.id for c in added]
+
+    def _brand_documents(
+        self, owner: str | None, brand: str | None, *, exclude_project: str | None = None
+    ) -> list[tuple[str, DesignDocument]]:
+        key = self._brand_key(brand)
+        out: list[tuple[str, DesignDocument]] = []
+        if not key or not self.projects_dir.exists():
+            return out
+        for root in sorted(self.projects_dir.iterdir()):
+            if not (root / "project.json").exists() or root.name == exclude_project:
+                continue
+            try:
+                other = self.get_project(root.name, owner=None)
+            except Exception:  # noqa: BLE001
+                continue
+            if self._owned_by(other, owner) and self._brand_key(other.meta.get("brand")) == key:
+                out.append((other.name, other.document))
+        return out
 
     # ---- rules from correction history (H5) --------------------------------------------
     def _corrections(self, project: Project):

@@ -13,6 +13,7 @@ AutoBanner là công cụ **tự bố cục lại banner** để chuyển từ 1
 - **Học từ biến thể đã duyệt**: sau khi bạn duyệt một biến thể, các lần sinh tiếp theo cùng hướng (ngang/vuông/dọc) đi theo bố cục đó; quy tắc suy ra kèm độ tin cậy được hiển thị để kiểm tra (không huấn luyện mô hình, không gửi thiết kế ra ngoài).
 - **Sửa cục bộ khi đổi chiến dịch**: đổi copy/asset/màu trên một biến thể đã sinh chỉ thay đổi đúng phần tử đó, bố cục còn lại giữ nguyên (tùy chọn "Keep layout", bật mặc định); nếu copy mới không vừa ô cũ, hệ thống dàn lại và báo rõ `layout_change`.
 - **Rule từ lịch sử từ chối**: khi bạn từ chối một biến thể kèm lý do ("logo quá nhỏ", "CTA khó đọc") rồi duyệt bản sửa, hệ thống đề xuất rule tương ứng kèm bằng chứng để bạn thêm bằng một cú nhấp; lý do không hiểu được thì chỉ ghi nhận, không bịa rule.
+- **Rule theo thương hiệu**: rule đã xác nhận (tự thêm hoặc từ lịch sử từ chối) trong một project được đề xuất lại cho các project cùng brand của bạn, có nhãn nguồn để duyệt hoặc bỏ.
 - Sinh biến thể theo nhiều kích thước với **text được dàn lại bằng font thật** (không kéo giãn raster), rồi **kiểm tra trên ảnh render** (phần tử có bị che/cắt không, chữ có đọc được không) và tự sửa trong phạm vi giới hạn.
 - Review theo verdict `accepted / needs_review / failed`, duyệt/từ chối kèm lý do, sửa copy cho riêng một biến thể, xuất PNG/JPEG/WebP kèm manifest, và **lưu project để mở lại**.
 - Có benchmark chạy đúng đường production để đo chất lượng, không tự lừa mình.

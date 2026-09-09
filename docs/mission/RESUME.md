@@ -44,15 +44,10 @@ The research track (H1–H5) and the local commercial layer are in place; what r
 things this environment does not have (real designs, human reviewers, provider credentials,
 a Docker daemon). Next executable items, in order:
 
-1. Brand-level rule carry-over (H5 follow-up): projects share `meta.brand`; add
-   `GET /api/brands/{brand}/rules` that unions confirmed correction rules and learned
-   families across an owner's projects with that brand (keyed by role), and let
-   `request_variants` apply them as proposals for a new project of the same brand. Test:
-   two projects, rule confirmed in the first, proposed in the second.
-2. Docker build verification: on a machine with a daemon run `docker compose build && docker
+1. Docker build verification: on a machine with a daemon run `docker compose build && docker
    compose up`, hit `/api/health`, run the browser journey against port 8000, and record the
    image size and cold-start time in `docs/OPERATIONS.md`.
-3. When real designs or reviewers become available: run the pilot instruments
+2. When real designs or reviewers become available: run the pilot instruments
    (`/api/pilot/summary`) on a real campaign, calibrate the verdict against reviewer decisions,
    and replace the synthetic numbers in `EVALUATION.md` with measured ones.
 

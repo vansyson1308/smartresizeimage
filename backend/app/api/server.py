@@ -255,6 +255,10 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
     def learned_rules(project_id: str, owner: str = Owner) -> dict:
         return service.learned_rules(project_id, owner)
 
+    @app.get("/api/brands/{brand}/rules", dependencies=dep)
+    def brand_rules(brand: str, owner: str = Owner) -> dict:
+        return {"brand": brand, "rules": service.brand_rules(owner, brand)}
+
     @app.post("/api/projects/{project_id}/learned/corrections/{index}/apply", dependencies=edit)
     def apply_correction(project_id: str, index: int, owner: str = Owner) -> dict:
         return service.apply_correction(project_id, index, owner)
