@@ -6,22 +6,40 @@ AutoBanner là công cụ **tự bố cục lại banner** để chuyển từ 1
 ---
 
 ## AutoBanner làm được gì?
-- Đọc **PSD** và ảnh phẳng (**PNG/JPG/WEBP**).
-- Phân loại vai trò phần tử: headline/subheadline/CTA/logo/mascot/hero/background.
-- **Phase 2.1 – Adaptive Relayout**: tự tính bố cục theo profile + solver + typography (tự wrap chữ, giữ hierarchy).
-- **Phase 3 – Target-first Redesign (Design-native)**: đặt các “điểm neo thương hiệu” (mascot/logo/text/CTA) trước, rồi **tạo lại nền + decor (sky/cityscape/fireworks/confetti)** theo style minh hoạ flat để nhìn như thiết kế cho size đích.
-- Có **benchmark** để đo chất lượng, tránh regress.
+- Đọc **PSD** (giữ text native, layer, opacity, blend mode cơ bản) và ảnh phẳng (**PNG/JPG/WEBP** – nhập như một bức ảnh duy nhất, luôn cần review).
+- Hoặc **dựng master từ asset rời**: canvas trống + thêm ảnh (logo, sản phẩm) + thêm text.
+- Phân loại vai trò phần tử (headline/CTA/logo/hero/background…) kèm **độ tin cậy** để bạn xác nhận hoặc sửa.
+- Đề xuất **quy tắc** (rule/constraint) có thể duyệt: phải luôn hiển thị, khoảng trống quanh logo, giữ nhóm, cho phép chồng lấn có chủ ý, cỡ chữ tối thiểu.
+- Sinh biến thể theo nhiều kích thước với **text được dàn lại bằng font thật** (không kéo giãn raster), rồi **kiểm tra trên ảnh render** (phần tử có bị che/cắt không, chữ có đọc được không) và tự sửa trong phạm vi giới hạn.
+- Review theo verdict `accepted / needs_review / failed`, duyệt/từ chối kèm lý do, sửa copy cho riêng một biến thể, xuất PNG/JPEG/WebP kèm manifest, và **lưu project để mở lại**.
+- Có benchmark chạy đúng đường production để đo chất lượng, không tự lừa mình.
 
 ## AutoBanner KHÔNG phải là gì?
-- Không phải Photoshop full-render tất cả layer effects.
-- Không phải công cụ “đổi style / đổi concept” theo kiểu thiết kế mới hoàn toàn.
+- Không phải Photoshop full-render tất cả layer effects (effect không hỗ trợ được ghi rõ trong import notes).
+- Chưa tách ảnh phẳng thành layer; ảnh phẳng chỉ được co giãn thông minh và luôn ở trạng thái cần review.
+- Chưa có đăng nhập nhiều người dùng/nhiều tenant, billing, hay tích hợp nền tảng quảng cáo. Xem `docs/mission/CAPABILITIES.md` để biết trạng thái thật của từng tính năng.
 
+---
+
+## Chạy nhanh (API + giao diện web mới)
+
+```bash
+cd backend && python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt          # hoặc requirements-ci.txt để chạy test
+sudo apt-get install tesseract-ocr       # tuỳ chọn: bật kiểm tra OCR (nếu thiếu, check ghi not_checked)
+cd .. && AUTOBANNER_DATA_DIR=./data uvicorn backend.app.api.server:app --port 8000
+```
+
+Mở http://localhost:8000 → kéo thả PSD/PNG (hoặc tạo canvas trống) → kiểm tra phần tử & quy tắc → chọn kích thước → Generate → Review → Export. Tài liệu API: http://localhost:8000/api/docs. Đặt `AUTOBANNER_API_KEY` để yêu cầu header `X-API-Key`.
+
+Giao diện Gradio cũ vẫn chạy được bằng `python -m backend.app.main` (cổng 7860), dùng cho relayout nhanh Phase 2.1 / Phase 3.
 
 ---
 
 ## Nên dùng chế độ nào?
-- **Phase 3 (khuyến nghị cho banner minh hoạ flat)**: khi bạn đổi ngang → dọc (hoặc tỷ lệ lệch mạnh) và muốn nhìn như thiết kế cho size đó từ đầu.
-- **Phase 2.1**: khi bạn cần relayout nhanh, ít thay đổi nền/decor.
+- **Giao diện web mới (khuyến nghị)**: quy trình đầy đủ, text native, có kiểm tra chất lượng và lưu project.
+- **Phase 3 (Gradio)**: banner minh hoạ flat, đổi tỷ lệ mạnh, muốn tái tạo nền theo kiểu flat illustration (bộ sinh nền hiện là thủ tục/deterministic, chưa có model sinh ảnh thật).
+- **Phase 2.1 (Gradio)**: relayout nhanh, ít thay đổi nền.
 
 ---
 
@@ -138,6 +156,15 @@ Chạy từ repo root (khuyến nghị), hoặc từ backend đều được n�
 python backend/tools/generate_bench_fixtures.py --cases 12 --seed 42
 python backend/tools/run_layout_bench.py --mode both --seed 42
 python backend/tools/run_layout_bench.py --mode phase3 --seed 42
+
+Benchmark chạy đúng đường production (`ReLayoutEngine`) và chấm bằng **quality contract v2**
+(`backend/app/quality`): kiểm tra trên ảnh render thật (phần tử có bị che/cắt không, chữ có đọc
+được bằng OCR không, thiếu phần tử bắt buộc, sai kích thước xuất). Mỗi biến thể nhận verdict
+`accepted` / `needs_review` / `failed`; check không chạy được ghi `not_checked` và không bao giờ
+được tính là đạt. Cấu hình (seed, số candidate Phase 3, môi trường, commit) được ghi trong
+`summary.json`. Muốn có OCR: cài `tesseract-ocr` (apt) và `pip install pytesseract`.
+
+Trạng thái thực tế của từng tính năng và bằng chứng: xem `docs/mission/CAPABILITIES.md`.
 
 Output được sinh ra (KHÔNG commit):
 

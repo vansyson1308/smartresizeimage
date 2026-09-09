@@ -1,0 +1,108 @@
+# Capability status
+
+Statuses: `PLANNED` (not implemented) · `IMPLEMENTED` (code exists, verification incomplete) ·
+`VERIFIED_LOCAL` (passed stated local end-to-end checks) · `VERIFIED_CONNECTED` (passed against
+a real external integration) · `VERIFIED_HUMAN` (passed stated human evaluation) ·
+`BLOCKED_EXTERNAL` (specific external prerequisite missing) · `EXPERIMENTAL` (not part of the
+supported promise).
+
+Separate tracks: **Engineering**, **Quality**, **Operations**, **Competitive**, **Commercial**.
+
+## Engineering
+
+| Capability | Status | Evidence |
+|---|---|---|
+| PSD import (pixel/type/shape/group layers, opacity, blend mode, drop shadow subset) | IMPLEMENTED | `backend/app/parser/psd_parser.py`; unit tests with synthetic layers only, no real customer PSD verified. |
+| Flat PNG/JPG/WEBP import | VERIFIED_LOCAL (as single picture) | `ImageParser` yields one background element; contract v2 flags every flat-image output `design_understood: NEEDS_REVIEW`. No decomposition. |
+| Semantic role classification (name rules -> optional CLIP -> heuristics) | IMPLEMENTED | CLIP path never exercised here (torch not installed). Rules/heuristics unit-tested. |
+| Template + adaptive layout (Phase 2.1) | VERIFIED_LOCAL | Fixed 2026-09-09: background excluded from solver, zone members stacked, side-by-side rhythm, zone overflow, raster text uniform scale. `backend/tests/test_layout_fixes.py`. |
+| Phase 3 target-first redesign (procedural background regeneration) | IMPLEMENTED | Deterministic procedural generator only. `GenerativeFillAdapter` is a visible mock (`is_mock: true`, `provider: none`). Selection status (`valid/degraded/last_resort`) now propagates to `used_fallback`. |
+| Quality contract v2 (rendered-output + structural checks) | VERIFIED_LOCAL | `backend/app/quality`; 13 tests incl. preserved false positive. OCR via tesseract 5.3.4 when installed, else `NOT_CHECKED`. |
+| Production/benchmark parity | VERIFIED_LOCAL | Bench runs `ReLayoutEngine.load_elements()` + production `relayout*`; config, seed, candidates, commit, environment recorded in `summary.json`. |
+| Reproducible Phase 3 seeds across processes | VERIFIED_LOCAL | `test_phase3_generator_seed_is_stable_across_processes` (two PYTHONHASHSEED values). |
+| Gradio UI with per-session state (legacy) | IMPLEMENTED | `gr.State` engine per session; verdict summary per variant. Not exercised in a browser here. |
+| Typed design representation (native text, constraints, provenance, confidence) | VERIFIED_LOCAL | `backend/app/design/document.py`, schema 1.0 with migration guard; `test_design_document.py`. |
+| Native text fitting/rendering with font disclosure | VERIFIED_LOCAL | FreeType + raqm; missing fonts reported `substituted`/`missing`; Vietnamese diacritics rendered in tests. |
+| Variant pipeline: plan → typeset → render → verify → bounded repair | VERIFIED_LOCAL | `design/variant.py`; bench `--mode design` 32/36 accepted (synthetic). |
+| Project persistence / reopen / round trip (history, undo, restore) | VERIFIED_LOCAL | `design/project.py`; API test exports project zip, re-imports, edits, regenerates. |
+| Typed API + jobs (progress, cancel, idempotency, partial completion) | VERIFIED_LOCAL | `api/service.py`, `api/jobs.py`; `test_api.py` (8 tests). Jobs are in-process; restart marks running variants failed. |
+| Web review/edit UI (select, move, resize, nudge, text/style edit, rules, approve/reject, undo, export) | VERIFIED_LOCAL | Playwright journey against the real server (see `RESUME.md`); no console errors; 900px layout without horizontal scroll. |
+| Exports: PNG/JPEG/WebP zip with manifest + quality reports + font disclosure; editable project zip | VERIFIED_LOCAL | `service.export_deliverables`, `export_project`; PDF export PLANNED. |
+| Copy overrides per run and per variant; locale tag; verbatim (protected) copy | VERIFIED_LOCAL | `VariantBrief.text_overrides`; protected text cannot be overridden from the UI. Locale-aware fitting rules PLANNED. |
+| Channel presets with recorded provenance (`verified=false`) | IMPLEMENTED | `api/presets.py`; no platform policy claimed. |
+| Compose master from separated assets (blank canvas + add text/image) | VERIFIED_LOCAL | `POST /api/projects/blank`, `POST /api/projects/{id}/elements`; exercised by the browser journey. |
+| Learning from approved examples (H1), joint family planning (H2) | PLANNED / EXPERIMENTAL | See `EXPERIMENTS.md`. |
+| Real generative provider adapter | BLOCKED_EXTERNAL | No provider credentials/authorization in this environment; mock is labelled. |
+
+## Quality
+
+| Item | Status | Evidence |
+|---|---|---|
+| Evaluator detects known-bad output (occlusion, clipping, dropped element, size mismatch) | VERIFIED_LOCAL | `backend/tests/test_quality_contract.py` |
+| Evaluator calibration vs human judgement | BLOCKED_EXTERNAL | No human reviewers available. |
+| Synthetic 12-case benchmark (36 runs per mode) with contract v2 | VERIFIED_LOCAL | See `EVALUATION.md` for the numbers and configuration. Synthetic fixtures; not customer validation. |
+| Real design corpus (~30 masters, >= 5 brands) | BLOCKED_EXTERNAL | No licensed/owner-authorized designs in the repository. |
+| First-pass human acceptance >= 80% | PLANNED (target, untested) | — |
+| Operator-time reduction >= 70% vs baseline | PLANNED (target, untested) | — |
+
+## Operations
+
+| Item | Status |
+|---|---|
+| Authentication, org/brand boundaries, roles | PLANNED |
+| Tenant isolation for state/assets/jobs | PLANNED (one data dir = one tenant; optional single API key) |
+| Durable jobs, retention, backup/restore | PLANNED |
+| Metering, quotas, sandbox billing | PLANNED / BLOCKED_EXTERNAL (no billing sandbox keys) |
+| Deploy/rollback docs, release package | IMPLEMENTED (Dockerfile + compose), unverified in this environment |
+
+## Commercial
+
+| Item | Status |
+|---|---|
+| Customer conversations, pilots, willingness to pay | BLOCKED_EXTERNAL — none conducted; no claims. |
+| Price hypothesis | PLANNED — scenario only: 200 customers × USD 499/month = USD 1,197,600 ARR before churn/discounts/costs. Not evidence. |
+
+## Competitive reference matrix (documentation-level, 2026-09-09)
+
+Evidence caveat: direct fetches of every vendor page were blocked by this environment's egress
+proxy; entries rest on search-snippet text attributed to the official domains (tier
+DOC-SNIPPET) except Qwen-Image-Layered (GitHub README fetched directly). All hands-on behaviour
+is UNTESTED. No prices are asserted beyond what official snippets stated.
+
+| Reference | Advertised capability | Input assumption | Manual setup noted | Pricing signal | Evidence |
+|---|---|---|---|---|---|
+| Canva Resize | Resize to multiple sizes; limits ≈ 40×40 to 8000×3125 px; ≤5 new sizes per design, ≤250 outputs per bulk action | Native Canva design | Copy-and-resize to keep original | Paid tiers; counts against AI usage limit | DOC-SNIPPET, UNTESTED |
+| Canva Magic Layers (beta) | Flat JPEG/PNG -> editable layers incl. live text; "works best" with graphic/illustrated designs | Single-page JPEG/PNG | Convert other formats first | Not stated | DOC-SNIPPET + third-party, UNTESTED |
+| Adobe Firefly bulk actions | Preset batch actions: background remove/replace, Resize (beta, focal point + Generative Expand), crop to marketing presets, colour grade | Flat JPEG/PNG (≤1000 images, ≤100 MB) | Choose preset, set focal point | Paid plans with premium generative features | DOC-SNIPPET, UNTESTED |
+| Adobe Brand Intelligence | Brand ontology from guidelines/assets; "Validate" checks layout/typography/policy | Enterprise guidelines + DAM | Services-led onboarding | Contact sales | DOC-SNIPPET, UNTESTED |
+| Cloudinary gravity + generative fill | URL-driven smart crop (`g_auto`, faces, custom coords, object priorities); `b_gen_fill` outpainting for ratio changes | Flat raster via URL | Optional custom coordinates | Transformation counts; add-ons | DOC-SNIPPET, UNTESTED |
+| CHILI GraFx Smart Crop | Template frames with AI fill positioning, subject alignment, copy fitting, auto-grow, layout presets | Templates authored in GraFx Studio | Template authoring required | Not stated | DOC-SNIPPET, UNTESTED |
+| Celtra Creative Automation | Master designs with locked/editable elements, auto-layout rules, content feeds, language/font pairing, preview/comment/approve | Templates built in Celtra | Designers define rules/lock states | Not stated | DOC-SNIPPET, UNTESTED |
+| Bannerbear API | Every template layer addressable via API; auto-resize long text; template sets for multiple sizes | Template in Bannerbear editor | Build template, name layers | Credit-based plans (official $ not captured) | DOC-SNIPPET, UNTESTED |
+| Qwen-Image-Layered | RGB -> variable RGBA layers, recursive decomposition; open weights (Apache 2.0); needs CUDA GPU | One RGB image (+ optional prompt) | Code-level only | Free weights, own compute | DOC-DIRECT (GitHub), UNTESTED |
+| DesignAsCode (arXiv 2602.17690) | Design as HTML/CSS synthesis with plan-implement-reflect; editable text/layout/colour/font; layout retargeting | Generation brief | n/a | n/a | DOC-SNIPPET |
+| PosterO (arXiv 2505.07843) | SVG-tree layouts predicted by LLM with intent-aligned examples | Background + intent + examples | n/a | n/a | DOC-SNIPPET |
+| iPoster (arXiv 2603.29469) | Graph-enhanced diffusion layout with hard user constraints masked into denoising | Canvas + partial constraints | n/a | n/a | DOC-SNIPPET |
+
+### Decisions per capability group
+
+1. **Import / layer & text recovery / fonts**: implement native text + layered PSD import now
+   (Phase B); flat-image decomposition later with honest confidence (`EXPERIMENTAL`); consider
+   Qwen-Image-Layered integration only when a GPU and licence review exist.
+2. **Multi-size / smart crop / safe areas / copy fitting / localization**: implement now — this is
+   the core product; channel presets must carry a source and version.
+3. **Product/logo preservation / background expansion**: implement protected-region contract now
+   (exists as masks); generative expansion behind a real provider adapter — `BLOCKED_EXTERNAL`.
+4. **Brand rules / templates / examples**: implement constraints in the IR now; learning from
+   approved examples is research (H1).
+5. **Editing / batch review / approvals / versions / undo**: implement now (Phase B) — no
+   reference combines per-variant rendered diagnostics with review.
+6. **Data-driven variants / exports / integrations / API**: typed API + PNG/JPEG exports in Phase
+   B; CSV-driven variants and one integration after the journey works.
+7. **Collaboration / isolation / economics**: session isolation done; tenant isolation, metering
+   and billing in Phase D.
+
+Gaps identified by the scan that AutoBanner targets: chaining flat/layered master -> constrained
+editable program -> size family; explicit protected-region guarantees under generation;
+per-variant rendered diagnostics in review; transparent per-family economics. These are
+positioning hypotheses until measured.
