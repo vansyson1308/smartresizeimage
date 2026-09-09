@@ -44,12 +44,14 @@ Environment: Python 3.11.15, Pillow 10.4.0, NumPy 1.26.4, SciPy 1.17.1, opencv-h
 | baseline (template, raster text) | 5/36 | 19 | 12 | 0/36 | 2.9 |
 | phase21 (adaptive, raster text) | 0/36 | 14 | 22 | 20/36 | 3.2 |
 | phase3 (procedural redesign, 8 candidates) | 0/36 | 6 | 30 | 20/36 | ~43 (contended run) |
-| **design (native text, verify+repair)** | **32/36** | 4 | 0 | 13/36 | 1.9 |
+| design, zone planner (native text, verify+repair) | 32/36 | 4 | 0 | 13/36 | 1.9 |
+| **design, constraint planner + contrast-aware plates** | **36/36** | 0 | 0 | — | 1.5 |
 
-The 4 design-mode reviews are busy/noise backgrounds where OCR agreement is low (honest
-`needs_review`). Raster-text modes fail mostly on hidden/illegible CTA rasters and text
-overlaps; those modes remain for flat/legacy inputs only. Numbers are synthetic-fixture
-engineering results, not customer validation.
+Progression of the design pipeline on the same 36 runs: zone planner 32 accepted (4 busy
+backgrounds unreadable) → constraint planner 32 accepted, logo clear-space notes 12 → 0 →
+contrast-aware text plates 36 accepted with OCR agreement 1.0 on the busy cases. Raster-text
+modes fail mostly on hidden/illegible CTA rasters and text overlaps; they remain for legacy
+inputs only. Numbers are synthetic-fixture engineering results, not customer validation.
 
 - Browser journey (Playwright + Chromium, real server): see `RESUME.md` for the script and the
   latest run status.
@@ -59,17 +61,32 @@ engineering results, not customer validation.
 - No PSD fixture in the repo: PSD import is unit-tested with synthetic layers only; real
   customer PSDs are `BLOCKED_EXTERNAL`.
 - Flat images are not decomposed (always `needs_review`).
-- Layout planning still uses the template/zone engine; keep_group is enforced post hoc.
+- The constraint planner uses three hand-written layout families per aspect class; families
+  are not yet learned from approved variants (H1).
 - No multi-tenant auth, metering, billing, or durable job queue across restarts (jobs are
   in-process; interrupted variants are marked failed on restart).
 - Human calibration of the verdict and operator-time measurements not performed.
 - Legacy documents in repo root (`AUDIT_REPORT.md`, `BENCH_DELTA_*.md`, `RELEASE_READINESS.md`)
   describe the pre-v2 evaluator; treat their numbers as historical.
 
+## Phase C progress (2026-09-09, later the same day)
+
+- Constraint-aware planner (`backend/app/design/planner.py`): layout families per aspect,
+  reading-order text stack with hierarchy from the master, uniform subjects/logos, logo clear
+  space, content pressure (copy takes room from the subject down to a floor), constraints
+  `order_below` / `anchor_edge` / `scale_range` / `keep_visible`; conflicts reported.
+  `Config.DESIGN_PLANNER` = "constraints" (default) | "zones". Tests: `test_planner.py`.
+- Approved translations per element (`TextContent.translations`), selected by the brief's
+  locale; protected copy ignores overrides. Glyph coverage via fontTools with automatic
+  fallback to a face that has the glyphs (disclosed) and a critical `font_coverage` check.
+- Contrast-aware, resolution-independent text plates (light/dark panel chosen from the text
+  colour, merged per text stack).
+- PR #7 CI: backend-tests and GitGuardian green on the first push.
+
 ## Next actions (in order)
 
-1. Land this change set as a draft PR; keep CI green (`requirements-ci.txt` now includes
-   FastAPI/httpx/pytesseract; CI runners lack tesseract → OCR checks report `not_checked`).
-2. Phase C: constraint-aware planner on the document (replace zone templates for the design
-   pipeline), localization-aware copy fitting, flat-image decomposition with confidence.
-3. Phase D: auth/tenancy, durable jobs, metering; Phase E: held-out evaluation + ablations (H1/H2).
+1. Flat-image decomposition (`backend/app/design/decompose.py` drafted: OCR text lines with
+   alpha cut-outs, salient subject via edge energy + GrabCut, inpainted background) — wire into
+   the import service with `recovered` provenance and a "convert to native text" operation,
+   add tests and a UI correction path.
+2. Phase D: auth/tenancy, durable jobs, metering; Phase E: held-out evaluation + ablations (H1/H2).

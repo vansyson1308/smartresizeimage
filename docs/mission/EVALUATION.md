@@ -48,9 +48,14 @@ records with verdict, issues, legacy_v1, elapsed_s, config flags).
 | baseline (template, raster text) | 5/36 | 19 | 12 | 0/36 |
 | phase21 (adaptive, raster text) | 0/36 | 14 | 22 | 20/36 |
 | phase3 (procedural redesign, n=8) | 0/36 | 6 | 30 | 20/36 |
-| design (native text, verify + bounded repair) | 32/36 | 4 | 0 | 13/36 |
+| design, zone planner (native text, verify + bounded repair) | 32/36 | 4 | 0 | 13/36 |
+| design, constraint planner | 32/36 | 4 | 0 | — |
+| design, constraint planner + contrast-aware plates | 36/36 | 0 | 0 | — |
 
-Design-mode reviews: 4 busy/noise-background runs with low OCR agreement on CTA/sub text.
+The 4 zone/constraint-planner reviews were busy/noise backgrounds with low OCR agreement;
+contrast-aware plates resolved them (OCR agreement 1.0). Ablation note: the constraint planner
+alone did not change the verdict count on this synthetic set (32 → 32) but removed all 12
+logo clear-space notes and eliminated repair rounds; the legibility gain came from plates.
 Environment: Python 3.11.15, Pillow 10.4.0, NumPy 1.26.4, tesseract 5.3.4, 4 CPUs.
 Machine-readable: `summary.json` of each run (not committed; regenerate with the commands above).
 

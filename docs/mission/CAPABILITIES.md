@@ -23,7 +23,11 @@ Separate tracks: **Engineering**, **Quality**, **Operations**, **Competitive**, 
 | Gradio UI with per-session state (legacy) | IMPLEMENTED | `gr.State` engine per session; verdict summary per variant. Not exercised in a browser here. |
 | Typed design representation (native text, constraints, provenance, confidence) | VERIFIED_LOCAL | `backend/app/design/document.py`, schema 1.0 with migration guard; `test_design_document.py`. |
 | Native text fitting/rendering with font disclosure | VERIFIED_LOCAL | FreeType + raqm; missing fonts reported `substituted`/`missing`; Vietnamese diacritics rendered in tests. |
-| Variant pipeline: plan → typeset → render → verify → bounded repair | VERIFIED_LOCAL | `design/variant.py`; bench `--mode design` 32/36 accepted (synthetic). |
+| Variant pipeline: plan → typeset → render → verify → bounded repair | VERIFIED_LOCAL | `design/variant.py`; bench `--mode design` 36/36 accepted (synthetic, constraint planner + contrast-aware plates). |
+| Constraint-aware planner (layout families, reading order, hierarchy, clear space, content pressure) | VERIFIED_LOCAL | `design/planner.py`, `test_planner.py`; `Config.DESIGN_PLANNER`. |
+| Approved translations per locale + glyph-coverage fallback with disclosure | VERIFIED_LOCAL | `TextContent.translations`, `FontRegistry.resolve_for_text`; tests incl. CJK fallback to IPAGothic in this environment. |
+| Contrast-aware text plates (light/dark panel from text colour) | VERIFIED_LOCAL | busy-background fixtures read at OCR agreement 1.0 after plating. |
+| Flat-image decomposition (OCR text cut-outs, GrabCut subject, inpainted background) with confidence | IMPLEMENTED (module drafted, not wired) | `design/decompose.py`; no tests yet. |
 | Project persistence / reopen / round trip (history, undo, restore) | VERIFIED_LOCAL | `design/project.py`; API test exports project zip, re-imports, edits, regenerates. |
 | Typed API + jobs (progress, cancel, idempotency, partial completion) | VERIFIED_LOCAL | `api/service.py`, `api/jobs.py`; `test_api.py` (8 tests). Jobs are in-process; restart marks running variants failed. |
 | Web review/edit UI (select, move, resize, nudge, text/style edit, rules, approve/reject, undo, export) | VERIFIED_LOCAL | Playwright journey against the real server (see `RESUME.md`); no console errors; 900px layout without horizontal scroll. |

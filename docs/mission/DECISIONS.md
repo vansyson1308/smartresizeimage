@@ -2,6 +2,25 @@
 
 Format: date, decision, alternatives rejected, reason. Newest first.
 
+## 2026-09-09 — Constraint planner with hand-written layout families replaces zone templates
+Rejected: keep the template/zone engine and add more zones; a generic optimizer over free
+coordinates.
+Reason: families express designer intent per aspect class (text column, subject slot, logo
+slot) and let constraints and content pressure decide the rest; a free optimizer had no
+prior for what "designed for the size" means and the zone engine dropped/collided elements.
+Learned families from approved variants stay a research item (H1). The zone planner remains
+behind `Config.DESIGN_PLANNER = "zones"` for comparison.
+
+## 2026-09-09 — Text plates trigger on texture or contrast, resolution-independent
+Rejected: keep the single busy threshold measured on the output canvas.
+Reason: the same noise scored 0.23 at source and 0.16 after upscaling, so plates silently
+disappeared at larger targets; legibility depends on texture at glyph scale and on the
+contrast between the text colour and the background.
+
+## 2026-09-09 — Recovered raster text stays raster until a user converts it
+Reason: OCR strings are unverified; typesetting them as native text would silently change
+approved copy. The element keeps the recognised string as metadata with its confidence.
+
 ## 2026-09-09 — Benchmark runs the production `ReLayoutEngine`
 Rejected: keep the separate benchmark harness that composed elements directly.
 Reason: the harness skipped harmonization/grounding, used 4 Phase 3 candidates while production

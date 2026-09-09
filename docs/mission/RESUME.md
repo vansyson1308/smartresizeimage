@@ -39,11 +39,15 @@ needed; launch Chromium with `executable_path="/opt/pw-browsers/chromium"` in th
 
 ## Next executable task
 
-Phase C planner: implement `backend/app/design/planner.py` that places document elements
-from constraints (keep_group, order_below, clear_space, anchor_edge, scale_range) and layout
-families per aspect ratio, replacing the zone templates inside `generate_variant`. Keep the
-current path behind a flag (`Config.DESIGN_PLANNER = "zones" | "constraints"`), compare both
-with `run_layout_bench.py --mode design` before switching the default.
+Wire `backend/app/design/decompose.py` into `ProjectService.create_project_from_upload` for
+non-PSD files: run `decompose_flat_image`, store the inpainted background and each recovered
+crop as assets, create elements with `provenance.origin = "recovered"`, `role_confidence`
+from the decomposition, `effects["recovered_text"]` for OCR strings, and add a
+`convert_to_text` document operation (element becomes kind `text` with the confirmed string,
+estimated size/colour). Add tests in `backend/tests/test_decompose.py` (synthetic flat
+banner) and a UI button "Convert to editable text" in the element panel. Keep the
+`design_understood` check as `needs_review` until a user has confirmed the recovered
+elements.
 
 ## Files to know
 
