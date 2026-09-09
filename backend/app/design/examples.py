@@ -132,6 +132,80 @@ def _iou(a: Region, b: Region) -> float:
     return inter / union if union > 0 else 0.0
 
 
+EDGE_MARGIN = 0.02  # canvas fraction kept free at the edges when a slot expands
+SLOT_GAP = 0.02  # canvas fraction kept between a slot and its neighbours
+
+
+def _free_span(
+    lo: float,
+    hi: float,
+    perp: tuple[float, float],
+    obstacles: list[tuple[float, float, float, float]],
+    limits: tuple[float, float],
+) -> tuple[float, float]:
+    """Interval around ``[lo, hi]`` free of obstacles that overlap it on the other axis.
+
+    ``obstacles`` are (lo, hi, perp_lo, perp_hi); an obstacle that overlaps ``[lo, hi]``
+    itself cannot be expanded across and is ignored.
+    """
+    a, b = limits
+    for o_lo, o_hi, p_lo, p_hi in obstacles:
+        if p_hi <= perp[0] or p_lo >= perp[1]:
+            continue
+        if o_hi <= lo + 1e-6:
+            a = max(a, o_hi + SLOT_GAP)
+        elif o_lo >= hi - 1e-6:
+            b = min(b, o_lo - SLOT_GAP)
+    return min(a, lo), max(b, hi)
+
+
+def _slot(region: Region, others: list[Region], *, text_align: str | None = None) -> Region:
+    """Grow a tight element region into the slot the planner should offer it.
+
+    The planner centres logos and subjects in their slot and centres a text stack
+    vertically in its column, so slots expand symmetrically around the example's
+    element until they meet a neighbour, the canvas margin or (for a left-aligned
+    text column) the mirrored left margin. Placement on the example's own size is
+    unchanged; on other sizes the element has room to keep its size and wrapping.
+    """
+    cx, cy = region.x + region.w / 2, region.y + region.h / 2
+    vert = [(o.y, o.y + o.h, o.x, o.x + o.w) for o in others]
+    horiz = [(o.x, o.x + o.w, o.y, o.y + o.h) for o in others]
+    a, b = _free_span(
+        region.y,
+        region.y + region.h,
+        (region.x, region.x + region.w),
+        vert,
+        (EDGE_MARGIN, 1.0 - EDGE_MARGIN),
+    )
+    half_h = min(cy - a, b - cy)
+    y, h = cy - half_h, 2 * half_h
+    if text_align == "left":
+        right_limit = 1.0 - max(EDGE_MARGIN, region.x)  # mirror the left margin
+        _, b = _free_span(
+            region.x,
+            region.x + region.w,
+            (region.y, region.y + region.h),
+            horiz,
+            (EDGE_MARGIN, right_limit),
+        )
+        x, w = region.x, b - region.x
+    else:
+        margin = EDGE_MARGIN
+        if text_align == "center":
+            margin = max(EDGE_MARGIN, min(region.x, 1.0 - (region.x + region.w)))
+        a, b = _free_span(
+            region.x,
+            region.x + region.w,
+            (region.y, region.y + region.h),
+            horiz,
+            (margin, 1.0 - margin),
+        )
+        half_w = min(cx - a, b - cx)
+        x, w = cx - half_w, 2 * half_w
+    return Region(round(x, 4), round(y, 4), round(max(0.01, w), 4), round(max(0.01, h), 4))
+
+
 def _average(regions: list[Region]) -> Region:
     n = len(regions)
     return Region(
@@ -177,6 +251,7 @@ def infer_families(
         logo_r = _union(logos, cw, ch)
         if text_r is None and subj_r is None:
             continue
+        tight = {"text": text_r, "subject": subj_r, "logo": logo_r}
         align = "left"
         if texts:
             xs = [e.geometry.x / cw for e in texts]
@@ -188,11 +263,24 @@ def infer_families(
             if centered_geometry or centered_style:
                 align = "center"
         subject_first = bool(subj_r and text_r and subj_r.y + subj_r.h * 0.5 < text_r.y)
+        # Text columns and logo slots expand into the free space around the example's
+        # elements (the planner centres in them, so placement on the example size is
+        # unchanged while other sizes keep the text size and wrapping). The subject
+        # keeps its tight region: a looser slot would let it grow past the example.
+        slots = {"subject": subj_r}
+        for name in ("text", "logo"):
+            region = tight[name]
+            if region is None:
+                slots[name] = None
+                continue
+            others = [r for n, r in tight.items() if n != name and r is not None]
+            slots[name] = _slot(region, others, text_align=align if name == "text" else None)
         per_class.setdefault(cls, []).append(
             {
-                "text": text_r,
-                "subject": subj_r,
-                "logo": logo_r,
+                "text": slots["text"],
+                "subject": slots["subject"],
+                "logo": slots["logo"],
+                "tight": tight,
                 "align": align,
                 "subject_first": subject_first,
                 "scale": sorted(scales)[len(scales) // 2] if scales else None,
@@ -246,7 +334,7 @@ def _propose_constraints(master: DesignDocument, obs: list[dict], cls: str) -> l
     if logos:
         edges: list[str] = []
         for o in obs:
-            lr = o["logo"]
+            lr = o["tight"]["logo"]
             if lr is None:
                 edges = []
                 break
@@ -268,7 +356,7 @@ def _propose_constraints(master: DesignDocument, obs: list[dict], cls: str) -> l
                 )
             )
     subjects = [e for e in master.elements if e.role in SUBJECT_ROLES]
-    heights = [o["subject"].h for o in obs if o["subject"] is not None]
+    heights = [o["tight"]["subject"].h for o in obs if o["tight"]["subject"] is not None]
     if subjects and heights:
         lo, hi = min(heights), max(heights)
         proposals.append(

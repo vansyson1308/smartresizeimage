@@ -61,11 +61,15 @@ def test_infer_families_reproduces_the_designers_portrait(tmp_path) -> None:
     assert any("single example" in n for n in fam.notes)
     assert fam.family.subject_first is True
     assert fam.family.text_align == "left"
-    # regions are canvas fractions of the example placement
-    assert abs(fam.family.subject.y - 260 / 1920) < 1e-6
-    assert abs(fam.family.text.y - 1180 / 1920) < 1e-6
-    assert abs(fam.family.text.h - (1690 - 1180) / 1920) < 1e-6
-    assert abs(fam.family.logo.x - 76 / 1080) < 1e-6
+    # slots contain the example's tight boxes, expand into free space and stay clear
+    # of their neighbours (subject above the text stack here)
+    text, subject, logo = fam.family.text, fam.family.subject, fam.family.logo
+    assert text.x <= 90 / 1080 and text.y <= 1180 / 1920 <= 1690 / 1920 <= text.y + text.h
+    assert text.x + text.w >= 990 / 1080 - 1e-3 and text.y + text.h > 1690 / 1920
+    assert abs(subject.y - 260 / 1920) < 1e-6 and abs(subject.h - 860 / 1920) < 1e-6  # tight
+    assert subject.y + subject.h <= text.y + 1e-6  # no overlap between the two slots
+    assert logo.x <= 76 / 1080 and logo.y + logo.h >= 190 / 1920
+    assert logo.y + logo.h <= subject.y + 1e-6
     # constraint proposals are reviewable, soft and provenance-marked
     kinds = {c.type: c for c in fam.constraints}
     assert kinds["anchor_edge"].params["edge"] == "top"
