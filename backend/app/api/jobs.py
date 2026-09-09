@@ -252,6 +252,13 @@ class JobManager:
                     logger.error("job %s item %s failed: %s", job.id, item.item_id, exc)
                     logger.debug(traceback.format_exc())
                     any_failed = True
+        # Finalisation hooks (e.g. cross-variant checks) run before the job is
+        # reported finished, so a client that sees "done" sees their results too.
+        if on_finish:
+            try:
+                on_finish(job)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("job %s on_finish failed: %s", job.id, exc)
         if any_cancelled and not any_done:
             job.status = "cancelled"
         elif any_failed and not any_done:
@@ -262,11 +269,6 @@ class JobManager:
             job.status = "done"
         job.finished_at = utc_now()
         self._persist(job, force=True)
-        if on_finish:
-            try:
-                on_finish(job)
-            except Exception as exc:  # noqa: BLE001
-                logger.error("job %s on_finish failed: %s", job.id, exc)
 
     def wait(self, job_id: str, timeout: float | None = None) -> Job | None:
         fut = self._futures.get(job_id)

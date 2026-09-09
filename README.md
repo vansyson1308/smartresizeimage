@@ -30,7 +30,13 @@ sudo apt-get install tesseract-ocr       # tuỳ chọn: bật kiểm tra OCR (n
 cd .. && AUTOBANNER_DATA_DIR=./data uvicorn backend.app.api.server:app --port 8000
 ```
 
-Mở http://localhost:8000 → kéo thả PSD/PNG (hoặc tạo canvas trống) → kiểm tra phần tử & quy tắc → chọn kích thước → Generate → Review → Export. Tài liệu API: http://localhost:8000/api/docs. Đặt `AUTOBANNER_API_KEY` để yêu cầu header `X-API-Key`.
+Mở http://localhost:8000 → kéo thả PSD/PNG (hoặc tạo canvas trống) → kiểm tra phần tử & quy tắc → chọn kích thước → Generate → Review → Export. Tài liệu API: http://localhost:8000/api/docs.
+
+Nhiều người dùng: đặt `AUTOBANNER_API_KEYS="key1:owner-a,key2:owner-b"`; mỗi key chỉ thấy project/job của owner đó (header `X-API-Key`). Hạn mức: `AUTOBANNER_QUOTA_VARIANTS_PER_DAY`, `AUTOBANNER_QUOTA_PROJECTS`. Vận hành, sao lưu, giới hạn: xem `docs/OPERATIONS.md`.
+
+Ảnh phẳng (PNG/JPG) được **tách thử** thành nền + khối chữ (OCR) + chủ thể; mọi phần tử tách ra đều đánh dấu `recovered` kèm độ tin cậy, giữ dạng raster cho đến khi bạn bấm "Convert to editable text". Biến thể sinh từ phần tử chưa xác nhận luôn ở trạng thái `needs_review`.
+
+Khi sinh nhiều kích thước trong một lần, hệ thống chọn **một bố cục cho mỗi hướng** (ngang/vuông/dọc) và kiểm tra tính nhất quán giữa các biến thể (cùng phần tử, cùng thứ tự đọc, cùng thang phân cấp chữ).
 
 Giao diện Gradio cũ vẫn chạy được bằng `python -m backend.app.main` (cổng 7860), dùng cho relayout nhanh Phase 2.1 / Phase 3.
 
