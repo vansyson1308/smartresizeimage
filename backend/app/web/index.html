@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoBanner</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%232f6fed%27/%3E%3Crect x=%277%27 y=%279%27 width=%2718%27 height=%274%27 rx=%272%27 fill=%27white%27/%3E%3Crect x=%277%27 y=%2716%27 width=%2712%27 height=%274%27 rx=%272%27 fill=%27white%27 opacity=%27.8%27/%3E%3Crect x=%277%27 y=%2723%27 width=%278%27 height=%273%27 rx=%271.5%27 fill=%27%23ffd166%27/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">AutoBanner</div>
+  <nav>
+    <button data-view="projects" class="active">Projects</button>
+    <button data-view="design" disabled>Design</button>
+    <button data-view="brief" disabled>Variants</button>
+    <button data-view="review" disabled>Review</button>
+  </nav>
+  <div id="status-bar">Ready</div>
+</header>
+
+<main>
+  <!-- Projects -->
+  <section id="view-projects" class="view">
+    <div class="card">
+      <h2>Start a project</h2>
+      <div id="dropzone" class="dropzone">
+        <div><strong>Drop a master design here</strong> or <button id="pick-file" type="button">choose a file</button></div>
+        <div class="small" style="margin-top:6px">PSD keeps text and layers editable. PNG/JPG/WEBP are imported as one picture and always need review.</div>
+        <input id="file-input" type="file" accept=".psd,.png,.jpg,.jpeg,.webp" class="hidden">
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div class="grow"><label>Project name (optional)</label><input id="new-name" type="text" placeholder="Summer campaign"></div>
+        <div class="grow"><label>Brand (optional)</label><input id="new-brand" type="text" placeholder="Acme"></div>
+        <div><label>&nbsp;</label><button id="import-project" type="button">Reopen a saved project (.zip)</button><input id="import-input" type="file" accept=".zip" class="hidden"></div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <span class="small muted">Or start from separated assets:</span>
+        <div style="width:100px"><label>Width</label><input id="blank-w" type="number" value="1200" min="16"></div>
+        <div style="width:100px"><label>Height</label><input id="blank-h" type="number" value="628" min="16"></div>
+        <div style="width:120px"><label>Background</label><input id="blank-bg" type="text" value="#1f3b63"></div>
+        <div><label>&nbsp;</label><button id="blank-create" type="button">Create blank canvas</button></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Your projects</h2>
+      <div id="project-list" class="project-list"></div>
+      <div id="projects-empty" class="empty hidden">No projects yet.</div>
+    </div>
+  </section>
+
+  <!-- Design / interpretation -->
+  <section id="view-design" class="view hidden">
+    <div class="grid-2">
+      <div class="card">
+        <div class="row">
+          <h2 id="design-title" class="grow" style="margin:0">Design</h2>
+          <button id="btn-undo" type="button" title="Undo last change (Ctrl+Z)">Undo</button>
+          <button id="btn-save-project" type="button" title="Download the editable project">Save project (.zip)</button>
+          <button id="btn-to-brief" class="primary" type="button">Next: choose sizes →</button>
+        </div>
+        <p class="small muted" style="margin:6px 0 10px">Click an element to select. Drag to move, drag the corner to resize (aspect kept for logos, images and text). Arrow keys nudge, <span class="kbd">Shift</span> + arrows nudge by 10.</p>
+        <div class="canvas-wrap"><div class="canvas-stage" id="stage"><img id="master-img" alt="Master design preview"><svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg></div></div>
+        <div id="import-notes-wrap" class="hidden" style="margin-top:12px"><h3>Import notes</h3><ul id="import-notes" class="notes small"></ul></div>
+      </div>
+      <div class="card">
+        <h3>Elements</h3>
+        <ul id="layer-list" class="layer-list"></ul>
+        <div class="row" style="margin-top:8px">
+          <button id="add-text" type="button">+ Text</button>
+          <button id="add-image" type="button">+ Image / logo</button>
+          <input id="add-image-input" type="file" accept=".png,.jpg,.jpeg,.webp" class="hidden">
+        </div>
+        <div id="element-panel" class="hidden">
+          <h3>Selected element</h3>
+          <label>Name</label><input id="el-name" type="text">
+          <label>Role <span id="el-confidence" class="badge neutral"></span></label>
+          <select id="el-role"></select>
+          <div id="el-text-wrap" class="hidden">
+            <label>Text</label><textarea id="el-text"></textarea>
+            <div class="row">
+              <div class="grow"><label>Font family</label><input id="el-font" type="text" list="font-list"><datalist id="font-list"></datalist></div>
+              <div style="width:90px"><label>Size (px)</label><input id="el-size" type="number" min="4" step="1"></div>
+            </div>
+            <div class="row">
+              <div class="grow"><label>Weight</label><select id="el-weight"><option>regular</option><option>bold</option><option>light</option><option>medium</option></select></div>
+              <div class="grow"><label>Align</label><select id="el-align"><option>left</option><option>center</option><option>right</option></select></div>
+              <div style="width:110px"><label>Color</label><input id="el-color" type="text" placeholder="#000000"></div>
+            </div>
+            <label class="row" style="color:var(--text)"><input id="el-protected" type="checkbox" style="width:auto"> Verbatim copy (price / legal): never rewrite</label>
+          </div>
+          <div class="row" style="margin-top:8px">
+            <label class="row" style="color:var(--text)"><input id="el-locked" type="checkbox" style="width:auto"> Lock</label>
+            <label class="row" style="color:var(--text)"><input id="el-visible" type="checkbox" style="width:auto"> Visible</label>
+            <label class="row" style="color:var(--text)"><input id="el-scale-free" type="checkbox" style="width:auto"> Allow distortion</label>
+            <label class="row" style="color:var(--text)"><input id="el-crop" type="checkbox" style="width:auto"> Allow crop</label>
+          </div>
+          <div class="row" style="margin-top:8px">
+            <div style="width:110px"><label>Priority (1 = must keep)</label><input id="el-priority" type="number" min="1" max="9"></div>
+            <div><label>&nbsp;</label><button id="el-front" type="button">Bring forward</button></div>
+            <div><label>&nbsp;</label><button id="el-back" type="button">Send back</button></div>
+          </div>
+          <div class="row" style="margin-top:10px"><button id="el-apply" class="primary" type="button">Apply changes</button><button id="el-delete" class="danger" type="button">Remove element</button></div>
+          <div id="el-provenance" class="small muted" style="margin-top:8px"></div>
+        </div>
+        <h3>Rules for this design</h3>
+        <div id="constraint-list"></div>
+        <div class="row" style="margin-top:8px">
+          <select id="c-type" style="width:auto">
+            <option value="keep_visible">Must stay visible</option>
+            <option value="clear_space">Clear space around</option>
+            <option value="allowed_overlap">Overlap is intentional</option>
+            <option value="order_below">Must follow (A below B)</option>
+            <option value="keep_group">Keep together</option>
+            <option value="min_text_size">Minimum text size</option>
+          </select>
+          <select id="c-a" style="width:auto"></select>
+          <select id="c-b" style="width:auto" class="hidden"></select>
+          <input id="c-param" type="number" style="width:80px" class="hidden" placeholder="px">
+          <button id="c-add" type="button">Add rule</button>
+        </div>
+        <h3>Fonts</h3>
+        <ul id="font-status" class="notes small"></ul>
+        <details style="margin-top:10px"><summary>History</summary><ul id="history-list" class="notes small"></ul></details>
+      </div>
+    </div>
+  </section>
+
+  <!-- Brief -->
+  <section id="view-brief" class="view hidden">
+    <div class="grid-2">
+      <div class="card">
+        <h2>Which sizes do you need?</h2>
+        <div id="preset-grid" class="preset-grid"></div>
+        <p id="preset-note" class="small muted" style="margin-top:8px"></p>
+        <h3>Custom size</h3>
+        <div class="row">
+          <div style="width:110px"><label>Width</label><input id="custom-w" type="number" min="10" value="1200"></div>
+          <div style="width:110px"><label>Height</label><input id="custom-h" type="number" min="10" value="628"></div>
+          <div class="grow"><label>Name</label><input id="custom-name" type="text" placeholder="Custom"></div>
+          <div><label>&nbsp;</label><button id="custom-add" type="button">Add</button></div>
+        </div>
+        <ul id="custom-list" class="notes small"></ul>
+      </div>
+      <div class="card">
+        <h2>Copy for this run</h2>
+        <p class="small muted">Leave a field empty to keep the approved master copy. Verbatim (price/legal) fields are shown read-only.</p>
+        <div id="copy-overrides"></div>
+        <label>Locale tag (recorded with the variants)</label><input id="brief-locale" type="text" placeholder="en, vi, de-DE…">
+        <div class="row" style="margin-top:14px"><button id="btn-generate" class="primary" type="button">Generate variants</button><button id="btn-cancel" type="button" class="hidden">Cancel</button></div>
+        <div id="job-progress" class="hidden" style="margin-top:10px"><div class="progress"><div id="job-bar"></div></div><div id="job-text" class="small muted" style="margin-top:6px"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Review -->
+  <section id="view-review" class="view hidden">
+    <div class="card">
+      <div class="row">
+        <h2 class="grow" style="margin:0">Review variants</h2>
+        <div class="filters row">
+          <button data-filter="all" class="active" type="button">All</button>
+          <button data-filter="failed" type="button">Failed</button>
+          <button data-filter="needs_review" type="button">Needs review</button>
+          <button data-filter="accepted" type="button">Accepted</button>
+          <button data-filter="approved" type="button">Approved</button>
+        </div>
+        <select id="export-format" style="width:auto"><option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WebP</option></select>
+        <button id="btn-export-approved" type="button">Export approved</button>
+        <button id="btn-export-all" type="button">Export all</button>
+      </div>
+      <div id="review-summary" class="small muted" style="margin:8px 0"></div>
+      <div id="variant-grid" class="variant-grid"></div>
+      <div id="review-empty" class="empty hidden">No variants yet. Go to Variants to generate some.</div>
+    </div>
+    <div id="variant-detail" class="card hidden" style="margin-top:16px">
+      <div class="row"><h2 class="grow" id="detail-title" style="margin:0"></h2><button id="detail-close" type="button">Close</button></div>
+      <div class="detail-grid" style="margin-top:10px">
+        <div>
+          <div class="row small" style="margin-bottom:6px"><label class="row" style="margin:0;color:var(--text)"><input id="detail-compare" type="checkbox" style="width:auto"> Compare with master</label></div>
+          <div id="detail-single" class="detail-image"><img id="detail-img" alt="Variant"></div>
+          <div id="detail-compare-wrap" class="compare hidden"><div><div class="small muted">Master</div><img id="compare-master" alt="Master"></div><div><div class="small muted">Variant</div><img id="compare-variant" alt="Variant"></div></div>
+        </div>
+        <div>
+          <div id="detail-verdict"></div>
+          <h3>Issues</h3>
+          <ul id="detail-issues" class="issues"></ul>
+          <h3>Decision</h3>
+          <div class="row"><button id="detail-approve" class="primary" type="button">Approve</button><button id="detail-regenerate" type="button">Regenerate</button></div>
+          <label>Reject with reason</label>
+          <div class="row"><input id="detail-reason" type="text" class="grow" placeholder="e.g. logo too small"><button id="detail-reject" class="danger" type="button">Reject</button></div>
+          <h3>Edit copy for this variant only</h3>
+          <div id="detail-overrides"></div>
+          <button id="detail-apply-overrides" type="button" style="margin-top:6px">Apply and regenerate</button>
+          <details style="margin-top:12px"><summary>Technical details (plan, fonts, checks)</summary><pre id="detail-json" class="json"></pre></details>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+<div id="toast" class="toast hidden"></div>
+<script src="app.js"></script>
+</body>
+</html>

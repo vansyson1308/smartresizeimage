@@ -4,13 +4,16 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     ports:
-      - "7860:7860"
+      - "8000:8000"
     volumes:
-      - ./outputs:/app/outputs
+      - ./data:/app/data
       - model-cache:/app/cache
     environment:
       - AUTOBANNER_LOG_LEVEL=INFO
-      - AUTOBANNER_USE_AI=true
+      - AUTOBANNER_USE_AI=false
+      - AUTOBANNER_DATA_DIR=/app/data
+      # Set to require X-API-Key on every /api request
+      # - AUTOBANNER_API_KEY=change-me
 
       # Gradio in Docker: bind externally
       - GRADIO_SERVER_NAME=0.0.0.0

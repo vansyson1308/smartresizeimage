@@ -1,3 +1,10 @@
+# Web API + UI (new journey)
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.29,<1.0
+python-multipart>=0.0.9
+# Optional OCR for the quality contract (needs the tesseract binary; otherwise checks report not_checked)
+pytesseract>=0.3.10
+# Legacy Gradio interface
 gradio>=4.0.0,<5.0.0
 Pillow>=10.0.0,<11.0.0
 numpy>=1.24.0,<2.0.0
