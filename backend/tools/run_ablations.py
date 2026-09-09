@@ -35,12 +35,14 @@ if str(ROOT) not in sys.path:
 from PIL import Image
 
 from backend.app.config import Config
-from backend.app.design.adapter import document_from_elements
+from backend.app.design.adapter import document_from_elements, elements_from_document
 from backend.app.design.assets import AssetStore
+from backend.app.design.planner import Family, aspect_class, choose_families
 from backend.app.design.variant import VariantBrief, generate_variant
 from backend.app.models import DesignElement
 from backend.app.quality import CONTRACT_VERSION, QualityConfig
 from backend.app.quality.evaluate import environment_fingerprint
+from backend.app.quality.family import VariantSnapshot, family_consistency_checks
 from backend.tools.generate_bench_fixtures import generate_fixtures
 from backend.tools.run_layout_bench import _elements_from_meta, _git_commit
 
@@ -52,6 +54,7 @@ class AblationConfig:
     repair: bool = True
     plates: bool = True
     ocr: bool = True
+    joint: bool = False  # choose one family per orientation for the whole size set
     notes: str = ""
 
     def to_dict(self) -> dict:
@@ -61,6 +64,7 @@ class AblationConfig:
             "repair": self.repair,
             "plates": self.plates,
             "ocr": self.ocr,
+            "joint": self.joint,
             "notes": self.notes,
         }
 
@@ -75,6 +79,9 @@ CONFIGS: dict[str, AblationConfig] = {
     ),
     "no_ocr": AblationConfig(
         "no_ocr", ocr=False, notes="legibility not checked (reports needs_review)"
+    ),
+    "joint": AblationConfig(
+        "joint", joint=True, notes="one family per orientation chosen jointly for the size set"
     ),
 }
 
@@ -91,6 +98,7 @@ class RunRecord:
     repair_steps: int
     family: str | None
     issues: list[str] = field(default_factory=list)
+    family_issues: int = 0  # cross-variant consistency checks not passing
 
 
 def _parse_sizes(raw: str) -> list[tuple[int, int]]:
@@ -156,8 +164,15 @@ def run_config(
                 doc = document_from_elements(
                     elements, source_size, store, name=case_dir.name, origin="fixture"
                 )
+                families: dict[str, Family] = {}
+                if cfg.joint and cfg.planner == "constraints":
+                    engine_elements = elements_from_document(doc, store)
+                    families = choose_families(doc, engine_elements, sizes)
+                snapshots: list[VariantSnapshot] = []
+                case_records: list[RunRecord] = []
                 for w, h in sizes:
                     t0 = time.perf_counter()
+                    fam = families.get(aspect_class(w / max(1, h))) if families else None
                     result = generate_variant(
                         doc,
                         store,
@@ -165,9 +180,25 @@ def run_config(
                         planner=cfg.planner,
                         max_repairs=3 if cfg.repair else 0,
                         quality_config=QualityConfig(run_ocr=cfg.ocr),
+                        family=fam,
                     )
                     elapsed = time.perf_counter() - t0
-                    records.append(
+                    snapshots.append(
+                        VariantSnapshot(
+                            variant_id=f"{w}x{h}",
+                            target=(w, h),
+                            family=result.plan.get("planner_meta", {}).get("family"),
+                            placements=result.plan.get("placements", []),
+                            typography=result.plan.get("typography", {}),
+                            roles={e.id: e.role for e in doc.elements},
+                            master_px={
+                                e.id: float(e.text.primary_style.font_size)
+                                for e in doc.elements
+                                if e.kind == "text" and e.text is not None
+                            },
+                        )
+                    )
+                    case_records.append(
                         RunRecord(
                             config=cfg.name,
                             case=case_dir.name,
@@ -181,6 +212,11 @@ def run_config(
                             issues=[c.message for c in result.report.issues()][:4],
                         )
                     )
+                family_checks = family_consistency_checks(snapshots)
+                for rec in case_records:
+                    checks = family_checks.get(rec.size, [])
+                    rec.family_issues = sum(1 for c in checks if c.status.value != "pass")
+                records.extend(case_records)
     finally:
         Config.TEXT_SAFE_PLATE_ENABLED, Config.LAYOUT_PROFILE_SCORING_ENABLED = prev
     return records
@@ -201,6 +237,7 @@ def summarize(records: list[RunRecord]) -> dict:
             "acceptance_rate": round(sum(1 for r in subset if r.accepted) / n, 4),
             "mean_s": round(sum(r.elapsed_s for r in subset) / n, 3),
             "mean_repair_steps": round(sum(r.repair_steps for r in subset) / n, 3),
+            "family_issue_runs": sum(1 for r in subset if r.family_issues > 0),
         }
     return out
 
@@ -228,8 +265,8 @@ def build_report(results: dict[str, list[RunRecord]], run_meta: dict) -> str:
         f"(holdout from case {run_meta['holdout_from']})",
         "",
         "| Config | Split | Runs | Accepted | Needs review | Failed | "
-        "Acceptance (95% CI) | Mean s | Repair steps |",
-        "|---|---|---:|---:|---:|---:|---|---:|---:|",
+        "Acceptance (95% CI) | Mean s | Repair steps | Family-issue runs |",
+        "|---|---|---:|---:|---:|---:|---|---:|---:|---:|",
     ]
     for name, records in results.items():
         summary = summarize(records)
@@ -241,14 +278,14 @@ def build_report(results: dict[str, list[RunRecord]], run_meta: dict) -> str:
             lines.append(
                 f"| {name} | {split} | {s['runs']} | {s['accepted']} | {s['needs_review']} | "
                 f"{s['failed']} | {s['acceptance_rate']:.2f} ({lo:.2f}–{hi:.2f}) | "
-                f"{s['mean_s']:.2f} | {s['mean_repair_steps']:.2f} |"
+                f"{s['mean_s']:.2f} | {s['mean_repair_steps']:.2f} | {s['family_issue_runs']} |"
             )
     lines += ["", "## Configurations", ""]
     for name in results:
         cfg = CONFIGS[name]
         lines.append(
             f"- `{name}`: planner={cfg.planner}, repair={cfg.repair}, plates={cfg.plates}, "
-            f"ocr={cfg.ocr} — {cfg.notes}"
+            f"ocr={cfg.ocr}, joint={cfg.joint} — {cfg.notes}"
         )
     lines += [
         "",
@@ -269,11 +306,18 @@ def main() -> None:
     parser.add_argument("--sizes", default="1200x628,1080x1080,1080x1920,300x250")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--holdout-from", type=int, default=10)
+    parser.add_argument(
+        "--cases",
+        type=int,
+        default=15,
+        help="fixture cases to ensure (15 puts a busy-background case into the holdout)",
+    )
     args = parser.parse_args()
 
     fixtures = Path(args.fixtures)
-    if not list(fixtures.glob("case_*/metadata.json")):
-        generate_fixtures(fixtures, cases=12, seed=args.seed)
+    if len(list(fixtures.glob("case_*/metadata.json"))) < args.cases:
+        # Deterministic per case index: regenerating never changes existing cases.
+        generate_fixtures(fixtures, cases=args.cases, seed=args.seed)
     cases = sorted(p for p in fixtures.glob("case_*") if (p / "metadata.json").exists())
     sizes = _parse_sizes(args.sizes)
     outdir = Path(args.outdir)

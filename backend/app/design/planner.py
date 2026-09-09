@@ -63,6 +63,14 @@ class Family:
     subject_first: bool = False  # reading order: subject before text (stacked families)
 
 
+def aspect_class(aspect: float) -> str:
+    if aspect >= 1.25:
+        return "landscape"
+    if aspect <= 0.8:
+        return "portrait"
+    return "square"
+
+
 def families_for(aspect: float) -> list[Family]:
     if aspect >= 1.25:  # landscape
         return [
@@ -136,6 +144,37 @@ def plan_layout(
             best = plan
     assert best is not None
     return best
+
+
+def choose_families(
+    doc: DesignDocument,
+    elements: list[DesignElement],
+    targets: list[tuple[int, int]],
+    *,
+    registry: FontRegistry | None = None,
+) -> dict[str, Family]:
+    """Joint choice: one layout family per aspect class for a whole size set.
+
+    Instead of letting every size pick its own best family, the family whose
+    summed score over all targets of the class is highest wins, so a campaign
+    keeps one composition per orientation (H2: joint planning for consistency).
+    """
+    reg = registry or default_registry()
+    by_class: dict[str, list[tuple[int, int]]] = {}
+    for t in targets:
+        by_class.setdefault(aspect_class(t[0] / max(1, t[1])), []).append(t)
+    chosen: dict[str, Family] = {}
+    for cls, sizes in by_class.items():
+        candidates = families_for(sizes[0][0] / max(1, sizes[0][1]))
+        best_name, best_total = None, float("-inf")
+        for fam in candidates:
+            total = 0.0
+            for t in sizes:
+                total += _plan_family(doc, elements, t, fam, reg).score
+            if total > best_total:
+                best_name, best_total = fam.name, total
+        chosen[cls] = next(f for f in candidates if f.name == best_name)
+    return chosen
 
 
 # --------------------------------------------------------------------------------------

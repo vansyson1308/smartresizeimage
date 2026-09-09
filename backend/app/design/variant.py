@@ -31,7 +31,7 @@ from .adapter import elements_from_document
 from .assets import AssetStore
 from .document import DesignDocument, Element, TextContent
 from .fonts import FontRegistry, default_registry
-from .planner import plan_layout
+from .planner import Family, plan_layout
 from .text_render import fit_text, render_text
 
 logger = logging.getLogger("autobanner.design.variant")
@@ -108,6 +108,7 @@ def generate_variant(
     max_repairs: int = 3,
     quality_config: QualityConfig | None = None,
     planner: str | None = None,
+    family: Family | None = None,
 ) -> VariantResult:
     reg = registry or default_registry()
     target = (int(brief.width), int(brief.height))
@@ -127,10 +128,12 @@ def generate_variant(
     planner_name = planner or Config.DESIGN_PLANNER
     plan_meta: dict = {}
     if planner_name == "constraints":
-        plan_result = plan_layout(doc, elements, target, registry=reg)
+        plan_result = plan_layout(
+            doc, elements, target, registry=reg, families=[family] if family else None
+        )
         layout = plan_result.layout
         layout_debug = {"profile_name": plan_result.family, "fallback_reason": ""}
-        plan_meta = plan_result.to_dict()
+        plan_meta = {**plan_result.to_dict(), "joint_family": family is not None}
     else:
         layout_engine = LayoutEngine()
         layout = layout_engine.calculate_layout(

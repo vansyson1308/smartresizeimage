@@ -24,7 +24,7 @@ from PIL import Image
 from ..classifier import SemanticClassifier
 from ..config import Config
 from ..constants import SUPPORTED_EXTENSIONS
-from ..design.adapter import document_from_elements
+from ..design.adapter import document_from_elements, elements_from_document
 from ..design.assets import AssetStore
 from ..design.decompose import decompose_flat_image
 from ..design.document import (
@@ -36,11 +36,14 @@ from ..design.document import (
     new_id,
 )
 from ..design.fonts import FontRegistry
+from ..design.planner import Family, aspect_class, choose_families
 from ..design.project import Project, VariantRecord
 from ..design.render import render_master
 from ..design.serialize import document_from_dict, document_to_dict
 from ..design.variant import VariantBrief, generate_variant
 from ..parser import get_parser
+from ..quality.contract import CheckResult, CheckStatus, Severity, derive_verdict, summarize
+from ..quality.family import VariantSnapshot, family_consistency_checks
 from .events import EventLog
 from .jobs import Job, JobItem, JobManager
 from .presets import find_preset
@@ -585,6 +588,25 @@ class ProjectService:
         hidden = list(spec.get("hidden_elements") or [])
         locale = spec.get("locale")
 
+        # Joint planning (H2): one layout family per orientation for the whole job.
+        families: dict[str, Family] = {}
+        if Config.DESIGN_PLANNER == "constraints" and len(targets) > 1:
+            try:
+                engine_elements = elements_from_document(
+                    project.document, project.assets, registry=self.registry,
+                    text_overrides=text_overrides, locale=locale,
+                )
+                engine_elements = [
+                    e for e in engine_elements if e.id not in set(hidden)
+                ]
+                families = choose_families(
+                    project.document, engine_elements,
+                    [(t["width"], t["height"]) for t in targets], registry=self.registry,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("joint family choice failed; planning per variant: %s", exc)
+                families = {}
+
         with self._lock(project_id):
             items: list[tuple[str, str]] = []
             briefs: dict[str, VariantBrief] = {}
@@ -604,7 +626,11 @@ class ProjectService:
             project.save()
 
         def runner(job: Job, item: JobItem, progress) -> dict:
-            return self._run_variant(project_id, item.item_id, briefs[item.item_id], job, progress)
+            brief = briefs[item.item_id]
+            fam = families.get(aspect_class(brief.width / max(1, brief.height))) or None
+            return self._run_variant(
+                project_id, item.item_id, brief, job, progress, family=fam
+            )
 
         def on_finish(job: Job) -> None:
             with self._lock(project_id):
@@ -619,6 +645,7 @@ class ProjectService:
                         rec.error = item.error
                     rec.job_id = job.id
                 project.save()
+            self._apply_family_checks(project_id, [i.item_id for i in job.items])
 
         job = self.jobs.submit(
             "variants", project_id, items, runner, idempotency_key=idempotency_key,
@@ -633,7 +660,7 @@ class ProjectService:
         return job
 
     def _run_variant(self, project_id: str, variant_id: str, brief: VariantBrief, job: Job,
-                     progress) -> dict:
+                     progress, family: Family | None = None) -> dict:
         project = self.get_project(project_id, owner=None)
         with self._lock(project_id):
             project.mark_variant(variant_id, "running")
@@ -645,6 +672,7 @@ class ProjectService:
             registry=self.registry,
             progress=progress,
             cancel=job.cancel,
+            family=family,
         )
         with self._lock(project_id):
             rec = project.store_variant_output(
@@ -661,6 +689,73 @@ class ProjectService:
             repair_steps=len(result.repair_steps),
         )
         return {"variant_id": rec.id, "verdict": rec.verdict}
+
+    def _apply_family_checks(self, project_id: str, variant_ids: list[str]) -> None:
+        """Run cross-variant checks for the variants of one job and update their reports."""
+        project = self.get_project(project_id, owner=None)
+        snapshots: list[VariantSnapshot] = []
+        details: dict[str, dict] = {}
+        with self._lock(project_id):
+            for vid in variant_ids:
+                rec = project.variants.get(vid)
+                if rec is None or rec.status != "done":
+                    continue
+                detail = project.variant_detail(vid)
+                if not detail:
+                    continue
+                details[vid] = detail
+                plan = detail.get("plan") or {}
+                hideable = {
+                    e.id for e in project.document.elements if e.allowed.hide
+                }
+                snapshots.append(
+                    VariantSnapshot(
+                        variant_id=vid,
+                        target=(rec.width, rec.height),
+                        family=(plan.get("planner_meta") or {}).get("family"),
+                        placements=plan.get("placements", []),
+                        typography=plan.get("typography", {}),
+                        roles={e.id: e.role for e in project.document.elements},
+                        hideable=hideable,
+                        master_px={
+                            e.id: float(e.text.primary_style.font_size)
+                            for e in project.document.elements
+                            if e.kind == "text" and e.text is not None
+                        },
+                    )
+                )
+            if len(snapshots) < 2:
+                return
+            results = family_consistency_checks(snapshots)
+            for vid, checks in results.items():
+                detail = details[vid]
+                quality = detail.get("quality") or {}
+                existing = [
+                    c
+                    for c in quality.get("checks", [])
+                    if not str(c.get("check_id", "")).startswith("family_")
+                ]
+                all_checks = existing + [c.to_dict() for c in checks]
+                rebuilt = [
+                    CheckResult(
+                        check_id=c["check_id"],
+                        status=CheckStatus(c["status"]),
+                        severity=Severity(c["severity"]),
+                        message=c["message"],
+                        subject_id=c.get("subject_id"),
+                        details=dict(c.get("details") or {}),
+                    )
+                    for c in all_checks
+                ]
+                verdict = derive_verdict(rebuilt)
+                quality["checks"] = all_checks
+                quality["verdict"] = verdict.value
+                quality["summary"] = summarize(rebuilt)
+                detail["quality"] = quality
+                rec = project.variants[vid]
+                rec.verdict = verdict.value
+                _atomic_write_json(project.root / rec.report_path, detail)  # type: ignore[arg-type]
+            project.save()
 
     def regenerate_variant(
         self,
@@ -894,6 +989,12 @@ class ProjectService:
 
 
 # ---- helpers -----------------------------------------------------------------------------
+
+
+def _atomic_write_json(path: Path, payload: Any) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
 
 
 def _normalize_hex(color: str) -> str:

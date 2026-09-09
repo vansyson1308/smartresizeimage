@@ -359,3 +359,41 @@ def test_restart_marks_running_variants_interrupted(client: TestClient, tmp_path
     assert got.status == "failed" and "interrupted" in (got.error or "")
     fresh.shutdown()
     _ = document_from_dict  # keep import used for clarity of the reopen contract
+
+
+def test_multi_size_job_plans_jointly_and_records_family_checks(
+    client: TestClient, tmp_path: Path
+) -> None:
+    payload = _layered_project(client, tmp_path)
+    pid = payload["project"]["id"]
+    res = client.post(
+        f"/api/projects/{pid}/variants",
+        json={
+            "targets": [
+                {"width": 1200, "height": 628, "name": "L1"},
+                {"width": 1500, "height": 500, "name": "L2"},
+                {"width": 1080, "height": 1920, "name": "P1"},
+            ]
+        },
+    )
+    assert res.status_code == 202, res.text
+    service = client.app.state.service
+    job = service.jobs.wait(res.json()["job"]["id"], timeout=300)
+    assert job.status == "done", job.to_dict()
+    variants = client.get(f"/api/projects/{pid}/variants").json()["variants"]
+    details = {
+        v["name"]: client.get(f"/api/projects/{pid}/variants/{v['id']}").json() for v in variants
+    }
+    fams = {n: d["plan"]["planner_meta"]["family"] for n, d in details.items()}
+    assert fams["L1"] == fams["L2"] and fams["L1"].startswith("landscape")
+    assert fams["P1"].startswith("portrait")
+    assert all(d["plan"]["planner_meta"]["joint_family"] for d in details.values())
+    for d in details.values():
+        ids = {c["check_id"] for c in d["quality"]["checks"]}
+        assert {
+            "family_identity",
+            "family_reading_order",
+            "family_hierarchy",
+            "family_layout",
+        } <= ids
+        assert d["quality"]["verdict"] == d["variant"]["verdict"]
