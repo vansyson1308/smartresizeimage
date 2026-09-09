@@ -31,6 +31,7 @@ from .adapter import elements_from_document
 from .assets import AssetStore
 from .document import DesignDocument, Element, TextContent
 from .fonts import FontRegistry, default_registry
+from .planner import plan_layout
 from .text_render import fit_text, render_text
 
 logger = logging.getLogger("autobanner.design.variant")
@@ -106,6 +107,7 @@ def generate_variant(
     cancel: threading.Event | None = None,
     max_repairs: int = 3,
     quality_config: QualityConfig | None = None,
+    planner: str | None = None,
 ) -> VariantResult:
     reg = registry or default_registry()
     target = (int(brief.width), int(brief.height))
@@ -114,17 +116,27 @@ def generate_variant(
     # 1) Materialize engine elements from the document (native text, no raster).
     report_progress("plan", 0.05)
     elements = elements_from_document(
-        doc, assets, registry=reg, text_overrides=brief.text_overrides
+        doc, assets, registry=reg, text_overrides=brief.text_overrides, locale=brief.locale
     )
     elements = [e for e in elements if e.id not in set(brief.hidden_elements)]
     by_id = {e.id: e for e in elements}
     doc_by_id = {e.id: e for e in doc.elements}
     _check_cancel(cancel)
 
-    # 2) Plan placement with the layout engine.
-    layout_engine = LayoutEngine()
-    layout = layout_engine.calculate_layout(elements, (doc.canvas_width, doc.canvas_height), target)
-    layout_debug = dict(layout_engine.last_layout_debug)
+    # 2) Plan placement: constraint-aware families (default) or the legacy zone engine.
+    planner_name = planner or Config.DESIGN_PLANNER
+    plan_meta: dict = {}
+    if planner_name == "constraints":
+        plan_result = plan_layout(doc, elements, target, registry=reg)
+        layout = plan_result.layout
+        layout_debug = {"profile_name": plan_result.family, "fallback_reason": ""}
+        plan_meta = plan_result.to_dict()
+    else:
+        layout_engine = LayoutEngine()
+        layout = layout_engine.calculate_layout(
+            elements, (doc.canvas_width, doc.canvas_height), target
+        )
+        layout_debug = dict(layout_engine.last_layout_debug)
     _check_cancel(cancel)
     report_progress("typeset", 0.35)
 
@@ -182,6 +194,8 @@ def generate_variant(
     plan = {
         "target": {"width": target[0], "height": target[1]},
         "brief": brief.to_dict(),
+        "planner": planner_name,
+        "planner_meta": plan_meta,
         "layout_profile": layout_debug.get("profile_name"),
         "layout_fallback": layout_debug.get("fallback_reason", ""),
         "layout_scoring": bool(Config.LAYOUT_PROFILE_SCORING_ENABLED),
@@ -280,6 +294,7 @@ def _typeset_one(
     elem.image = render_text(content, fitted, box_w, new_h, registry=reg)
     lr.new_bbox = BoundingBox(lr.new_bbox.x, lr.new_bbox.y, box_w, new_h)
     lr.scale_factor = fitted.font_px / max(1.0, base_px)
+    missing = reg.missing_glyphs(fitted.resolved_font.path, content.plain)
     typography[elem.id] = {
         "font_px": fitted.font_px,
         "min_px": min_px,
@@ -288,8 +303,13 @@ def _typeset_one(
         "font_family_requested": fitted.resolved_font.requested_family,
         "font_family_used": fitted.resolved_font.family,
         "font_status": fitted.resolved_font.status,
+        "missing_glyphs": None if missing is None else "".join(missing),
         "box_h": box_h,
     }
+    if missing:
+        warnings.append(
+            f"text '{content.plain[:30]}' has {len(missing)} character(s) the font cannot draw"
+        )
     if fitted.overflow:
         warnings.append(f"text '{content.plain[:30]}' does not fit at minimum size")
     if fitted.resolved_font.substituted:
@@ -348,6 +368,7 @@ def _verify(
     )
     # Constraint checks from the document.
     extra = constraint_checks(doc, layout, target, typography, required)
+    extra.extend(_typography_checks(typography, doc))
     if extra:
         checks = report.checks + extra
         report = QualityReport(
@@ -358,6 +379,42 @@ def _verify(
             summary=summarize(checks),
         )
     return report
+
+
+def _typography_checks(typography: dict[str, dict], doc: DesignDocument) -> list[CheckResult]:
+    """Glyph coverage and overflow are customer-visible text failures."""
+    out: list[CheckResult] = []
+    for eid, t in typography.items():
+        missing = t.get("missing_glyphs")
+        if missing is None:
+            status, msg = CheckStatus.NOT_CHECKED, "Font glyph coverage could not be verified"
+        elif missing:
+            status = CheckStatus.FAIL
+            msg = f"'{_name(doc, eid)}' contains characters the font cannot draw: {missing[:12]}"
+        else:
+            status, msg = CheckStatus.PASS, f"'{_name(doc, eid)}' glyphs are all available"
+        out.append(
+            CheckResult(
+                "font_coverage",
+                status,
+                Severity.CRITICAL,
+                msg,
+                subject_id=eid,
+                details={"missing": missing, "font": t.get("font_family_used")},
+            )
+        )
+        if t.get("overflow"):
+            out.append(
+                CheckResult(
+                    "text_fits",
+                    CheckStatus.FAIL,
+                    Severity.MAJOR,
+                    f"'{_name(doc, eid)}' does not fit at its minimum size ({t.get('min_px')}px)",
+                    subject_id=eid,
+                    details={"font_px": t.get("font_px"), "lines": t.get("lines")},
+                )
+            )
+    return out
 
 
 def constraint_checks(

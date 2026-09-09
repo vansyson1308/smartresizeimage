@@ -105,10 +105,24 @@ class TextContent:
     max_lines: int | None = None
     # When True the string is a commercial claim (price, legal) and must be rendered verbatim.
     protected: bool = False
+    # Approved copy per locale (BCP-47 tag -> text). The master runs hold the source locale.
+    translations: dict[str, str] = field(default_factory=dict)
 
     @property
     def plain(self) -> str:
         return "".join(r.text for r in self.runs)
+
+    def text_for_locale(self, locale: str | None) -> str:
+        """Approved copy for ``locale`` (exact tag, then language prefix), else the master."""
+        if not locale:
+            return self.plain
+        if locale in self.translations:
+            return self.translations[locale]
+        lang = locale.split("-")[0].lower()
+        for tag, text in self.translations.items():
+            if tag.split("-")[0].lower() == lang:
+                return text
+        return self.plain
 
     @property
     def primary_style(self) -> TextStyle:

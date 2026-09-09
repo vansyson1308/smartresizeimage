@@ -735,7 +735,8 @@ def _apply_op(doc: DesignDocument, op: dict) -> None:
             raise ServiceError("element is not text", 400)
         if e.locked:
             raise ServiceError(f"element {e.id} is locked", 409)
-        e.text.replace_text(str(op["text"]))
+        if "text" in op and op["text"] is not None:
+            e.text.replace_text(str(op["text"]))
         style = op.get("style") or {}
         st = e.text.primary_style
         for key in ("font_family", "weight", "color", "align"):
@@ -752,6 +753,15 @@ def _apply_op(doc: DesignDocument, op: dict) -> None:
             e.text.protected = bool(op["protected"])
         if "max_lines" in op:
             e.text.max_lines = int(op["max_lines"]) if op["max_lines"] else None
+        if "translations" in op:
+            raw = op.get("translations") or {}
+            if not isinstance(raw, dict):
+                raise ServiceError("translations must be an object of locale -> text", 400)
+            e.text.translations = {
+                str(k).strip(): str(v) for k, v in raw.items() if str(k).strip() and str(v).strip()
+            }
+        if "locale" in op and op["locale"]:
+            e.text.locale = str(op["locale"])[:16]
         e.provenance = Provenance(origin="user", confidence=1.0, notes="text edited")
     elif kind == "set_role":
         e = doc.element(op["element_id"])

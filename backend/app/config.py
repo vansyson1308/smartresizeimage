@@ -66,3 +66,7 @@ class Config:
     # production unless they explicitly record an override.
     PHASE3_N_CANDIDATES = 8
     PHASE3_SEED = 42
+
+    # Design pipeline planner: "constraints" (families + document constraints) or
+    # "zones" (legacy template/zone engine through the adapter).
+    DESIGN_PLANNER = "constraints"

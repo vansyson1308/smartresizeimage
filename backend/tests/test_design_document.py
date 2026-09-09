@@ -266,3 +266,50 @@ def test_project_variant_records_persist(tmp_path: Path) -> None:
     assert got.approval == "rejected" and got.approval_reason == "logo too small"
     assert reopened.variant_image(rec.id).size == (1080, 1920)
     assert reopened.variant_detail(rec.id)["plan"] == {"x": 1}
+
+
+def test_translations_round_trip_and_locale_lookup() -> None:
+    content = TextContent(runs=[TextRun("SUMMER SALE", TextStyle())],
+                          translations={"vi": "GIẢM GIÁ HÈ", "de-DE": "SOMMERSCHLUSSVERKAUF"})
+    assert content.text_for_locale(None) == "SUMMER SALE"
+    assert content.text_for_locale("vi") == "GIẢM GIÁ HÈ"
+    assert content.text_for_locale("vi-VN") == "GIẢM GIÁ HÈ"  # language prefix match
+    assert content.text_for_locale("de") == "SOMMERSCHLUSSVERKAUF"
+    assert content.text_for_locale("fr") == "SUMMER SALE"  # no approved copy -> master
+    doc = _doc()
+    doc.element("headline").text.translations = {"vi": "GIẢM GIÁ HÈ"}
+    restored = document_from_dict(json.loads(json.dumps(document_to_dict(doc))))
+    assert restored.element("headline").text.translations == {"vi": "GIẢM GIÁ HÈ"}
+
+
+def test_locale_selects_translation_but_override_wins_unless_protected(tmp_path: Path) -> None:
+    store = AssetStore(tmp_path / "assets")
+    doc = _doc()
+    doc.element("headline").text.translations = {"vi": "GIẢM GIÁ HÈ"}
+    doc.element("cta").text.translations = {"vi": "MUA NGAY"}
+    doc.element("cta").text.protected = True
+    by_id = {e.id: e for e in elements_from_document(doc, store, locale="vi")}
+    assert by_id["headline"].text_content == "GIẢM GIÁ HÈ"
+    assert by_id["cta"].text_content == "MUA NGAY"
+    by_id = {e.id: e for e in elements_from_document(
+        doc, store, locale="vi", text_overrides={"headline": "FLASH", "cta": "NOPE"})}
+    assert by_id["headline"].text_content == "FLASH"
+    assert by_id["cta"].text_content == "MUA NGAY"  # protected copy ignores overrides
+
+
+def test_font_coverage_falls_back_to_a_face_with_the_glyphs() -> None:
+    reg = FontRegistry()
+    if "DejaVu Sans" not in reg.families:
+        pytest.skip("DejaVu Sans not installed")
+    latin = reg.resolve_for_text("DejaVu Sans", "SUMMER SALE")
+    assert latin.status == "available" and latin.family == "DejaVu Sans"
+    missing = reg.missing_glyphs(latin.path, "漢字セール")
+    if missing is None:
+        pytest.skip("fontTools not available for coverage checks")
+    assert missing
+    cjk_faces = [f for f in reg.families if "Gothic" in f or "Unifont" in f]
+    if not cjk_faces:
+        pytest.skip("no CJK-capable font installed")
+    cjk = reg.resolve_for_text("DejaVu Sans", "漢字セール")
+    assert cjk.status == "substituted" and cjk.family != "DejaVu Sans"
+    assert reg.missing_glyphs(cjk.path, "漢字セール") == []

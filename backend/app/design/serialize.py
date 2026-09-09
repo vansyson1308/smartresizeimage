@@ -64,6 +64,7 @@ def _text(d: dict | None) -> TextContent | None:
         locale=d.get("locale", "en"),
         max_lines=d.get("max_lines"),
         protected=bool(d.get("protected", False)),
+        translations={str(k): str(v) for k, v in (d.get("translations") or {}).items()},
     )
 
 

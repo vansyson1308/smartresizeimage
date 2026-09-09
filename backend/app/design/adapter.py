@@ -262,8 +262,14 @@ def elements_from_document(
     *,
     registry: FontRegistry | None = None,
     text_overrides: dict[str, str] | None = None,
+    locale: str | None = None,
 ) -> list[DesignElement]:
-    """Materialize engine elements. Text elements are native (no raster image)."""
+    """Materialize engine elements. Text elements are native (no raster image).
+
+    Text resolves in this order: explicit override, approved translation for
+    ``locale`` (exact tag, then language), master copy. Protected (verbatim)
+    copy ignores overrides but still honours an approved translation.
+    """
     reg = registry or default_registry()
     overrides = text_overrides or {}
     out: list[DesignElement] = []
@@ -284,9 +290,15 @@ def elements_from_document(
         layer_type = "pixel"
         if e.kind == "text" and e.text is not None:
             layer_type = "type"
-            text_content = overrides.get(e.id, e.text.plain)
+            localized = e.text.text_for_locale(locale)
+            if e.id in overrides and not e.text.protected:
+                text_content = overrides[e.id]
+            else:
+                text_content = localized
             style = e.text.primary_style
-            resolved = reg.resolve(style.font_family, style.weight, style.italic)
+            resolved = reg.resolve_for_text(
+                style.font_family, text_content, style.weight, style.italic
+            )
             font_info = {
                 "family": resolved.path,
                 "font_name": style.font_family,

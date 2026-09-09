@@ -78,7 +78,19 @@ def apply_text_safe_plates(
         if busy < config.busy_threshold:
             continue
 
-        patch = _build_plate_patch(rgba, (x, y, bw, bh), config)
+        # Busier backgrounds get a stronger plate: opacity grows with the clutter
+        # score so text stays legible on noise/photography, bounded at 230.
+        boost = int(min(230, config.opacity + max(0.0, busy - config.busy_threshold) * 300.0))
+        cfg = TextPlateConfig(
+            enabled=config.enabled,
+            style=config.style if busy < 0.5 else "solid",
+            busy_threshold=config.busy_threshold,
+            padding=config.padding,
+            feather_radius=config.feather_radius,
+            opacity=boost,
+            corner_radius=config.corner_radius,
+        )
+        patch = _build_plate_patch(rgba, (x, y, bw, bh), cfg)
         alpha = np.array(patch.split()[3], dtype=np.uint8)
 
         allow = (~blocked[y : y + bh, x : x + bw]).astype(np.uint8) * 255

@@ -16,6 +16,14 @@ from PIL import ImageFont
 
 logger = logging.getLogger("autobanner.design.fonts")
 
+try:  # optional: glyph coverage checks
+    from fontTools.ttLib import TTFont
+
+    HAS_FONTTOOLS = True
+except ImportError:  # pragma: no cover - depends on environment
+    TTFont = None  # type: ignore[assignment]
+    HAS_FONTTOOLS = False
+
 _DEFAULT_DIRS = (
     "/usr/share/fonts",
     "/usr/local/share/fonts",
@@ -73,6 +81,7 @@ class FontRegistry:
     def __init__(self, extra_dirs: list[str | Path] | None = None, scan_system: bool = True):
         self._faces: list[FontFace] = []
         self._by_family: dict[str, list[FontFace]] = {}
+        self._cmap_cache: dict[str, set[int] | None] = {}
         dirs: list[str] = []
         if extra_dirs:
             dirs.extend(str(d) for d in extra_dirs)
@@ -149,6 +158,72 @@ class FontRegistry:
                 "substituted",
             )
         return ResolvedFont(family, weight, italic, None, None, None, "missing")
+
+    # ---- glyph coverage --------------------------------------------------------------
+    def codepoints(self, path: str) -> set[int] | None:
+        """Set of code points a font file covers, or None when it cannot be determined."""
+        if path in self._cmap_cache:
+            return self._cmap_cache[path]
+        result: set[int] | None = None
+        if HAS_FONTTOOLS:
+            try:
+                font = TTFont(path, lazy=True, fontNumber=0)
+                cmap = font.getBestCmap() or {}
+                result = set(cmap.keys())
+                font.close()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("cmap unavailable for %s: %s", path, exc)
+        self._cmap_cache[path] = result
+        return result
+
+    def missing_glyphs(self, path: str | None, text: str) -> list[str] | None:
+        """Characters of ``text`` the font lacks; None when coverage is unknown."""
+        if not path:
+            return None
+        cps = self.codepoints(path)
+        if cps is None:
+            return None
+        missing = []
+        for ch in text:
+            if ch.isspace() or ord(ch) < 32:
+                continue
+            if ord(ch) not in cps and ch not in missing:
+                missing.append(ch)
+        return missing
+
+    def resolve_for_text(
+        self, family: str, text: str, weight: str = "regular", italic: bool = False
+    ) -> ResolvedFont:
+        """Resolve a face and, when it lacks glyphs for ``text``, fall back to one that has them.
+
+        The returned status is ``substituted`` (with the reason recorded by the
+        caller) whenever the face differs from the requested family.
+        """
+        primary = self.resolve(family, weight, italic)
+        missing = self.missing_glyphs(primary.path, text)
+        if not missing:
+            return primary
+        want_bold = weight.lower() in _BOLD_WORDS
+        want_italic = bool(italic)
+        best: FontFace | None = None
+        best_key: tuple[int, int] | None = None
+        for face in self._faces:
+            m = self.missing_glyphs(face.path, text)
+            if m is None:
+                continue
+            # fewer missing glyphs first, then closest style match
+            style_penalty = int(face.bold != want_bold) + int(face.italic != want_italic)
+            key = (len(m), style_penalty)
+            if best_key is None or key < best_key:
+                best, best_key = face, key
+        if best is None or best_key is None or best_key[0] >= len(missing):
+            return primary
+        logger.warning(
+            "font '%s' lacks %d glyph(s) for text; using %s", family, len(missing), best.family
+        )
+        return ResolvedFont(
+            family, weight, italic, best.path, best.family, best.style, "substituted"
+        )
 
     def load(
         self, resolved: ResolvedFont, size: float

@@ -110,8 +110,8 @@ def fit_text(
     """
     reg = registry or default_registry()
     style = content.primary_style
-    resolved = reg.resolve(style.font_family, style.weight, style.italic)
     text = content.plain.upper() if style.uppercase else content.plain
+    resolved = reg.resolve_for_text(style.font_family, text, style.weight, style.italic)
     max_lines = max_lines or content.max_lines
     max_width = max(1, int(max_width))
     lo, hi = max(1, int(min_px)), max(int(min_px), int(max_px))

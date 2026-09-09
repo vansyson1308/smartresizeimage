@@ -226,6 +226,7 @@
       $("#el-align").value = st.align || "left";
       $("#el-color").value = st.color || "#000000";
       $("#el-protected").checked = !!e.text.protected;
+      $("#el-translations").value = Object.entries(e.text.translations || {}).map(([k, v]) => `${k} = ${v}`).join("\n");
     }
     $("#el-locked").checked = !!e.locked;
     $("#el-visible").checked = !!e.visible;
@@ -244,7 +245,9 @@
     if ($("#el-role").value !== e.role) ops.push({ op: "set_role", element_id: e.id, role: $("#el-role").value });
     ops.push({ op: "set_allowed", element_id: e.id, allowed: { scale_free: $("#el-scale-free").checked, crop: $("#el-crop").checked } });
     if (e.kind === "text") {
-      ops.push({ op: "set_text", element_id: e.id, text: $("#el-text").value, protected: $("#el-protected").checked,
+      const translations = {};
+      $("#el-translations").value.split("\n").forEach((line) => { const m = /^\s*([A-Za-z0-9-]+)\s*=\s*(.+)$/.exec(line); if (m) translations[m[1]] = m[2].trim(); });
+      ops.push({ op: "set_text", element_id: e.id, text: $("#el-text").value, protected: $("#el-protected").checked, translations,
         style: { font_family: $("#el-font").value || "DejaVu Sans", font_size: Number($("#el-size").value) || 24, weight: $("#el-weight").value, align: $("#el-align").value, color: $("#el-color").value || "#000000" } });
     }
     await patchDocument(ops, `edit ${e.name}`);
