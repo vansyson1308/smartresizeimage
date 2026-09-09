@@ -170,6 +170,8 @@ def _plan_family(
         [e for e in content if e.role.value in TEXT_ROLES or e.layer_type == "type"],
         key=lambda e: (e.bbox.y, e.bbox.x),
     )
+    # Elements that carry a rendered text raster but no native content are
+    # laid out with the text stack (reading order) but scaled as images.
     subjects = [e for e in content if e.role.value in SUBJECT_ROLES]
     logos = [e for e in content if e.role.value in IDENTITY_ROLES]
     others = [e for e in content if e not in texts and e not in subjects and e not in logos]
@@ -288,6 +290,17 @@ def _plan_text_stack(
         total = 0
         for e in texts:
             de = doc_by_id.get(e.id)
+            if e.layer_type != "type" or e.image is not None:
+                # Recovered raster text: uniform scale into the column, never re-typeset.
+                k = min(column.width / max(1, e.bbox.width), max(0.3, scale * factor))
+                w = max(1, int(e.bbox.width * k))
+                h = max(1, int(e.bbox.height * k))
+                px = int(max(8.0, e.bbox.height * 0.6) * k)
+                x = column.x + ((column.width - w) // 2 if align == "center" else 0)
+                placed.append((e, BoundingBox(x, y, w, h), px, False))
+                y += h + gap
+                total += h + gap
+                continue
             content = _content(e, de)
             lo, hi = FONT_BOUNDS.get(e.role.value, (12, 60))
             master_px = _master_px(de, e)

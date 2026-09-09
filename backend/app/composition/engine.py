@@ -22,6 +22,26 @@ from .resize import high_quality_resize
 logger = logging.getLogger("autobanner.composition")
 
 
+def _text_rgb(elem: DesignElement) -> tuple[int, int, int] | None:
+    """Best-effort text colour from font metadata (hex string or psd-tools values)."""
+    info = elem.font_info or {}
+    color = info.get("color")
+    if isinstance(color, str) and color.startswith("#") and len(color) >= 7:
+        try:
+            return int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+        except ValueError:
+            return None
+    if isinstance(color, (list, tuple)) and len(color) >= 3:
+        vals = [float(v) for v in color[:4]]
+        if len(vals) == 4 and all(0.0 <= v <= 1.0 for v in vals):
+            return int(vals[1] * 255), int(vals[2] * 255), int(vals[3] * 255)
+        if all(0.0 <= v <= 1.0 for v in vals[:3]):
+            return int(vals[0] * 255), int(vals[1] * 255), int(vals[2] * 255)
+        if all(0 <= v <= 255 for v in vals[:3]):
+            return int(vals[0]), int(vals[1]), int(vals[2])
+    return None
+
+
 class CompositionEngine:
     """Compose final image from elements and layout.
 
@@ -222,6 +242,7 @@ class CompositionEngine:
         avoid_roles = {ElementRole.LOGO, ElementRole.HERO_IMAGE}
 
         text_boxes: list[tuple[int, int, int, int]] = []
+        text_colors: list[tuple[int, int, int] | None] = []
         avoid_mask = np.zeros((target_size[1], target_size[0]), dtype=bool)
 
         for elem, layout in content_elements:
@@ -236,6 +257,7 @@ class CompositionEngine:
                 continue
             if elem.role in text_roles:
                 text_boxes.append((x1, y1, x2 - x1, y2 - y1))
+                text_colors.append(_text_rgb(elem))
             if elem.role in avoid_roles:
                 avoid_mask[y1:y2, x1:x2] = True
 
@@ -257,6 +279,7 @@ class CompositionEngine:
             text_boxes=text_boxes,
             avoid_mask=avoid_mask,
             config=plate_cfg,
+            text_colors=text_colors,
         )
         return plated, dict(meta)
 
