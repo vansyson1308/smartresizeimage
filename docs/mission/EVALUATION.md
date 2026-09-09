@@ -75,8 +75,19 @@ legacy evaluator and included the preserved false positive; it is not comparable
 
 See `results/ablations_2026-09-09.md` (verbatim harness output) and the summary in
 `EXPERIMENTS.md`. Headline: constraint planner 44/48 accepted vs zone planner 36/48; repair
-matters only for the zone planner; plates matter on busy backgrounds; holdout lacks a
-busy-background case.
+matters only for the zone planner; plates matter on busy backgrounds.
+
+Second run on the 15-case corpus (holdout now 6 cases incl. a busy background, 24 runs):
+`results/ablations_joint_2026-09-09.md`. Joint family planning: same acceptance (32/36,
+22/24), family-consistency issues 9 → 3 of 60 runs, mixed-family orientations 3 → 0.
+
+## Family-consistency checks (contract v2, cross-variant)
+
+`family_identity` (major FAIL when an element visible in one size is missing in another
+unless `allowed.hide`), `family_reading_order` (major review), `family_hierarchy` (major
+review when a font-size ratio departs >30% from the master's ratio), `family_layout` (minor
+note when one orientation uses several families). They run after every variant of a job
+has rendered and re-derive each variant's verdict.
 
 ## Metrics still to instrument
 

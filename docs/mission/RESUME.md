@@ -39,14 +39,16 @@ needed; launch Chromium with `executable_path="/opt/pw-browsers/chromium"` in th
 
 ## Next executable task
 
-H2 joint family planning: add `plan_family(doc, targets)` in `backend/app/design/planner.py`
-that chooses one layout family per aspect class for the whole size set with a shared text
-hierarchy scale (headline:sub:cta ratios fixed across sizes) and returns per-target plans;
-add a `family_consistency` check to `backend/app/quality` (same relative hierarchy, same
-subject/logo identity, same reading order across variants of one job); expose it through
-`ProjectService.request_variants` (one job = one family) and compare against independent
-per-variant planning with `run_ablations.py` (new config `joint`). Also add a busy-background
-scenario to the holdout split in `generate_bench_fixtures.py` (keep tuning cases unchanged).
+H1 — learn from approved examples: add `backend/app/design/examples.py` with
+`match_elements(master_doc, approved_variant_doc)` (by asset hash for images, by normalised
+text for text elements, by role as fallback) and `infer_family(master_doc, examples)` that
+derives, per aspect class, region fractions (text column, subject slot, logo slot) and a
+hierarchy scale from the approved variants, emitting a `Family` plus `Constraint`
+proposals with `provenance.origin = "recovered"` and a confidence based on agreement across
+examples. Feed inferred families into `choose_families` ahead of the hand-written ones.
+Evaluate on the synthetic corpus by treating one generated size as the "approved example"
+and holding out the others (`run_ablations.py --configs full,learned`). Record H1 in
+`EXPERIMENTS.md` with the setup time counted (import + match + confirm).
 
 ## Files to know
 

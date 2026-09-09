@@ -112,12 +112,19 @@ inputs only. Numbers are synthetic-fixture engineering results, not customer val
 - `ECONOMICS.md`: measured compute (≈1.3–1.5 s CPU per accepted variant) and storage
   (≈350 KB per synthetic 4-variant project) with explicit, labelled pricing scenarios.
 
+- H2 joint family planning shipped and ablated: `choose_families` (one family per
+  orientation for a size set) is the default for multi-size jobs; cross-variant checks
+  (`quality/family.py`) attach to every variant; corpus grown to 15 cases (holdout 10–15,
+  busy background included). Family-consistency issues 9 → 3 of 60 runs at equal
+  acceptance and compute.
+
 ## Next actions (in order)
 
 1. Real-design corpus when access exists (licensed PSDs/photos); decomposition on
-   photographs; add a busy-background case to the holdout scenario mix.
-2. H2 proper: joint family planning (shared family choice + consistent hierarchy across a
-   size set) and a family-consistency check in the contract; compare with per-variant
-   planning under the ablation harness.
+   photographs; human calibration of verdicts and correction-time measurement via the pilot
+   instruments.
+2. H1: learn layout families/breakpoints from a few approved variants (element matching
+   across examples, executable rule proposals with provenance); evaluate against hand-written
+   families on held-out sizes.
 3. Roles within an owner (viewer/approver), retention policy, rate limiting; Docker image
    build verification on a machine with a Docker daemon.
