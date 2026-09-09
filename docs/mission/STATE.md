@@ -36,7 +36,11 @@ This file is a checkpoint, not a completion claim.
 Environment: Python 3.11.15, Pillow 10.4.0, NumPy 1.26.4, SciPy 1.17.1, opencv-headless
 4.11.0.86, psd-tools 1.19.0, tesseract 5.3.4, FastAPI 0.141.1. 4 CPUs, no GPU.
 
-- `ruff check backend` clean; `pytest backend/tests` → **215 passed** (includes API round trip).
+- `ruff check backend` clean; `pytest backend/tests` → **266 passed** (API round trips, roles,
+  rate limit, retention, planner, examples, local edits, corrections, decomposition).
+- Measurement tools (all synthetic, seed 42): `run_layout_bench.py` (modes), `run_ablations.py`
+  (planner/repair/plates, joint, H1 protocol), `run_local_edits.py` (H3), `run_corrections.py`
+  (H5); verbatim outputs under `results/`.
 - Benchmark, 12 synthetic cases × 3 sizes, seed 42, contract v2 verdicts:
 
 | Mode | Accepted | Needs review | Failed | Legacy v1 "pass" | Mean s/run |
@@ -145,6 +149,17 @@ inputs only. Numbers are synthetic-fixture engineering results, not customer val
   on mutating requests (`AUTOBANNER_RATE_LIMIT`, 429 + `Retry-After`, logged), retention
   policy (`AUTOBANNER_RETENTION_DAYS`, purge at startup and daily, logged, no undo).
   `test_ownership_and_jobs.py` 13 tests; `docs/OPERATIONS.md` updated. Test suite: 264 tests.
+
+## Release-criteria check (2026-09-09, end of this session)
+
+| Criterion (MISSION.md priorities / brief) | Status | Evidence |
+|---|---|---|
+| Truthful evaluation: score describes what the customer sees | VERIFIED_LOCAL | Contract v2 on rendered pixels; preserved false positive rejected for the right reason; skipped checks never pass. Calibration vs humans BLOCKED_EXTERNAL. |
+| One complete, reopenable end-to-end journey | VERIFIED_LOCAL | 21-step browser journey against the real server (import/blank → interpret → brief → generate → review → campaign change with kept layout → export → reopen); no console errors. |
+| Native text and asset fidelity | VERIFIED_LOCAL | Native text fitting/rendering with font disclosure and glyph coverage; assets by content hash; recovered elements never silently converted. |
+| Measured differentiation before claims | VERIFIED_LOCAL (synthetic) | Frozen holdout, Wilson intervals, ablations for planner/repair/plates/joint/H1/H3/H5 with verbatim reports; no customer numbers claimed. |
+| Operability | VERIFIED_LOCAL | Owner isolation + roles, quotas/metering, rate limiting, retention, durable jobs, pilot instruments, Docker/compose, operations doc. Multi-node, billing, SSO not provided. |
+| Real design corpus, human reviewers, provider credentials, Docker daemon | BLOCKED_EXTERNAL | Not available in this environment; every dependent claim is marked as such. |
 
 ## Next actions (in order)
 
