@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 ### Added
+- Revisions pin the previous render's text-plate rectangles (`plan.text_plate_rects`), so a
+  longer copy on a busy background no longer moves the plate of the whole text stack; the
+  retention sweep also trims event-log lines older than `AUTOBANNER_RETENTION_DAYS`.
 - Roles within an owner (`AUTOBANNER_API_KEYS=key:owner:role`, viewer/editor/approver/admin),
   per-owner rate limiting on mutating requests (`AUTOBANNER_RATE_LIMIT`, 429 + `Retry-After`)
   and a retention policy (`AUTOBANNER_RETENTION_DAYS`, purge untouched projects at startup and

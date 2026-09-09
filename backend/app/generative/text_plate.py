@@ -110,13 +110,18 @@ def apply_text_safe_plates(
     avoid_mask: np.ndarray | None,
     config: TextPlateConfig,
     text_colors: list[tuple[int, int, int] | None] | None = None,
-) -> tuple[Image.Image, dict[str, float | int | str | bool]]:
+    fixed_rects: list[tuple[int, int, int, int]] | None = None,
+) -> tuple[Image.Image, dict[str, float | int | str | bool | list]]:
     """Apply readability plates behind text zones where background is busy or
     lacks contrast with the text colour.
 
     Plate drawing is restricted by ``avoid_mask`` (True means protected/blocked).
     When ``text_colors`` are known, the plate colour is chosen to contrast with
     the text (light plate under dark text, dark scrim under light text).
+    ``fixed_rects`` (from a previous render of the same variant) pins plate
+    rectangles so a local revision keeps every other plate pixel-identical: a
+    text box inside a fixed rectangle reuses it (grown only if the box now
+    sticks out), boxes outside any fixed rectangle are clustered as usual.
     """
     rgba = background.convert("RGBA")
     w, h = rgba.size
@@ -135,20 +140,49 @@ def apply_text_safe_plates(
 
     # Neighbouring text boxes (a headline/sub/CTA stack) share one plate so the
     # result reads as a single panel instead of a patchwork.
-    clusters = _cluster_boxes(text_boxes, config.padding, w, h)
+    plate_boxes: list[tuple[list[int], tuple[int, int, int, int]]] = []
+    if fixed_rects:
+        taken: set[int] = set()
+        for rect in fixed_rects:
+            rx, ry, rw, rh = rect
+            members = [
+                i
+                for i, (bx, by, bw_, bh_) in enumerate(text_boxes)
+                if i not in taken
+                and bx < rx + rw
+                and rx < bx + bw_
+                and by < ry + rh
+                and ry < by + bh_
+            ]
+            if not members:
+                continue
+            taken.update(members)
+            grown = _union_box(
+                [rect] + [_expand_box(text_boxes[i], config.padding, w, h) for i in members]
+            )
+            plate_boxes.append((members, grown))
+        rest = [i for i in range(len(text_boxes)) if i not in taken]
+        if rest:
+            for members_local in _cluster_boxes(
+                [text_boxes[i] for i in rest], config.padding, w, h
+            ):
+                members = [rest[j] for j in members_local]
+                box = _union_box([text_boxes[i] for i in members])
+                plate_boxes.append((members, _expand_box(box, config.padding, w, h)))
+    else:
+        for members in _cluster_boxes(text_boxes, config.padding, w, h):
+            box = _union_box([text_boxes[i] for i in members])
+            plate_boxes.append((members, _expand_box(box, config.padding, w, h)))
 
-    for members in clusters:
-        box = _union_box([text_boxes[i] for i in members])
+    rects_out: list[list[int]] = []
+    for members, (x, y, bw, bh) in plate_boxes:
         member_colors = [colors[i] for i in members if i < len(colors) and colors[i]]
         idx = members[0]
-        x, y, bw, bh = _expand_box(box, config.padding, w, h)
         busy = compute_busy_score(rgba, (x, y, bw, bh))
         busy_scores.append(busy)
         fallback_rgb = colors[idx] if idx < len(colors) else None
         text_rgb = member_colors[0] if member_colors else fallback_rgb
-        low_contrast = (
-            low_contrast_fraction(rgba, (x, y, bw, bh), text_rgb) if text_rgb else 0.0
-        )
+        low_contrast = low_contrast_fraction(rgba, (x, y, bw, bh), text_rgb) if text_rgb else 0.0
         contrast_scores.append(low_contrast)
         if busy < config.busy_threshold and low_contrast < 0.25:
             continue
@@ -175,6 +209,7 @@ def apply_text_safe_plates(
 
         rgba.alpha_composite(patch, dest=(x, y))
         applied += 1
+        rects_out.append([int(x), int(y), int(bw), int(bh)])
 
     logger.info(
         "text-plate: applied=%d boxes=%d avg_busy=%.3f style=%s",
@@ -192,6 +227,7 @@ def apply_text_safe_plates(
         "low_contrast": [round(float(v), 4) for v in contrast_scores],
         "busy_threshold": float(config.busy_threshold),
         "style": config.style,
+        "rects": rects_out,
     }
 
 
@@ -300,9 +336,7 @@ def _gradient_plate(
     return plate
 
 
-def _solid_plate(
-    size: tuple[int, int], config: TextPlateConfig, dark: bool = False
-) -> Image.Image:
+def _solid_plate(size: tuple[int, int], config: TextPlateConfig, dark: bool = False) -> Image.Image:
     w, h = size
     rgb = _plate_rgb(dark)
     plate = Image.new("RGBA", size, (*rgb, 0))

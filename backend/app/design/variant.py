@@ -227,8 +227,15 @@ def generate_variant(
     )
     for attempt in range(max_repairs + 1):
         report_progress("render", 0.5 + 0.1 * attempt)
-        result = compositor.compose(elements, layout, (doc.canvas_width, doc.canvas_height), target)
+        result = compositor.compose(
+            elements,
+            layout,
+            (doc.canvas_width, doc.canvas_height),
+            target,
+            plate_rects=(reference or {}).get("text_plate_rects") if kept else None,
+        )
         image = result.image
+        plate_rects = list((result.metadata.get("text_plate") or {}).get("rects") or [])
         _check_cancel(cancel)
         report_progress("verify", 0.65 + 0.1 * attempt)
         final_round = attempt == max_repairs
@@ -265,6 +272,7 @@ def generate_variant(
         "layout_profile": layout_debug.get("profile_name"),
         "layout_fallback": layout_debug.get("fallback_reason", ""),
         "layout_scoring": bool(Config.LAYOUT_PROFILE_SCORING_ENABLED),
+        "text_plate_rects": plate_rects,
         "placements": [
             {
                 "element_id": r.element_id,

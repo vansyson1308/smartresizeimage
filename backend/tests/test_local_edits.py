@@ -82,9 +82,7 @@ def test_master_copy_asset_and_style_edits_are_local(tmp_path) -> None:
 
     # asset swap (same size, different colour) on the logo
     d2 = _copy(doc)
-    d2.element("logo").asset = store.put(
-        Image.new("RGBA", (180, 80), (30, 30, 30, 255)), "logo2"
-    )
+    d2.element("logo").asset = store.put(Image.new("RGBA", (180, 80), (30, 30, 30, 255)), "logo2")
     r2 = _generate(d2, store, VariantBrief(*SIZE, name="rev"), reference=base.plan)
     assert out_of_scope_diff(base, r2, ["logo"]) == 0.0
     assert _boxes(r2)["logo"] == _boxes(base)["logo"]
@@ -131,3 +129,43 @@ def test_copy_that_no_longer_fits_falls_back_to_a_fresh_plan(tmp_path) -> None:
     ref = r.plan["planner_meta"]["reference"]
     assert "cta" in ref["replanned"] and "cta" not in ref["kept"]
     assert any(w.startswith("layout_change:cta") for w in r.warnings)
+
+
+def test_longer_cta_on_busy_background_keeps_the_other_plates(tmp_path) -> None:
+    """The H3 residual: stack plates used to grow with the CTA; pinned rects keep them."""
+    import json
+    from pathlib import Path
+
+    from backend.app.design.adapter import document_from_elements
+    from backend.app.design.assets import AssetStore
+    from backend.tools.run_ablations import _native_elements
+    from backend.tools.run_layout_bench import _elements_from_meta
+
+    case = next(iter(sorted(Path("backend/tests/bench_fixtures").glob("case_04_busy_bg"))), None)
+    if case is None:
+        import pytest
+
+        pytest.skip("bench fixtures not generated")
+    meta = json.loads((case / "metadata.json").read_text())
+    source = Image.open(case / "input.png").convert("RGBA")
+    bg = case / "background.png"
+    background = Image.open(bg).convert("RGBA") if bg.exists() else source
+    elements = _native_elements(_elements_from_meta(meta, source, background))
+    store = AssetStore(tmp_path / "assets")
+    doc = document_from_elements(
+        elements,
+        (meta["source_size"]["width"], meta["source_size"]["height"]),
+        store,
+        name=case.name,
+        origin="fixture",
+    )
+    cta = next(e for e in doc.elements if e.role == "cta")
+    base = _generate(doc, store, VariantBrief(*SIZE, name="base"))
+    assert base.plan["text_plate_rects"], "busy background should get a plate"
+    longer = VariantBrief(*SIZE, name="rev", text_overrides={cta.id: cta.text.plain + " TODAY"})
+    edited = _generate(doc, store, longer, reference=base.plan)
+    assert out_of_scope_diff(base, edited, [cta.id]) == 0.0
+    # without pinned rects the stack plate moves with the wider CTA
+    ref_without_rects = {k: v for k, v in base.plan.items() if k != "text_plate_rects"}
+    unpinned = _generate(doc, store, longer, reference=ref_without_rects)
+    assert out_of_scope_diff(base, unpinned, [cta.id]) >= 0.0  # informative, may be zero

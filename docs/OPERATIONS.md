@@ -22,7 +22,7 @@ auth mode and limits. API docs: `/api/docs`.
 | `AUTOBANNER_DATA_DIR` | `data` | Root for projects, jobs, usage, fonts. One directory = one deployment. |
 | `AUTOBANNER_API_KEYS` | unset | `key1:owner-a[:role],key2:owner-b[:role]`. Requests must send `X-API-Key`; each owner sees only its own projects/jobs. Roles: `viewer` (read), `editor` (edit, generate, export; no approvals), `approver` (approve/reject only), `admin` (all, default). An unknown role fails startup. |
 | `AUTOBANNER_RATE_LIMIT` | unset | Per-owner token bucket for mutating requests, e.g. `60/minute`, `600/hour`, `5/10s` → HTTP 429 with `Retry-After`; reads are never limited; hits are logged as `rate_limited` events. In-memory, per process. |
-| `AUTOBANNER_RETENTION_DAYS` | unset | Delete projects (variants, history, corrections) untouched for longer than this, at startup and once a day. Logged as `project_purged`. No undo: export a project zip first if you want to keep it. |
+| `AUTOBANNER_RETENTION_DAYS` | unset | Delete projects (variants, history, corrections) untouched for longer than this, and trim event-log lines older than this, at startup and once a day. Logged as `project_purged`. No undo: export a project zip first if you want to keep it. |
 | `AUTOBANNER_API_KEY` | unset | Single-key form (owner `default`). Without any key the server is **open** (owner `local`) — development only. |
 | `AUTOBANNER_JOB_WORKERS` | `2` | Concurrent variant jobs. Each variant is CPU-bound (1–4 s on 4 cores). |
 | `AUTOBANNER_QUOTA_VARIANTS_PER_DAY` | unlimited | Per-owner daily variant cap → HTTP 429. |

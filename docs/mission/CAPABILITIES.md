@@ -60,7 +60,7 @@ Separate tracks: **Engineering**, **Quality**, **Operations**, **Competitive**, 
 |---|---|
 | Authentication (API keys → owners), per-owner project/job scoping, roles within an owner (viewer / editor / approver / admin) | VERIFIED_LOCAL | `AUTOBANNER_API_KEYS=key:owner:role`; foreign projects/jobs read as 404, disallowed actions 403; `test_ownership_and_jobs.py`. No SSO. |
 | Rate limiting per owner (token bucket on mutating requests, 429 + `Retry-After`) | VERIFIED_LOCAL | `api/ratelimit.py`, `AUTOBANNER_RATE_LIMIT`; in-memory per process (multi-node needs a shared store, PLANNED). |
-| Retention policy (purge projects untouched for N days, at startup and daily) | VERIFIED_LOCAL | `ProjectService.purge_stale_projects`, `AUTOBANNER_RETENTION_DAYS`; `project_purged` events; no undo (operators export first). |
+| Retention policy (purge projects untouched for N days and trim event logs, at startup and daily) | VERIFIED_LOCAL | `ProjectService.purge_stale_projects`, `EventLog.trim`, `AUTOBANNER_RETENTION_DAYS`; `project_purged` events; no undo (operators export first). |
 | Tenant isolation for state/assets/jobs | VERIFIED_LOCAL (single process) | Owner stored in project meta and job records; usage per owner. No per-owner encryption or separate storage. |
 | Durable jobs, restart behaviour | VERIFIED_LOCAL | Job records under `data/jobs/`; restart reports `interrupted`; variants marked failed. Multi-node queue PLANNED. |
 | Metering + quotas | VERIFIED_LOCAL | `GET /api/usage`; `AUTOBANNER_QUOTA_*` → HTTP 429. |

@@ -850,6 +850,7 @@ class ProjectService:
                 reference = {
                     "placements": plan["placements"],
                     "typography": plan.get("typography") or {},
+                    "text_plate_rects": plan.get("text_plate_rects") or [],
                     "variant_id": variant_id,
                 }
         brief = VariantBrief(
@@ -1158,6 +1159,10 @@ class ProjectService:
             deleted.append(project.id)
         if deleted:
             logger.info("retention: purged %d project(s) older than %d days", len(deleted), days)
+        for owner_name in self.events.owners():
+            trimmed = self.events.trim(owner_name, days, now=now)
+            if trimmed:
+                logger.info("retention: trimmed %d event(s) for %s", trimmed, owner_name)
         return deleted
 
     def start_retention(self, days: int, interval_s: float = 24 * 3600) -> None:

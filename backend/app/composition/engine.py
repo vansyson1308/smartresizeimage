@@ -64,6 +64,7 @@ class CompositionEngine:
         source_size: tuple[int, int],
         target_size: tuple[int, int],
         bg_outpaint_fn: Callable[[Image.Image], Image.Image] | None = None,
+        plate_rects: list[tuple[int, int, int, int]] | None = None,
     ) -> CompositionResult:
         """Compose final image.
 
@@ -96,7 +97,8 @@ class CompositionEngine:
 
         # Standard multi-element composition (PSD, etc.)
         return self._compose_multi_element(
-            elements, layout_results, source_size, target_size, bg_outpaint_fn
+            elements, layout_results, source_size, target_size, bg_outpaint_fn,
+            plate_rects=plate_rects,
         )
 
     @staticmethod
@@ -168,6 +170,7 @@ class CompositionEngine:
         source_size: tuple[int, int],
         target_size: tuple[int, int],
         bg_outpaint_fn: Callable[[Image.Image], Image.Image] | None = None,
+        plate_rects: list[tuple[int, int, int, int]] | None = None,
     ) -> CompositionResult:
         """Standard composition for multi-element sources (PSD files)."""
         warnings: list[str] = []
@@ -200,7 +203,9 @@ class CompositionEngine:
             except Exception as e:
                 warnings.append(f"Background outpaint failed: {e}")
 
-        canvas, text_plate_meta = self._apply_text_safe_plate(canvas, content_elements, target_size)
+        canvas, text_plate_meta = self._apply_text_safe_plate(
+            canvas, content_elements, target_size, plate_rects=plate_rects
+        )
 
         # Sort content by z_index
         content_elements.sort(key=lambda x: x[0].z_index if x[0] else 0)
@@ -227,6 +232,7 @@ class CompositionEngine:
         canvas: Image.Image,
         content_elements: list[tuple[DesignElement, LayoutResult | None]],
         target_size: tuple[int, int],
+        plate_rects: list[tuple[int, int, int, int]] | None = None,
     ) -> tuple[Image.Image, dict[str, object]]:
         """Apply optional readability plate behind text roles on busy backgrounds."""
         if not Config.TEXT_SAFE_PLATE_ENABLED:
@@ -280,6 +286,7 @@ class CompositionEngine:
             avoid_mask=avoid_mask,
             config=plate_cfg,
             text_colors=text_colors,
+            fixed_rects=[tuple(int(v) for v in r) for r in plate_rects] if plate_rects else None,
         )
         return plated, dict(meta)
 

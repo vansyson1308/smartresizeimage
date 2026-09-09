@@ -364,3 +364,20 @@ def test_retention_purges_untouched_projects(tmp_path: Path) -> None:
         assert any(e["kind"] == "project_purged" and e["project_id"] == old.id for e in events)
     finally:
         service.shutdown()
+
+
+def test_retention_trims_old_events(tmp_path: Path) -> None:
+    from backend.app.api.events import EventLog
+
+    log = EventLog(tmp_path / "events", enabled=True)
+    log.record("acme", "old_thing")
+    path = log._path("acme")
+    lines = path.read_text().splitlines()
+    old = json.loads(lines[0])
+    old["ts"] = "2020-01-01T00:00:00+00:00"
+    path.write_text(json.dumps(old) + "\n" + lines[0] + "\n")
+    assert len(log.read("acme")) == 2
+    assert log.trim("acme", 30) == 1
+    assert [e["kind"] for e in log.read("acme")] == ["old_thing"]
+    assert log.trim("acme", 30) == 0 and log.trim("acme", 0) == 0
+    assert log.owners() == ["acme"]

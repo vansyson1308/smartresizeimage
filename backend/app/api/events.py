@@ -37,6 +37,38 @@ class EventLog:
         with self._lock, self._path(owner).open("a", encoding="utf-8") as fh:
             fh.write(line + "\n")
 
+    def trim(self, owner: str, days: int, *, now: str | None = None) -> int:
+        """Drop events older than ``days`` for ``owner``; returns the number removed."""
+        from datetime import timedelta
+
+        if days <= 0:
+            return 0
+        p = self._path(owner)
+        if not p.exists():
+            return 0
+        cutoff = (datetime.fromisoformat(now) if now else datetime.now(UTC)) - timedelta(days=days)
+        kept: list[str] = []
+        removed = 0
+        with self._lock:
+            for line in p.read_text(encoding="utf-8").splitlines():
+                try:
+                    ts = datetime.fromisoformat(json.loads(line).get("ts", ""))
+                except (ValueError, AttributeError):
+                    removed += 1
+                    continue
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=UTC)
+                if ts < cutoff:
+                    removed += 1
+                else:
+                    kept.append(line)
+            if removed:
+                p.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
+        return removed
+
+    def owners(self) -> list[str]:
+        return sorted(f.stem for f in self.root.glob("*.jsonl"))
+
     def read(self, owner: str, limit: int = 5000) -> list[dict]:
         p = self._path(owner)
         if not p.exists():
