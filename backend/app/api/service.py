@@ -15,6 +15,7 @@ import shutil
 import tempfile
 import threading
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -57,19 +58,151 @@ class ServiceError(Exception):
         self.status = status
 
 
+LOCAL_OWNER = "local"
+
+
+@dataclass
+class Quota:
+    """Per-owner limits. ``None`` means unlimited."""
+
+    variants_per_day: int | None = None
+    projects: int | None = None
+    storage_bytes: int | None = None
+
+    @staticmethod
+    def from_env() -> Quota:
+        def _int(name: str) -> int | None:
+            raw = os.environ.get(name, "").strip()
+            return int(raw) if raw.isdigit() else None
+
+        return Quota(
+            variants_per_day=_int("AUTOBANNER_QUOTA_VARIANTS_PER_DAY"),
+            projects=_int("AUTOBANNER_QUOTA_PROJECTS"),
+            storage_bytes=_int("AUTOBANNER_QUOTA_STORAGE_BYTES"),
+        )
+
+
+class UsageMeter:
+    """Per-owner usage counters persisted as JSON (one file per owner)."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.root.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+
+    def _path(self, owner: str) -> Path:
+        safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in owner)[:64]
+        return self.root / f"{safe or 'owner'}.json"
+
+    def read(self, owner: str) -> dict:
+        p = self._path(owner)
+        if not p.exists():
+            return {"owner": owner, "days": {}, "totals": {}}
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            return {"owner": owner, "days": {}, "totals": {}}
+
+    def add(self, owner: str, metric: str, amount: int = 1) -> dict:
+        with self._lock:
+            data = self.read(owner)
+            day = _now()[:10]
+            data.setdefault("days", {}).setdefault(day, {})
+            data["days"][day][metric] = int(data["days"][day].get(metric, 0)) + amount
+            data.setdefault("totals", {})
+            data["totals"][metric] = int(data["totals"].get(metric, 0)) + amount
+            data["owner"] = owner
+            data["updated_at"] = _now()
+            tmp = self._path(owner).with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
+            tmp.replace(self._path(owner))
+            return data
+
+    def today(self, owner: str, metric: str) -> int:
+        data = self.read(owner)
+        return int(data.get("days", {}).get(_now()[:10], {}).get(metric, 0))
+
+
 class ProjectService:
-    def __init__(self, data_dir: str | Path, *, max_workers: int = 2, use_ai: bool = False):
+    def __init__(
+        self,
+        data_dir: str | Path,
+        *,
+        max_workers: int = 2,
+        use_ai: bool = False,
+        quota: Quota | None = None,
+    ):
         self.data_dir = Path(data_dir)
         self.projects_dir = self.data_dir / "projects"
         self.projects_dir.mkdir(parents=True, exist_ok=True)
         self.fonts_dir = self.data_dir / "fonts"
         self.fonts_dir.mkdir(parents=True, exist_ok=True)
         self.registry = FontRegistry(extra_dirs=[self.fonts_dir])
-        self.jobs = JobManager(max_workers=max_workers)
+        self.jobs = JobManager(max_workers=max_workers, persist_dir=self.data_dir / "jobs")
+        self.usage = UsageMeter(self.data_dir / "usage")
+        self.quota = quota or Quota.from_env()
         self.use_ai = use_ai
         self._locks: dict[str, threading.RLock] = {}
         self._cache: dict[str, Project] = {}
         self._mark_interrupted_variants()
+
+    # ---- ownership -----------------------------------------------------------------------
+    @staticmethod
+    def _owned_by(project: Project, owner: str | None) -> bool:
+        """Projects without an owner belong to the local owner; others must match."""
+        if owner is None:
+            return True
+        current = project.meta.get("owner") or LOCAL_OWNER
+        return current == owner
+
+    def storage_bytes(self, owner: str) -> int:
+        total = 0
+        for root in self.projects_dir.iterdir() if self.projects_dir.exists() else []:
+            if not (root / "project.json").exists():
+                continue
+            try:
+                project = self.get_project(root.name, owner=None)
+            except ServiceError:
+                continue
+            if not self._owned_by(project, owner):
+                continue
+            total += sum(p.stat().st_size for p in root.rglob("*") if p.is_file())
+        return total
+
+    def usage_summary(self, owner: str) -> dict:
+        data = self.usage.read(owner)
+        return {
+            "owner": owner,
+            "today": data.get("days", {}).get(_now()[:10], {}),
+            "totals": data.get("totals", {}),
+            "storage_bytes": self.storage_bytes(owner),
+            "quota": {
+                "variants_per_day": self.quota.variants_per_day,
+                "projects": self.quota.projects,
+                "storage_bytes": self.quota.storage_bytes,
+            },
+        }
+
+    def _check_quota_variants(self, owner: str, requested: int) -> None:
+        limit = self.quota.variants_per_day
+        if limit is None:
+            return
+        used = self.usage.today(owner, "variants")
+        if used + requested > limit:
+            raise ServiceError(
+                f"daily variant quota exceeded ({used}/{limit} used, {requested} requested)", 429
+            )
+
+    def _check_quota_projects(self, owner: str) -> None:
+        limit = self.quota.projects
+        if limit is None:
+            return
+        count = len(self.list_projects(owner))
+        if count >= limit:
+            raise ServiceError(f"project quota reached ({count}/{limit})", 429)
+        cap = self.quota.storage_bytes
+        if cap is not None and self.storage_bytes(owner) >= cap:
+            raise ServiceError("storage quota reached", 429)
 
     # ---- helpers ----------------------------------------------------------------------
     def _lock(self, project_id: str) -> threading.RLock:
@@ -98,26 +231,32 @@ class ProjectService:
             if changed:
                 project.save()
 
-    def get_project(self, project_id: str) -> Project:
+    def get_project(self, project_id: str, owner: str | None = LOCAL_OWNER) -> Project:
+        """Load a project; a project that belongs to another owner reads as not found."""
         root = self._root(project_id)
         with self._lock(project_id):
-            if project_id in self._cache:
-                return self._cache[project_id]
-            if not (root / "project.json").exists():
-                raise ServiceError("project not found", 404)
-            project = Project.load(root)
-            self._cache[project_id] = project
-            return project
+            project = self._cache.get(project_id)
+            if project is None:
+                if not (root / "project.json").exists():
+                    raise ServiceError("project not found", 404)
+                project = Project.load(root)
+                self._cache[project_id] = project
+        if not self._owned_by(project, owner):
+            raise ServiceError("project not found", 404)
+        return project
 
     # ---- projects ----------------------------------------------------------------------
-    def list_projects(self) -> list[dict]:
+    def list_projects(self, owner: str | None = LOCAL_OWNER) -> list[dict]:
         out = []
         for root in sorted(self.projects_dir.iterdir()):
             if (root / "project.json").exists():
                 try:
-                    out.append(self.get_project(root.name).summary())
+                    project = self.get_project(root.name, owner=None)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("skip project %s: %s", root, exc)
+                    continue
+                if self._owned_by(project, owner):
+                    out.append(project.summary())
         return sorted(out, key=lambda p: p.get("updated_at") or "", reverse=True)
 
     def create_project_from_upload(
@@ -130,6 +269,8 @@ class ProjectService:
         owner: str | None = None,
         decompose: bool = True,
     ) -> Project:
+        owner = owner or LOCAL_OWNER
+        self._check_quota_projects(owner)
         ext = Path(filename).suffix.lower()
         if ext not in SUPPORTED_EXTENSIONS:
             raise ServiceError(f"unsupported file type '{ext}'", 415)
@@ -198,6 +339,8 @@ class ProjectService:
             project.save()
             with self._lock(project_id):
                 self._cache[project_id] = project
+            self.usage.add(owner, "projects")
+            self.usage.add(owner, "upload_bytes", len(data))
             return project
 
     def create_blank_project(
@@ -211,6 +354,8 @@ class ProjectService:
         owner: str | None = None,
     ) -> Project:
         """Start a master from scratch (compose from separated assets and copy)."""
+        owner = owner or LOCAL_OWNER
+        self._check_quota_projects(owner)
         width, height = int(width), int(height)
         if width < 16 or height < 16 or width * height > MAX_PIXELS:
             raise ServiceError("canvas size out of range", 400)
@@ -241,12 +386,14 @@ class ProjectService:
         project.save()
         with self._lock(project_id):
             self._cache[project_id] = project
+        self.usage.add(owner, "projects")
         return project
 
     def add_element(
         self,
         project_id: str,
         *,
+        owner: str | None = LOCAL_OWNER,
         kind: str,
         name: str,
         role: str,
@@ -257,7 +404,7 @@ class ProjectService:
         image_name: str = "",
     ) -> Project:
         """Add a text or image element (original asset stored by content hash)."""
-        project = self.get_project(project_id)
+        project = self.get_project(project_id, owner)
         from ..design.document import Element, TextContent, TextRun, TextStyle
 
         if kind not in ("text", "image"):
@@ -332,8 +479,8 @@ class ProjectService:
             project.save(snapshot=True, label=f"add {element.name}")
         return project
 
-    def delete_project(self, project_id: str) -> None:
-        project = self.get_project(project_id)
+    def delete_project(self, project_id: str, owner: str | None = LOCAL_OWNER) -> None:
+        project = self.get_project(project_id, owner)
         with self._lock(project_id):
             project.delete()
             self._cache.pop(project_id, None)
@@ -347,8 +494,14 @@ class ProjectService:
         }
 
     # ---- document edits ---------------------------------------------------------------
-    def apply_operations(self, project_id: str, ops: list[dict], label: str = "edit") -> Project:
-        project = self.get_project(project_id)
+    def apply_operations(
+        self,
+        project_id: str,
+        ops: list[dict],
+        label: str = "edit",
+        owner: str | None = LOCAL_OWNER,
+    ) -> Project:
+        project = self.get_project(project_id, owner)
         if not isinstance(ops, list) or not ops:
             raise ServiceError("ops must be a non-empty list", 400)
         with self._lock(project_id):
@@ -362,13 +515,13 @@ class ProjectService:
             project.save(snapshot=True, label=label)
         return project
 
-    def undo(self, project_id: str) -> bool:
-        project = self.get_project(project_id)
+    def undo(self, project_id: str, owner: str | None = LOCAL_OWNER) -> bool:
+        project = self.get_project(project_id, owner)
         with self._lock(project_id):
             return project.undo()
 
-    def restore(self, project_id: str, version: int) -> None:
-        project = self.get_project(project_id)
+    def restore(self, project_id: str, version: int, owner: str | None = LOCAL_OWNER) -> None:
+        project = self.get_project(project_id, owner)
         with self._lock(project_id):
             try:
                 project.restore_version(version)
@@ -376,15 +529,17 @@ class ProjectService:
                 raise ServiceError("version not found", 404) from exc
 
     # ---- rendering ---------------------------------------------------------------------
-    def master_preview(self, project_id: str, max_side: int = 1600) -> Image.Image:
-        project = self.get_project(project_id)
+    def master_preview(
+        self, project_id: str, max_side: int = 1600, owner: str | None = LOCAL_OWNER
+    ) -> Image.Image:
+        project = self.get_project(project_id, owner)
         doc = project.document
         scale = min(1.0, max_side / max(doc.canvas_width, doc.canvas_height))
         with self._lock(project_id):
             return render_master(doc, project.assets, self.registry, scale=scale)
 
-    def asset_path(self, project_id: str, asset_id: str) -> Path:
-        project = self.get_project(project_id)
+    def asset_path(self, project_id: str, asset_id: str, owner: str | None = LOCAL_OWNER) -> Path:
+        project = self.get_project(project_id, owner)
         if not asset_id.isalnum():
             raise ServiceError("invalid asset id", 400)
         p = project.assets.path(asset_id)
@@ -394,9 +549,13 @@ class ProjectService:
 
     # ---- variants ----------------------------------------------------------------------
     def request_variants(
-        self, project_id: str, spec: dict, idempotency_key: str | None = None
+        self,
+        project_id: str,
+        spec: dict,
+        idempotency_key: str | None = None,
+        owner: str | None = LOCAL_OWNER,
     ) -> Job:
-        project = self.get_project(project_id)
+        project = self.get_project(project_id, owner)
         existing = self.jobs.find_by_key(idempotency_key)
         if existing is not None:
             if existing.project_id != project_id:
@@ -407,6 +566,8 @@ class ProjectService:
             raise ServiceError("no targets requested", 400)
         if len(targets) > MAX_VARIANTS_PER_JOB:
             raise ServiceError(f"too many targets (max {MAX_VARIANTS_PER_JOB})", 400)
+        meter_owner = owner or project.meta.get("owner") or LOCAL_OWNER
+        self._check_quota_variants(meter_owner, len(targets))
         text_overrides = dict(spec.get("text_overrides") or {})
         for eid in text_overrides:
             if not project.document.has_element(eid):
@@ -451,8 +612,10 @@ class ProjectService:
 
         job = self.jobs.submit(
             "variants", project_id, items, runner, idempotency_key=idempotency_key,
-            on_finish=on_finish,
+            on_finish=on_finish, owner=meter_owner,
         )
+        self.usage.add(meter_owner, "variants", len(items))
+        self.usage.add(meter_owner, "jobs")
         with self._lock(project_id):
             for rec_id, _ in items:
                 project.variants[rec_id].job_id = job.id
@@ -461,7 +624,7 @@ class ProjectService:
 
     def _run_variant(self, project_id: str, variant_id: str, brief: VariantBrief, job: Job,
                      progress) -> dict:
-        project = self.get_project(project_id)
+        project = self.get_project(project_id, owner=None)
         with self._lock(project_id):
             project.mark_variant(variant_id, "running")
             doc_snapshot = document_from_dict(document_to_dict(project.document))
@@ -484,8 +647,16 @@ class ProjectService:
             project.save()
         return {"variant_id": rec.id, "verdict": rec.verdict}
 
-    def regenerate_variant(self, project_id: str, variant_id: str, spec: dict | None = None) -> Job:
-        project = self.get_project(project_id)
+    def regenerate_variant(
+        self,
+        project_id: str,
+        variant_id: str,
+        spec: dict | None = None,
+        owner: str | None = LOCAL_OWNER,
+    ) -> Job:
+        project = self.get_project(project_id, owner)
+        meter_owner = owner or project.meta.get("owner") or LOCAL_OWNER
+        self._check_quota_variants(meter_owner, 1)
         rec = project.variants.get(variant_id)
         if rec is None:
             raise ServiceError("variant not found", 404)
@@ -515,12 +686,22 @@ class ProjectService:
         def runner(job: Job, item: JobItem, progress) -> dict:
             return self._run_variant(project_id, item.item_id, brief, job, progress)
 
-        return self.jobs.submit("regenerate", project_id, [(variant_id, rec.name)], runner)
+        job = self.jobs.submit(
+            "regenerate", project_id, [(variant_id, rec.name)], runner, owner=meter_owner
+        )
+        self.usage.add(meter_owner, "variants")
+        self.usage.add(meter_owner, "jobs")
+        return job
 
     def set_approval(
-        self, project_id: str, variant_id: str, approval: str, reason: str
+        self,
+        project_id: str,
+        variant_id: str,
+        approval: str,
+        reason: str,
+        owner: str | None = LOCAL_OWNER,
     ) -> VariantRecord:
-        project = self.get_project(project_id)
+        project = self.get_project(project_id, owner)
         if variant_id not in project.variants:
             raise ServiceError("variant not found", 404)
         if approval == "rejected" and not reason.strip():
@@ -530,15 +711,19 @@ class ProjectService:
             project.save()
         return rec
 
-    def delete_variant(self, project_id: str, variant_id: str) -> None:
-        project = self.get_project(project_id)
+    def delete_variant(
+        self, project_id: str, variant_id: str, owner: str | None = LOCAL_OWNER
+    ) -> None:
+        project = self.get_project(project_id, owner)
         with self._lock(project_id):
             if not project.delete_variant(variant_id):
                 raise ServiceError("variant not found", 404)
             project.save()
 
-    def variant_detail(self, project_id: str, variant_id: str) -> dict:
-        project = self.get_project(project_id)
+    def variant_detail(
+        self, project_id: str, variant_id: str, owner: str | None = LOCAL_OWNER
+    ) -> dict:
+        project = self.get_project(project_id, owner)
         rec = project.variants.get(variant_id)
         if rec is None:
             raise ServiceError("variant not found", 404)
@@ -549,8 +734,10 @@ class ProjectService:
             "quality": detail.get("quality"),
         }
 
-    def variant_image_path(self, project_id: str, variant_id: str) -> Path:
-        project = self.get_project(project_id)
+    def variant_image_path(
+        self, project_id: str, variant_id: str, owner: str | None = LOCAL_OWNER
+    ) -> Path:
+        project = self.get_project(project_id, owner)
         rec = project.variants.get(variant_id)
         if rec is None or not rec.image_path:
             raise ServiceError("variant image not available", 404)
@@ -558,8 +745,8 @@ class ProjectService:
 
     # ---- export / import ------------------------------------------------------------------
     def export_deliverables(self, project_id: str, *, fmt: str = "png", only: str = "all",
-                            quality: int = 90) -> bytes:
-        project = self.get_project(project_id)
+                            quality: int = 90, owner: str | None = LOCAL_OWNER) -> bytes:
+        project = self.get_project(project_id, owner)
         fmt = fmt.lower()
         if fmt not in ("png", "jpeg", "jpg", "webp"):
             raise ServiceError("format must be png, jpeg or webp", 400)
@@ -616,8 +803,8 @@ class ProjectService:
             zf.writestr("manifest.json", json.dumps(manifest, indent=2))
         return buf.getvalue()
 
-    def export_project(self, project_id: str) -> bytes:
-        project = self.get_project(project_id)
+    def export_project(self, project_id: str, owner: str | None = LOCAL_OWNER) -> bytes:
+        project = self.get_project(project_id, owner)
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf, self._lock(project_id):
             project.save()
@@ -626,7 +813,9 @@ class ProjectService:
                     zf.write(path, arcname=str(path.relative_to(project.root)))
         return buf.getvalue()
 
-    def import_project(self, data: bytes) -> Project:
+    def import_project(self, data: bytes, owner: str | None = LOCAL_OWNER) -> Project:
+        owner = owner or LOCAL_OWNER
+        self._check_quota_projects(owner)
         if len(data) > MAX_UPLOAD_BYTES * 4:
             raise ServiceError("archive too large", 413)
         project_id = new_id("proj")
@@ -652,8 +841,10 @@ class ProjectService:
                     target.write_bytes(zf.read(info))
             project = Project.load(root)
             project.meta["id"] = project_id
+            project.meta["owner"] = owner
             project.meta["imported_at"] = _now()
             project.save()
+            self.usage.add(owner, "projects")
         except ServiceError:
             shutil.rmtree(root, ignore_errors=True)
             raise
@@ -663,6 +854,14 @@ class ProjectService:
         with self._lock(project_id):
             self._cache[project_id] = project
         return project
+
+    def get_job(self, job_id: str, owner: str | None = LOCAL_OWNER) -> Job:
+        job = self.jobs.get(job_id)
+        if job is None:
+            raise ServiceError("job not found", 404)
+        if owner is not None and (job.owner or LOCAL_OWNER) != owner:
+            raise ServiceError("job not found", 404)
+        return job
 
     def shutdown(self) -> None:
         self.jobs.shutdown()

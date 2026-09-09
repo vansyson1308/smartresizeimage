@@ -2,6 +2,16 @@
 
 Format: date, decision, alternatives rejected, reason. Newest first.
 
+## 2026-09-09 — Owner scoping by API key, foreign resources read as 404
+Rejected: full user accounts with sessions; returning 403 for other owners' projects.
+Reason: a key→owner map isolates tenants today without a user database, and 404 avoids
+leaking project ids across owners. Roles within an owner come later.
+
+## 2026-09-09 — Jobs stay in-process but every state change is durable
+Rejected: adding a queue/broker now.
+Reason: no requirement yet needs more than one node; durable records give restart honesty
+(`interrupted`, never silently pending) and a migration path to a queue later.
+
 ## 2026-09-09 — Constraint planner with hand-written layout families replaces zone templates
 Rejected: keep the template/zone engine and add more zones; a generic optimizer over free
 coordinates.

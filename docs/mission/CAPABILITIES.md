@@ -53,11 +53,13 @@ Separate tracks: **Engineering**, **Quality**, **Operations**, **Competitive**, 
 
 | Item | Status |
 |---|---|
-| Authentication, org/brand boundaries, roles | PLANNED |
-| Tenant isolation for state/assets/jobs | PLANNED (one data dir = one tenant; optional single API key) |
-| Durable jobs, retention, backup/restore | PLANNED |
-| Metering, quotas, sandbox billing | PLANNED / BLOCKED_EXTERNAL (no billing sandbox keys) |
-| Deploy/rollback docs, release package | IMPLEMENTED (Dockerfile + compose), unverified in this environment |
+| Authentication (API keys → owners), per-owner project/job scoping | VERIFIED_LOCAL | `AUTOBANNER_API_KEYS`; foreign projects/jobs read as 404; `test_ownership_and_jobs.py`. Roles within an owner (viewer/approver) PLANNED. |
+| Tenant isolation for state/assets/jobs | VERIFIED_LOCAL (single process) | Owner stored in project meta and job records; usage per owner. No per-owner encryption or separate storage. |
+| Durable jobs, restart behaviour | VERIFIED_LOCAL | Job records under `data/jobs/`; restart reports `interrupted`; variants marked failed. Multi-node queue PLANNED. |
+| Metering + quotas | VERIFIED_LOCAL | `GET /api/usage`; `AUTOBANNER_QUOTA_*` → HTTP 429. |
+| Sandbox billing | BLOCKED_EXTERNAL | No billing provider keys; entitlement hooks are the quota layer. |
+| Backup/restore, deploy/rollback docs | IMPLEMENTED | `docs/OPERATIONS.md`; Docker image builds unverified in this environment (no Docker daemon). |
+| Upload/import safety limits | VERIFIED_LOCAL | Streamed 64 MB cap (early 413), 40 MP pixel cap, archive path/size checks. |
 
 ## Commercial
 

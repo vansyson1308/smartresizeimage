@@ -39,12 +39,12 @@ needed; launch Chromium with `executable_path="/opt/pw-browsers/chromium"` in th
 
 ## Next executable task
 
-Phase D, step 1 — ownership and isolation: add an `owners` concept to `ProjectService`
-(API key → owner id via `AUTOBANNER_API_KEYS="key1:owner1,key2:owner2"`), scope
-`list_projects`/`get_project` by owner, store `owner` in project meta, and add tests that one
-owner cannot read or mutate another owner's project or jobs. Then durable job records:
-persist `Job.to_dict()` under `data/jobs/<id>.json` on every state change and load them on
-start (status `interrupted`).
+Phase E, step 1 — ablation harness: add `backend/tools/run_ablations.py` that runs the
+design pipeline over the fixture corpus under named configurations (planner=zones|constraints,
+repair on|off, plates on|off, OCR on|off) with identical seeds, writes one `summary.json` per
+configuration plus a comparison table (accepted / needs_review / failed, mean seconds, repair
+rounds), and freezes a holdout split (cases 10–12 held out from any tuning). Record results in
+`docs/mission/EVALUATION.md` and `EXPERIMENTS.md` (H2/H4 rows).
 
 ## Files to know
 

@@ -90,10 +90,21 @@ inputs only. Numbers are synthetic-fixture engineering results, not customer val
   `needs_review` (`recovered_unconfirmed`) until confirmed. `test_decompose.py` (5 tests, one
   end-to-end through the API).
 
+## Phase D progress
+
+- API keys map to owners (`AUTOBANNER_API_KEYS`); projects, jobs, usage and exports are
+  scoped per owner (foreign resources read as 404); imported projects belong to the importer.
+- Durable job records (`data/jobs/*.json`) reloaded on start as `interrupted`; per-owner
+  usage meter (`GET /api/usage`) and quotas (`AUTOBANNER_QUOTA_*`, HTTP 429).
+- Streamed upload limit (early 413). `docs/OPERATIONS.md` covers run, config, data layout,
+  backup/restore, deploy/rollback, monitoring and what is not provided.
+- Tests: `test_ownership_and_jobs.py` (6 tests).
+
 ## Next actions (in order)
 
-1. Phase D: auth/tenancy (per-owner project scoping), durable job records, metering/quotas,
-   deploy docs; Phase E: held-out evaluation + ablations (H1 learned families, H2 joint
-   planning), real-design corpus when access exists.
-2. Decomposition on photographs: validate GrabCut/inpainting quality on licensed photos;
-   consider Qwen-Image-Layered only with GPU + licence review.
+1. Phase E: freeze a holdout split of the synthetic corpus; run ablations (zones vs
+   constraints planner, repair on/off, plates on/off) with equal budgets; record cost per
+   accepted variant; write pilot instruments (task timing, acceptance capture).
+2. Real-design corpus when access exists; decomposition on photographs (GrabCut/inpainting
+   quality); Qwen-Image-Layered only with GPU + licence review.
+3. Roles within an owner (viewer/approver), retention policy, rate limiting.
