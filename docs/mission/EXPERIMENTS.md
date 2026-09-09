@@ -6,7 +6,7 @@ lands behind flags with a rollback path.
 
 | ID | Hypothesis | Prior art | Status | Budget | Decision rule |
 |---|---|---|---|---|---|
-| H1 | A few approved variants yield reusable adaptation rules with less setup than manual responsive templates. | PosterO (example-conditioned layouts), CHILI/Celtra template rules | ABLATED, ADOPTED (proxy): one approved example per orientation lifts agreement with the designer's plan on held-out sizes 0.24 → 0.65 and cuts held-out sizes needing a re-layout 60/60 → 18/60 (−70%) at +3.8 s setup per case; human correction counts still unmeasured (below) | CPU only | Adopt if held-out sizes need >= 30% fewer corrections vs one-master, counting import/match/approve time. |
+| H1 | A few approved variants yield reusable adaptation rules with less setup than manual responsive templates. | PosterO (example-conditioned layouts), CHILI/Celtra template rules | ABLATED, ADOPTED (proxy): one approved example per orientation lifts agreement with the designer's plan on held-out sizes 0.24 → 0.85 and cuts held-out sizes needing a re-layout 60/60 → 6/60 (−90%) at +3.7 s setup per case; human correction counts still unmeasured (below) | CPU only | Adopt if held-out sizes need >= 30% fewer corrections vs one-master, counting import/match/approve time. |
 | H2 | Joint planning across a variant family improves consistency and reduces corrections vs independent resizing. | DesignAsCode retargeting, iPoster constraints | ABLATED, ADOPTED: joint family choice cuts family-consistency issues 9 → 3 runs at equal acceptance and compute (below); correction-time effect unmeasured (no humans) | CPU only | Adopt if family-consistency errors drop without lowering acceptance; equal compute/review budget. |
 | H3 | A local-edit representation reduces unintended changes on campaign revision. | Layered editing (Qwen-Image-Layered) | PLANNED | CPU only | Adopt if pixel diff outside edited scope is zero on the regression set. |
 | H4 | Calibrated verification + targeted repair improves throughput vs missed critical errors. | Verification-driven repair | ABLATED (below): repair helps a weak planner, adds nothing to the constraint planner on this corpus; calibration vs humans still unmeasured | CPU only | Measure missed-error rate on held-out set before/after repair; report sample size. |
@@ -82,3 +82,27 @@ lands behind flags with a rollback path.
   Not measured: human correction counts, real designer examples with manual edits (matching
   here is trivial because example and master share assets and copy), more than one example
   per orientation (confidence stays 0.5 with one).
+- 2026-09-09 — H1 follow-up, slot expansion (`results/ablations_h1_slots_2026-09-09.md`; same
+  protocol, corpus and sizes; run from the working tree committed as `d76fa00`). Tight
+  unions from one example shrank text columns and logo slots on other sizes of the same
+  orientation. Learned text columns and logo slots now expand symmetrically into the free
+  space around the example's elements (up to neighbours and canvas margins; a left-aligned
+  column mirrors its left margin); the subject keeps its tight region so it cannot grow past
+  the example.
+
+  | Config | Agreement, tuning | Agreement, holdout | Held-out sizes with agreement < 0.5 | Accepted (tuning / holdout) | Mean s on example sizes |
+  |---|---:|---:|---:|---:|---:|
+  | joint (no example) | 0.24 | 0.24 | 60/60 | 59/63 / 40/42 | 1.56 |
+  | learned, tight regions (previous entry) | 0.65 | 0.66 | 18/60 | 62/63 / 42/42 | 5.29 |
+  | learned, slots | 0.85 | 0.87 | 6/60 (tuning 4, holdout 2) | 61/63 / 41/42 | 5.22 |
+  | designer_ref (ceiling) | 0.99 | 0.99 | 0/60 | 59/63 / 40/42 | 1.57 |
+
+  Per orientation (slots vs tight): landscape 0.88 vs 0.85, square 0.80 vs 0.58, portrait
+  0.95 vs 0.59; median agreement 0.945. The six remaining low-agreement runs are the three
+  `long_text` cases at 600×600 and 300×250, where the learned square family scored more
+  than the learned bonus below `square_text_top` (its long copy overflows the learned
+  column) and the planner fell back to the hand-written family — the intended behaviour
+  when following the example would produce a worse layout. The two `learned` runs that are
+  not accepted are `busy_bg` 300×250 reviews (OCR agreement 0%), the same honest reviews as
+  every other config. Decision rule met on the proxy (−90% ≥ −30%); correction counts with
+  humans remain unmeasured.

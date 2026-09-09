@@ -40,16 +40,15 @@ needed; launch Chromium with `executable_path="/opt/pw-browsers/chromium"` in th
 
 ## Next executable task
 
-H1 follow-up — content pressure for learned stacked families: in
-`backend/app/design/examples.py`, when the example is a stacked composition
-(`subject_first` or text below subject), record the text stack's share of the canvas height
-and let `_plan_family` in `planner.py` grow the learned text region on smaller canvases the
-way `_stacked_family` does for hand-written families (square/portrait agreement with the
-designer plan is 0.58/0.59 vs 0.85 for landscape in
-`docs/mission/results/ablations_h1_2026-09-09.md`). Re-run
-`run_ablations.py --configs joint,designer_ref,learned` with the seven sizes listed in
-`EVALUATION.md` and record the delta in `EXPERIMENTS.md`. Then start H3 (local-edit
-regression set: pixel diff outside the edited scope must be zero).
+H3 — local-edit representation: build a regression set for campaign revisions (change one
+copy string, swap one asset, move one element on the master) in
+`backend/tests/test_local_edits.py`: regenerate the same variant before and after the edit
+with the same seed and assert that pixels outside the edited element's box (plus its text
+plate) are identical, and that `planner_meta.family` and the other elements' placements do
+not change. Where the assertion fails, make the planner and repair loop deterministic with
+respect to unrelated elements (the likely culprits: content pressure re-planning the whole
+stack, plate clustering merging neighbours). Record H3 in `EXPERIMENTS.md` with the number
+of edits whose out-of-scope diff is zero.
 
 ## Files to know
 

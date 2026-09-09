@@ -84,11 +84,13 @@ Second run on the 15-case corpus (holdout now 6 cases incl. a busy background, 2
 `results/ablations_joint_2026-09-09.md`. Joint family planning: same acceptance (32/36,
 22/24), family-consistency issues 9 → 3 of 60 runs, mixed-family orientations 3 → 0.
 
-Third run, H1 protocol (`results/ablations_h1_2026-09-09.md`, 15 cases × 7 sizes): one
-approved example per orientation (rendered with a composition the planner would not pick)
-raises agreement with that composition on the four held-out sizes from 0.24 to 0.65
-(designer ceiling 0.99); held-out sizes that would need a re-layout drop from 60/60 to 18/60.
-Agreement is IoU of planned boxes, a proxy for corrections, not a human measurement.
+Third run, H1 protocol (`results/ablations_h1_2026-09-09.md`, then
+`results/ablations_h1_slots_2026-09-09.md`, 15 cases × 7 sizes): one approved example per
+orientation (rendered with a composition the planner would not pick) raises agreement with
+that composition on the four held-out sizes from 0.24 to 0.65 with tight regions and to 0.85
+with slot expansion (designer ceiling 0.99); held-out sizes that would need a re-layout drop
+from 60/60 to 6/60. Agreement is IoU of planned boxes, a proxy for corrections, not a human
+measurement.
 
 ## Family-consistency checks (contract v2, cross-variant)
 

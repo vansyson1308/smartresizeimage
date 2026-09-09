@@ -124,16 +124,17 @@ inputs only. Numbers are synthetic-fixture engineering results, not customer val
   `results/ablations_h1_2026-09-09.md`): approved variants of a project become examples;
   per orientation the planner infers a family, a hierarchy scale and soft constraint
   proposals with confidence; `GET /api/projects/{id}/learned` and the rules panel show them.
-  On held-out sizes agreement with the designer's composition rises 0.24 → 0.65 and sizes
-  needing a re-layout drop 60/60 → 18/60 at +3.8 s setup per case. Test suite: 248 tests.
+  On held-out sizes agreement with the designer's composition rises 0.24 → 0.85 (slot
+  expansion, `results/ablations_h1_slots_2026-09-09.md`) and sizes needing a re-layout drop
+  60/60 → 6/60 at +3.7 s setup per case. Test suite: 248 tests.
 
 ## Next actions (in order)
 
 1. Real-design corpus when access exists (licensed PSDs/photos); decomposition on
    photographs; human calibration of verdicts and correction-time measurement via the pilot
    instruments (this is also what turns the H1 proxy into a measured correction rate).
-2. H1 follow-ups: carry content pressure from a stacked example to smaller canvases (square
-   and portrait agreement 0.58/0.59 vs landscape 0.85); more than one example per
-   orientation raises confidence; H3 local-edit regression set; H5 correction retrieval.
+2. H3 local-edit regression set (pixel diff outside the edited scope must be zero on
+   campaign revisions); H5 retrieval from correction history; H1 with more than one example
+   per orientation (confidence above 0.5) and with real designer examples.
 3. Roles within an owner (viewer/approver), retention policy, rate limiting; Docker image
    build verification on a machine with a Docker daemon.
