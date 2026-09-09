@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 ### Added
+- PDF export (`format=pdf`): one page per variant at pixel size (150 dpi) inside the
+  deliverables zip, with page numbers in the manifest.
 - Brand-level rules: confirmed `scale_range` / `min_text_size` / `clear_space` rules carry
   across an owner's projects with the same brand as reviewable proposals when a project is
   uploaded or first planned (`GET /api/brands/{brand}/rules`); unconfirmed proposals never

@@ -1046,10 +1046,11 @@ class ProjectService:
                             quality: int = 90, owner: str | None = LOCAL_OWNER) -> bytes:
         project = self.get_project(project_id, owner)
         fmt = fmt.lower()
-        if fmt not in ("png", "jpeg", "jpg", "webp"):
-            raise ServiceError("format must be png, jpeg or webp", 400)
-        pil_fmt = {"png": "PNG", "jpeg": "JPEG", "jpg": "JPEG", "webp": "WEBP"}[fmt]
-        ext = {"PNG": "png", "JPEG": "jpg", "WEBP": "webp"}[pil_fmt]
+        if fmt not in ("png", "jpeg", "jpg", "webp", "pdf"):
+            raise ServiceError("format must be png, jpeg, webp or pdf", 400)
+        pil_fmt = {"png": "PNG", "jpeg": "JPEG", "jpg": "JPEG", "webp": "WEBP", "pdf": "PDF"}[fmt]
+        ext = {"PNG": "png", "JPEG": "jpg", "WEBP": "webp", "PDF": "pdf"}[pil_fmt]
+        pdf_pages: list[Image.Image] = []
         manifest: dict[str, Any] = {
             "project": project.summary(),
             "format": pil_fmt,
@@ -1073,31 +1074,54 @@ class ProjectService:
                 img = project.variant_image(rec.id)
                 if img is None:
                     continue
+                safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in rec.name)
                 out = io.BytesIO()
-                if pil_fmt == "JPEG":
+                if pil_fmt == "PDF":
+                    # one page per variant at pixel size; the PDF is written once at the end
+                    page = img.convert("RGB")
+                    pdf_pages.append(page)
+                    page.save(out, format="PNG", optimize=True)  # hashed content of the page
+                    fname = "deliverables.pdf"
+                elif pil_fmt == "JPEG":
                     img.convert("RGB").save(out, format="JPEG", quality=quality, optimize=True)
+                    fname = f"{safe}_{rec.width}x{rec.height}.{ext}"
+                    zf.writestr(fname, out.getvalue())
                 elif pil_fmt == "WEBP":
                     img.save(out, format="WEBP", quality=quality)
+                    fname = f"{safe}_{rec.width}x{rec.height}.{ext}"
+                    zf.writestr(fname, out.getvalue())
                 else:
                     img.save(out, format="PNG", optimize=True)
-                safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in rec.name)
-                fname = f"{safe}_{rec.width}x{rec.height}.{ext}"
-                zf.writestr(fname, out.getvalue())
+                    fname = f"{safe}_{rec.width}x{rec.height}.{ext}"
+                    zf.writestr(fname, out.getvalue())
                 detail = project.variant_detail(rec.id) or {}
                 zf.writestr(
                     f"reports/{safe}_{rec.width}x{rec.height}.json", json.dumps(detail, indent=2)
                 )
-                manifest["variants"].append(
-                    {
-                        "id": rec.id,
-                        "file": fname,
-                        "width": rec.width,
-                        "height": rec.height,
-                        "verdict": rec.verdict,
-                        "approval": rec.approval,
-                        "sha256": hashlib.sha256(out.getvalue()).hexdigest(),
-                    }
+                entry = {
+                    "id": rec.id,
+                    "file": fname,
+                    "width": rec.width,
+                    "height": rec.height,
+                    "verdict": rec.verdict,
+                    "approval": rec.approval,
+                    "sha256": hashlib.sha256(out.getvalue()).hexdigest(),
+                }
+                if pil_fmt == "PDF":
+                    entry["page"] = len(pdf_pages)
+                manifest["variants"].append(entry)
+            if pil_fmt == "PDF" and pdf_pages:
+                pdf = io.BytesIO()
+                pdf_pages[0].save(
+                    pdf, format="PDF", save_all=True, append_images=pdf_pages[1:], resolution=150
                 )
+                zf.writestr("deliverables.pdf", pdf.getvalue())
+                manifest["pdf"] = {
+                    "file": "deliverables.pdf",
+                    "pages": len(pdf_pages),
+                    "resolution_dpi": 150,
+                    "sha256": hashlib.sha256(pdf.getvalue()).hexdigest(),
+                }
             zf.writestr("manifest.json", json.dumps(manifest, indent=2))
         self.events.record(
             owner or LOCAL_OWNER, "export", project_id=project_id, fmt=pil_fmt, only=only,

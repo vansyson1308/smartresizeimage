@@ -31,7 +31,7 @@ Separate tracks: **Engineering**, **Quality**, **Operations**, **Competitive**, 
 | Project persistence / reopen / round trip (history, undo, restore) | VERIFIED_LOCAL | `design/project.py`; API test exports project zip, re-imports, edits, regenerates. |
 | Typed API + jobs (progress, cancel, idempotency, partial completion) | VERIFIED_LOCAL | `api/service.py`, `api/jobs.py`; `test_api.py` (8 tests). Jobs are in-process; restart marks running variants failed. |
 | Web review/edit UI (select, move, resize, nudge, text/style edit, rules, approve/reject, undo, export) | VERIFIED_LOCAL | Playwright journey against the real server (see `RESUME.md`); no console errors; 900px layout without horizontal scroll. |
-| Exports: PNG/JPEG/WebP zip with manifest + quality reports + font disclosure; editable project zip | VERIFIED_LOCAL | `service.export_deliverables`, `export_project`; PDF export PLANNED. |
+| Exports: PNG/JPEG/WebP zip with manifest + quality reports + font disclosure; multi-page PDF (one variant per page, 150 dpi) in the same zip; editable project zip | VERIFIED_LOCAL | `service.export_deliverables` (`format=pdf`), `export_project`; API test counts PDF pages. Print-ready CMYK/bleed PLANNED. |
 | Copy overrides per run and per variant; locale tag; verbatim (protected) copy | VERIFIED_LOCAL | `VariantBrief.text_overrides`; protected text cannot be overridden from the UI. Locale-aware fitting rules PLANNED. |
 | Channel presets with recorded provenance (`verified=false`) | IMPLEMENTED | `api/presets.py`; no platform policy claimed. |
 | Compose master from separated assets (blank canvas + add text/image) | VERIFIED_LOCAL | `POST /api/projects/blank`, `POST /api/projects/{id}/elements`; exercised by the browser journey. |

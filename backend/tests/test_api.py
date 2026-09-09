@@ -661,3 +661,36 @@ def test_brand_rules_carry_across_projects_of_the_same_owner(
     job = client.app.state.service.jobs.wait(res.json()["job"]["id"], timeout=300)
     assert job.status == "done"
     assert client.get(f"/api/projects/{pid_d}").json()["document"]["constraints"] == []
+
+
+def test_pdf_export_has_one_page_per_variant(client: TestClient, tmp_path: Path) -> None:
+    import re
+
+    payload = _layered_project(client, tmp_path)
+    pid = payload["project"]["id"]
+    res = client.post(
+        f"/api/projects/{pid}/variants",
+        json={
+            "targets": [
+                {"width": 600, "height": 314, "name": "Wide"},
+                {"width": 300, "height": 300, "name": "Square"},
+            ]
+        },
+    )
+    assert res.status_code == 202, res.text
+    job = client.app.state.service.jobs.wait(res.json()["job"]["id"], timeout=300)
+    assert job.status == "done", job.to_dict()
+    res = client.get(f"/api/projects/{pid}/export?format=pdf&only=all")
+    assert res.status_code == 200, res.text
+    with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
+        names = zf.namelist()
+        assert "deliverables.pdf" in names and "manifest.json" in names
+        pdf = zf.read("deliverables.pdf")
+        manifest = json.loads(zf.read("manifest.json"))
+    assert pdf.startswith(b"%PDF")
+    pages = len(re.findall(rb"/Type\s*/Page[^s]", pdf))
+    assert pages == 2 == manifest["pdf"]["pages"]
+    assert [v["page"] for v in manifest["variants"]] == [1, 2]
+    assert all(v["file"] == "deliverables.pdf" for v in manifest["variants"])
+    assert len(manifest["variants"]) == 2 and manifest["format"] == "PDF"
+    assert client.get(f"/api/projects/{pid}/export?format=gif").status_code == 400
