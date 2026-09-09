@@ -40,20 +40,21 @@ needed; launch Chromium with `executable_path="/opt/pw-browsers/chromium"` in th
 
 ## Next executable task
 
-Two small, independent items, then a consolidation pass:
+The research track (H1–H5) and the local commercial layer are in place; what remains needs
+things this environment does not have (real designs, human reviewers, provider credentials,
+a Docker daemon). Next executable items, in order:
 
-1. Event-log retention: `EventLog.trim(owner, days)` keeping the last N days of
-   `data/events/<owner>.jsonl`, called from `ProjectService.purge_stale_projects` with the
-   same `AUTOBANNER_RETENTION_DAYS`; test in `test_ownership_and_jobs.py`; note in
-   `docs/OPERATIONS.md`.
-2. Per-element text plates (H3 residual): in `generative/text_plate.py`, cluster boxes per
-   element instead of per stack when `TextPlateConfig.per_element` is set, and use that
-   mode for reference-plan revisions so a longer CTA on a busy background stays inside its
-   own padded box; re-run `run_local_edits.py` and update the H3 entry in `EXPERIMENTS.md`.
-3. Consolidation: re-run the browser journey and all three measurement tools on the final
-   head, refresh `CAPABILITIES.md` statuses and the PR description, and record the release
-   criteria check in `STATE.md` (what is VERIFIED_LOCAL vs BLOCKED_EXTERNAL: real corpus,
-   human calibration, provider credentials, Docker daemon).
+1. Brand-level rule carry-over (H5 follow-up): projects share `meta.brand`; add
+   `GET /api/brands/{brand}/rules` that unions confirmed correction rules and learned
+   families across an owner's projects with that brand (keyed by role), and let
+   `request_variants` apply them as proposals for a new project of the same brand. Test:
+   two projects, rule confirmed in the first, proposed in the second.
+2. Docker build verification: on a machine with a daemon run `docker compose build && docker
+   compose up`, hit `/api/health`, run the browser journey against port 8000, and record the
+   image size and cold-start time in `docs/OPERATIONS.md`.
+3. When real designs or reviewers become available: run the pilot instruments
+   (`/api/pilot/summary`) on a real campaign, calibrate the verdict against reviewer decisions,
+   and replace the synthetic numbers in `EVALUATION.md` with measured ones.
 
 ## Files to know
 

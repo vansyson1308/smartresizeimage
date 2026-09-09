@@ -134,9 +134,10 @@ inputs only. Numbers are synthetic-fixture engineering results, not customer val
 
 - H3 local edits shipped and measured (`design/variant.py` `reference`, `keep_layout` on
   regenerate, detail-view checkbox; `results/local_edits_2026-09-09.md`): a copy, asset,
-  style or hidden-element revision keeps every other element's pixels in 174/180 corpus
-  revisions (156/180 before) and in all five regression-set edits; copy that no longer fits
-  falls back to a fresh plan with a `layout_change` warning. Test suite: 253 tests.
+  style or hidden-element revision keeps every other element's pixels in 180/180 corpus
+  revisions with pinned text plates (174/180 before pinning, 156/180 when re-planning) and
+  in all five regression-set edits; copy that no longer fits falls back to a fresh plan with
+  a `layout_change` warning.
 
 - H5 rules from correction history shipped and measured (`design/corrections.py`,
   rejection snapshots per project, `GET .../learned` corrections + unresolved,
@@ -171,5 +172,4 @@ inputs only. Numbers are synthetic-fixture engineering results, not customer val
    rate limits and job records (per process today); billing remains out of scope without
    authorization.
 3. Research follow-ups: brand-level rule carry-over across projects (H5), H1 with more than
-   one example per orientation and with real designer examples, per-element text plates so
-   a revision on a busy background stays local (H3 residual).
+   one example per orientation and with real designer examples.

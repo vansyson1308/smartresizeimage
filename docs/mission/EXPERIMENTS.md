@@ -8,7 +8,7 @@ lands behind flags with a rollback path.
 |---|---|---|---|---|---|
 | H1 | A few approved variants yield reusable adaptation rules with less setup than manual responsive templates. | PosterO (example-conditioned layouts), CHILI/Celtra template rules | ABLATED, ADOPTED (proxy): one approved example per orientation lifts agreement with the designer's plan on held-out sizes 0.24 → 0.85 and cuts held-out sizes needing a re-layout 60/60 → 6/60 (−90%) at +3.7 s setup per case; human correction counts still unmeasured (below) | CPU only | Adopt if held-out sizes need >= 30% fewer corrections vs one-master, counting import/match/approve time. |
 | H2 | Joint planning across a variant family improves consistency and reduces corrections vs independent resizing. | DesignAsCode retargeting, iPoster constraints | ABLATED, ADOPTED: joint family choice cuts family-consistency issues 9 → 3 runs at equal acceptance and compute (below); correction-time effect unmeasured (no humans) | CPU only | Adopt if family-consistency errors drop without lowering acceptance; equal compute/review budget. |
-| H3 | A local-edit representation reduces unintended changes on campaign revision. | Layered editing (Qwen-Image-Layered) | ABLATED, ADOPTED: regenerating with the previous plan as reference gives zero out-of-scope pixel change on the 5-edit regression set and on 174/180 corpus revisions (156/180 when re-planning); residual = stack plates on busy backgrounds (below) | CPU only | Adopt if pixel diff outside edited scope is zero on the regression set. |
+| H3 | A local-edit representation reduces unintended changes on campaign revision. | Layered editing (Qwen-Image-Layered) | ABLATED, ADOPTED: regenerating with the previous plan and pinned text-plate rectangles as reference gives zero out-of-scope pixel change on the 5-edit regression set and on 180/180 corpus revisions (156/180 when re-planning; 174/180 before plate pinning) | CPU only | Adopt if pixel diff outside edited scope is zero on the regression set. |
 | H4 | Calibrated verification + targeted repair improves throughput vs missed critical errors. | Verification-driven repair | ABLATED (below): repair helps a weak planner, adds nothing to the constraint planner on this corpus; calibration vs humans still unmeasured | CPU only | Measure missed-error rate on held-out set before/after repair; report sample size. |
 | H5 | Retrieval from approved correction history reduces recurring mistakes per brand without training. | RAG-style retrieval | ABLATED (rule-based reviewer), ADOPTED as a reviewable mechanism: rules derived from rejection + approved fix cut repeat rejections 28 → 0 over 14 later campaigns (below); effect with human reviewers unmeasured | CPU only | Adopt if repeat-correction rate drops on the same brand's held-out campaigns. |
 
@@ -159,3 +159,11 @@ lands behind flags with a rollback path.
   In the product, rules are per project and applied only after a person adds them
   (`POST .../learned/corrections/{i}/apply`); brand-level carry-over across projects is
   the next step.
+- 2026-09-09 — H3 follow-up, pinned text plates (`results/local_edits_pinned_plates_2026-09-09.md`;
+  same protocol, run from the working tree committed as `e28d931`). The six residual
+  revisions were per-stack text plates growing with a wider CTA on busy backgrounds. A
+  variant's plan now records its plate rectangles (`text_plate_rects`); a reference-plan
+  revision pins them, growing a rectangle only if the edited box sticks out. Result:
+  reference 180/180 revisions with zero out-of-scope change (mean 0.0000, no element
+  moved); replan unchanged at 156/180. The busy-background case is covered by
+  `test_local_edits.py`.

@@ -94,11 +94,12 @@ with slot expansion (designer ceiling 0.99); held-out sizes that would need a re
 from 60/60 to 6/60. Agreement is IoU of planned boxes, a proxy for corrections, not a human
 measurement.
 
-Local edits (H3, `results/local_edits_2026-09-09.md`, 15 cases × 3 sizes × 4 revisions):
+Local edits (H3, `results/local_edits_2026-09-09.md` then
+`results/local_edits_pinned_plates_2026-09-09.md`, 15 cases × 3 sizes × 4 revisions):
 regenerating with the previous plan as reference leaves pixels outside the edited element's
-padded box unchanged in 174/180 revisions (156/180 when re-planning; 21 of those move other
-text). The residual is the per-stack text plate on busy backgrounds. Pixel locality is not a
-quality judgement; the verdict pipeline still runs on every revision.
+padded box unchanged in 174/180 revisions, and in 180/180 once the previous render's text-plate
+rectangles are pinned (156/180 when re-planning; 21 of those move other text). Pixel locality
+is not a quality judgement; the verdict pipeline still runs on every revision.
 
 Correction rules (H5, `results/corrections_2026-09-09.md`, rule-based reviewer, 15 campaigns ×
 3 sizes): carrying rules derived from rejection + approved fix into later campaigns cuts
