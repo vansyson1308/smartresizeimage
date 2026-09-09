@@ -36,7 +36,16 @@ when real designs arrive; synthetic cases are engineering fixtures, not customer
 python backend/tools/generate_bench_fixtures.py --cases 12 --seed 42
 python backend/tools/run_layout_bench.py --mode both  --seed 42   # baseline + phase21
 python backend/tools/run_layout_bench.py --mode phase3 --seed 42  # phase3, production n_candidates
+python backend/tools/run_layout_bench.py --mode design --seed 42  # document pipeline
+python backend/tools/run_ablations.py --outdir /tmp/ablations     # planner/repair/plates ablations
 ```
+
+## Splits
+
+Cases 1–9 are the tuning split (thresholds and planner families were adjusted while looking
+at them). Cases 10–12 are the frozen holdout: scenario types repeat (hero/long text/large
+logo) but their exact geometry and copy were never inspected during tuning. A real corpus
+split by brand/campaign replaces this once licensed designs exist.
 
 Outputs (not committed): `<outdir>/report.md`, `<outdir>/summary.json` (`run_config` + per-run
 records with verdict, issues, legacy_v1, elapsed_s, config flags).
