@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from PIL import Image as PILImage
 
@@ -94,11 +95,26 @@ class LayoutResult:
 
 @dataclass
 class CompositionResult:
-    """Final composition result."""
+    """Final composition result.
+
+    ``gates_passed`` is ``None`` until a quality evaluation has actually run;
+    it is ``True`` only when every implemented check accepted the delivered
+    output *and* no fallback replaced the requested pipeline. ``verdict``
+    describes the delivered image alone (a fallback can still be accepted).
+    ``quality`` holds the full ``QualityReport`` (contract v2) when evaluated.
+    """
     image: PILImage.Image
     layout_results: list[LayoutResult]
     warnings: list[str] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
-    gates_passed: bool = True
+    gates_passed: bool | None = None
     fail_reasons: list[str] = field(default_factory=list)
     used_fallback: bool = False
+    quality: Any | None = None
+
+    @property
+    def verdict(self) -> str:
+        """Human-facing outcome: accepted | needs_review | failed | not_evaluated."""
+        if self.quality is not None:
+            return str(self.quality.verdict.value)
+        return "not_evaluated"

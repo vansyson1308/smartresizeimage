@@ -170,4 +170,8 @@ def test_phase3_redesign_flat_with_manual_anchors_debug_fields() -> None:
         "best_any_candidate",
         "phase3_last_resort",
     }
-    assert out.metadata["text_plate"]["applied"] is True
+    # Phase 3 regenerates the background; it must not claim a text plate was applied.
+    assert out.metadata["text_plate"]["applied"] is False
+    assert out.metadata["text_plate"]["reason"] == "phase3_regenerates_background"
+    assert redesign["selection_status"] in {"valid", "degraded", "last_resort"}
+    assert out.used_fallback is (redesign["selection_status"] != "valid")

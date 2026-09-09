@@ -7,6 +7,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
+from ..constants import BACKGROUND_ROLES
 from ..enums import ElementRole
 from ..models import BoundingBox, LayoutResult
 from .profiles import LayoutProfile
@@ -38,12 +39,20 @@ def solve_layout(
         for r in placements
     ]
 
+    # Background/overlay elements cover the whole canvas by design; they must
+    # never take part in collision resolution, grid snapping or clamping.
+    content = [
+        r
+        for r in results
+        if role_by_id.get(r.element_id, ElementRole.UNKNOWN) not in BACKGROUND_ROLES
+    ]
+
     for _ in range(iterations):
         # 1) push apart overlaps by role priority
-        for i in range(len(results)):
-            for j in range(i + 1, len(results)):
-                a = results[i]
-                b = results[j]
+        for i in range(len(content)):
+            for j in range(i + 1, len(content)):
+                a = content[i]
+                b = content[j]
                 if not a.visible or not b.visible:
                     continue
 
@@ -77,7 +86,7 @@ def solve_layout(
                 b.new_bbox = ib
 
         # 2) snap to grid
-        for r in results:
+        for r in content:
             if not r.visible:
                 continue
             b = r.new_bbox
@@ -87,29 +96,46 @@ def solve_layout(
             b.y = snapped_y
             r.new_bbox = b
 
-        # 3) enforce vertical rhythm (sorted by y)
-        ordered = sorted([r for r in results if r.visible], key=lambda rr: rr.new_bbox.y)
+        # 3) enforce vertical rhythm between elements that share a column.
+        #    Elements placed side by side (e.g. text left, hero right) must not
+        #    be forced into a single vertical stack.
+        ordered = sorted([r for r in content if r.visible], key=lambda rr: rr.new_bbox.y)
         for idx in range(1, len(ordered)):
-            prev = ordered[idx - 1].new_bbox
             cur = ordered[idx].new_bbox
-            min_y = prev.y2 + min_gap
+            min_y = cur.y
+            for prev_r in ordered[:idx]:
+                prev = prev_r.new_bbox
+                if prev.x < cur.x2 and cur.x < prev.x2:
+                    min_y = max(min_y, prev.y2 + min_gap)
             if cur.y < min_y:
                 cur.y = min_y
 
         # 4) hard clamp to margins/safe area
-        for r in results:
+        for r in content:
             if not r.visible:
                 continue
             b = r.new_bbox
             r.new_bbox = clamp_bbox_to_margins(b, (margin_x, margin_y), width, height)
 
-    overlap = total_overlap_area(results)
+    overlap = total_overlap_area(results, role_by_id)
     return results, {"overlap_area": float(overlap)}
 
 
-def total_overlap_area(placements: list[LayoutResult]) -> int:
-    """Compute total pairwise overlap area for visible placements."""
+def total_overlap_area(
+    placements: list[LayoutResult],
+    role_by_id: dict[str, ElementRole] | None = None,
+) -> int:
+    """Compute total pairwise overlap area for visible content placements.
+
+    When ``role_by_id`` is given, background/overlay elements are ignored.
+    """
     area = 0
+    if role_by_id is not None:
+        placements = [
+            p
+            for p in placements
+            if role_by_id.get(p.element_id, ElementRole.UNKNOWN) not in BACKGROUND_ROLES
+        ]
     for i in range(len(placements)):
         for j in range(i + 1, len(placements)):
             a = placements[i]

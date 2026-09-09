@@ -30,6 +30,7 @@ class Anchor:
     source_bbox: BoundingBox
     target_bbox: BoundingBox
     protected: bool
+    z_index: int = 0
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,7 @@ def extract_anchors(
                 source_bbox=elem.bbox,
                 target_bbox=lr.new_bbox,
                 protected=protected,
+                z_index=int(elem.z_index),
             )
         )
 
@@ -84,7 +86,7 @@ def extract_anchors_from_boxes(
     layout_by_id = {r.element_id: r for r in target_layout}
     anchors: list[Anchor] = []
 
-    for item in boxes:
+    for order, item in enumerate(boxes):
         eid = str(item.get("id", "anchor"))
         role_raw = str(item.get("role", ElementRole.LOGO.value))
         valid_roles = {r.value for r in ElementRole}
@@ -123,6 +125,7 @@ def extract_anchors_from_boxes(
                 source_bbox=src,
                 target_bbox=lr.new_bbox,
                 protected=True,
+                z_index=int(item.get("z_index", order)),
             )
         )
 

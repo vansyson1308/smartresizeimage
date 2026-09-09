@@ -169,7 +169,7 @@ class LayoutEngine:
             ],
         }
 
-        overlap_ratio = total_overlap_area(best_results) / canvas_area
+        overlap_ratio = total_overlap_area(best_results, role_by_id) / canvas_area
         if best_outside_margin_count > 0:
             logger.warning("Adaptive scoring fallback: hard margin violations after repair")
             self.last_layout_debug["fallback_used"] = True
@@ -216,22 +216,47 @@ class LayoutEngine:
 
         zone_assignments = self._assign_to_zones(content_elements, template)
 
-        for elem_id, zone in zone_assignments.items():
-            elem = next((e for e in content_elements if e.id == elem_id), None)
-            if elem is None:
+        # Group members per zone, preserving priority order, so that several
+        # elements sharing a zone are stacked instead of centred on top of
+        # each other.
+        members_by_zone: dict[str, list[DesignElement]] = {}
+        for elem in content_elements:
+            zone = zone_assignments.get(elem.id)
+            if zone is None:
                 continue
+            members_by_zone.setdefault(zone["id"], []).append(elem)
 
+        zones_by_id = {z["id"]: z for z in template["zones"]}
+        gap = max(4, int(profile.baseline_spacing_pct * target_h))
+        for zone_id, members in members_by_zone.items():
+            zone = zones_by_id[zone_id]
             zone_x = int(zone["x"] * target_w)
             zone_y = int(zone["y"] * target_h)
             zone_w = int(zone["w"] * target_w)
             zone_h = int(zone["h"] * target_h)
 
-            if self._is_text_element(elem):
-                result = self._layout_text_element(elem, profile, zone_x, zone_y, zone_w, zone_h)
-            else:
-                result = self._layout_visual_element(elem, zone_x, zone_y, zone_w, zone_h)
+            n = len(members)
+            slot_h = max(1, (zone_h - gap * (n - 1)) // n) if n > 1 else zone_h
+            placed: list[LayoutResult] = []
+            for elem in members:
+                if self._is_text_element(elem):
+                    result = self._layout_text_element(
+                        elem, profile, zone_x, zone_y, zone_w, slot_h, target_w
+                    )
+                else:
+                    result = self._layout_visual_element(elem, zone_x, zone_y, zone_w, slot_h)
+                placed.append(result)
 
-            results.append(result)
+            if n > 1:
+                total_h = sum(r.new_bbox.height for r in placed) + gap * (n - 1)
+                y = zone_y + max(0, (zone_h - total_h) // 2)
+                for r in placed:
+                    b = r.new_bbox
+                    b.x = zone_x + (zone_w - b.width) // 2
+                    b.y = y
+                    y += b.height + gap
+
+            results.extend(placed)
 
         assigned_ids = set(zone_assignments.keys())
         for elem in content_elements:
@@ -267,6 +292,7 @@ class LayoutEngine:
         zone_y: int,
         zone_w: int,
         zone_h: int,
+        target_w: int | None = None,
     ) -> LayoutResult:
         text = elem.text_content or elem.name
         font_family = None
@@ -276,7 +302,16 @@ class LayoutEngine:
         min_font, max_font, max_lines = self._typography_bounds_for_role(elem.role)
 
         zone_w_pos = zone_w if zone_w > 0 else 1
-        width_cap = int(min(zone_w, profile.text_block_max_width_pct * zone_w_pos))
+        canvas_w = target_w if target_w else zone_w_pos
+        width_cap = int(min(zone_w_pos, profile.text_block_max_width_pct * canvas_w))
+
+        if elem.image is not None and elem.bbox.width > 0 and elem.bbox.height > 0:
+            # Raster text cannot be re-wrapped: scale it uniformly so glyphs are
+            # never distorted, then report the estimated glyph size honestly.
+            return self._layout_raster_text_element(
+                elem, zone_x, zone_y, zone_w, zone_h, width_cap, min_font, max_font
+            )
+
         fit = fit_text_block(
             text=text,
             font_family=font_family,
@@ -320,6 +355,54 @@ class LayoutEngine:
         )
 
         scale = new_h / max(1, elem.bbox.height)
+        return LayoutResult(
+            element_id=elem.id,
+            new_bbox=BoundingBox(new_x, new_y, new_w, new_h),
+            scale_factor=scale,
+            visible=True,
+        )
+
+    def _layout_raster_text_element(
+        self,
+        elem: DesignElement,
+        zone_x: int,
+        zone_y: int,
+        zone_w: int,
+        zone_h: int,
+        width_cap: int,
+        min_font: int,
+        max_font: int,
+    ) -> LayoutResult:
+        src_w, src_h = elem.bbox.width, elem.bbox.height
+        n_lines = max(1, (elem.text_content or "").count("\n") + 1)
+        # Approximate glyph height of the source raster (cap height ~ 0.7 of line box).
+        src_font_px = max(1.0, src_h / n_lines * 0.7)
+
+        scale = min(width_cap / src_w, max(1, zone_h) / src_h)
+        scale = min(scale, max_font / src_font_px)
+        scale = max(scale, min(elem.min_scale, min_font / src_font_px))
+        scale = min(scale, elem.max_scale)
+
+        new_w = max(1, int(src_w * scale))
+        new_h = max(1, int(src_h * scale))
+        est_font = int(src_font_px * scale)
+        overflow = new_w > zone_w or new_h > zone_h or est_font < min_font
+
+        new_x = zone_x + (zone_w - new_w) // 2
+        new_y = zone_y + (zone_h - min(new_h, zone_h)) // 2
+
+        self._typography_debug.append(
+            {
+                "element_id": elem.id,
+                "role": elem.role.value,
+                "font_px": est_font,
+                "unit": "px",
+                "lines": n_lines,
+                "overflow": bool(overflow),
+                "raster": True,
+                "estimated": True,
+            }
+        )
         return LayoutResult(
             element_id=elem.id,
             new_bbox=BoundingBox(new_x, new_y, new_w, new_h),
@@ -444,6 +527,15 @@ class LayoutEngine:
                 if elem.role in zone["roles"]:
                     best_zone = zone
                     break
+
+            if best_zone is None:
+                # Every matching zone is full: overflow into the least occupied
+                # matching zone. Members are stacked, so a third element is
+                # still laid out deliberately instead of being dropped onto raw
+                # source coordinates where it collides with everything.
+                matching = [z for z in zones if elem.role in z["roles"]]
+                if matching:
+                    best_zone = min(matching, key=lambda z: zone_occupancy[z["id"]])
 
             if best_zone is not None:
                 assignments[elem.id] = best_zone

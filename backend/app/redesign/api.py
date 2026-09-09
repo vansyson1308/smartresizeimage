@@ -41,12 +41,20 @@ def run_target_first_redesign(
     compositor = CompositionEngine(use_ai_inpainting=False)
     base = compositor.compose(elements, layout_results, source_size, target_size)
     source_bg = base.image.convert("RGBA")
+    # Phase 3 regenerates the background around the anchors; the base plate (if
+    # any) is painted over. Report what actually happened instead of claiming a
+    # plate was applied.
     base_text_plate_meta = dict(base.metadata.get("text_plate", {}))
-    # Phase 3 composes fresh background around immutable text anchors;
-    # emit text-safe metadata as applied to satisfy busy-background gate.
-    base_text_plate_meta["applied"] = True
+    base_text_plate_meta.update(
+        {
+            "applied": False,
+            "plates": 0,
+            "reason": "phase3_regenerates_background",
+            "base_plate_applied": bool(base.metadata.get("text_plate", {}).get("applied", False)),
+            "source": "phase3_target_first",
+        }
+    )
     base_text_plate_meta.setdefault("busy_threshold", 0.2)
-    base_text_plate_meta.setdefault("source", "phase3_target_first")
 
     if manual_anchors:
         src_ref = _pick_source_background(elements, source_size)
@@ -103,18 +111,32 @@ def run_target_first_redesign(
         palette_stats=dict(picked.selected_meta.get("palette_stats", {})),
     )
 
-    return CompositionResult(
+    warnings: list[str] = []
+    fail_reasons: list[str] = []
+    used_fallback = picked.status != "valid"
+    if picked.status == "degraded":
+        warnings.append("All Phase 3 candidates failed anchor integrity; best-effort output.")
+        fail_reasons.append("phase3_all_candidates_rejected")
+    elif picked.status == "last_resort":
+        warnings.append("Phase 3 produced no usable candidate; source background stretched.")
+        fail_reasons.append("phase3_last_resort")
+
+    result = CompositionResult(
         image=picked.image.convert("RGB"),
         layout_results=layout_results,
-        warnings=[],
+        warnings=warnings,
         metadata={
-            "redesign": asdict(debug),
+            "redesign": {**asdict(debug), "selection_status": picked.status},
             "text_plate": base_text_plate_meta,
             "protected_ratio": float(np.mean(anchors_bundle.protected_mask))
             if anchors_bundle.protected_mask.size
             else 0.0,
         },
+        gates_passed=None,
+        fail_reasons=fail_reasons,
+        used_fallback=used_fallback,
     )
+    return result
 
 
 def _pick_source_background(

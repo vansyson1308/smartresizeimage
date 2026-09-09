@@ -61,3 +61,8 @@ class Config:
     # Optional decor synthesis (Phase 2 PR-D)
     GENERATIVE_DECOR_POLICY = "OFF"  # OFF | BG_PLUS_DECOR
     GENERATIVE_DECOR_SEED = 123
+
+    # Phase 3 target-first redesign. Benchmarks must use the same default as
+    # production unless they explicitly record an override.
+    PHASE3_N_CANDIDATES = 8
+    PHASE3_SEED = 42

@@ -120,21 +120,26 @@ class SemanticClassifier:
         """
         # Skip groups
         if element.layer_type == "group":
+            element.effects["_role_source"] = "group"
             return ElementRole.GROUP
 
         # Step 1: Rule-based (fast)
         rule_role = self._classify_by_rules(element)
         if rule_role != ElementRole.UNKNOWN:
+            element.effects["_role_source"] = "rule"
             return rule_role
 
         # Step 2: AI classification if available
         if self._use_ai and element.image:
             ai_role = self._classify_by_ai(element)
             if ai_role != ElementRole.UNKNOWN:
+                element.effects["_role_source"] = "ai"
                 return ai_role
 
         # Step 3: Fallback heuristics
-        return self._classify_by_heuristics(element, canvas_size)
+        role = self._classify_by_heuristics(element, canvas_size)
+        element.effects["_role_source"] = "heuristic" if role != ElementRole.UNKNOWN else "none"
+        return role
 
     def _classify_by_rules(self, element: DesignElement) -> ElementRole:
         """Classify based on naming conventions."""

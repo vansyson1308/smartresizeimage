@@ -5,6 +5,7 @@ from __future__ import annotations
 import atexit
 import contextlib
 import io
+import json
 import logging
 import os
 import sys
@@ -58,9 +59,54 @@ SIZE_PRESETS = {
 }
 
 
+def _use_ai_from_env() -> bool:
+    return os.environ.get("AUTOBANNER_USE_AI", "true").strip().lower() == "true"
+
+
+def _new_session_state() -> dict:
+    """Per-browser-session state. Each session owns its own engine and temp files."""
+    return {"engine": None, "zip_path": None}
+
+
+def _remove_file(path: str | None) -> None:
+    if path:
+        with contextlib.suppress(OSError):
+            os.unlink(path)
+
+
+def _verdict_summary(results: dict) -> str:
+    """Render a concise, designer-facing summary of every variant's verdict."""
+    if not results:
+        return "**Status:** No variants generated"
+    labels = {
+        "accepted": "Accepted",
+        "needs_review": "Needs review",
+        "failed": "Failed",
+        "not_evaluated": "Not checked",
+    }
+    lines = []
+    for name, result in results.items():
+        verdict = result.verdict
+        line = f"- **{name}** — {labels.get(verdict, verdict)}"
+        if result.quality is not None:
+            issues = result.quality.issues()[:3]
+            if issues:
+                line += ": " + "; ".join(i.message for i in issues)
+        lines.append(line)
+    counts = {}
+    for result in results.values():
+        counts[result.verdict] = counts.get(result.verdict, 0) + 1
+    header = ", ".join(f"{labels.get(k, k)}: {v}" for k, v in counts.items())
+    return f"**Status:** {header}\n" + "\n".join(lines)
+
+
 def create_interface() -> object:
-    """Create Gradio interface for ReLayout Pro."""
-    engine = ReLayoutEngine(use_ai=True)
+    """Create Gradio interface for ReLayout Pro.
+
+    The engine is created per browser session (``gr.State``) so concurrent
+    users never share parsed elements, role edits or temp files.
+    """
+    use_ai = _use_ai_from_env()
 
     with gr.Blocks(
         title="ReLayout Pro - Adaptive Re-Composition",
@@ -74,6 +120,8 @@ def create_interface() -> object:
         .element-table { font-size: 12px; }
         """,
     ) as interface:
+        session = gr.State(_new_session_state)
+
         gr.Markdown(
             """
         # ReLayout Pro - Adaptive Re-Composition Engine
@@ -84,7 +132,7 @@ def create_interface() -> object:
         1. **Upload** your design file (PSD, PNG, JPG, WEBP)
         2. **Review** detected elements and their roles (correct if needed)
         3. **Select** target sizes
-        4. **Generate** re-composed versions
+        4. **Generate** re-composed versions and read each variant's verdict
 
         ---
         """
@@ -181,31 +229,38 @@ def create_interface() -> object:
                 status = gr.Markdown("**Status:** Ready")
 
         # Event handlers
-        def analyze_file(uploaded_file: str) -> tuple:
+        def analyze_file(uploaded_file: str, state: dict) -> tuple:
+            state = dict(state or _new_session_state())
             if uploaded_file is None:
-                return None, None, "Please upload a design file"
+                return None, None, "Please upload a design file", state
 
             try:
+                engine = ReLayoutEngine(use_ai=use_ai)
                 analysis = engine.load_file(uploaded_file)
                 preview = engine.get_preview_image()
+                state["engine"] = engine
                 return (
                     analysis,
                     preview,
                     f"Loaded {analysis['total_layers']} layers from {analysis['file']}",
+                    state,
                 )
             except AutoBannerError as e:
-                return None, None, f"Error: {str(e)}"
+                return None, None, f"Error: {str(e)}", state
             except Exception as e:
                 traceback.print_exc()
-                return None, None, f"Unexpected error: {str(e)}"
+                return None, None, f"Unexpected error: {str(e)}", state
 
         analyze_btn.click(
             analyze_file,
-            inputs=[file_input],
-            outputs=[analysis_json, preview_image, status],
+            inputs=[file_input, session],
+            outputs=[analysis_json, preview_image, status, session],
         )
 
-        def update_role(elem_id: str, role: str) -> str:
+        def update_role(elem_id: str, role: str, state: dict) -> str:
+            engine = (state or {}).get("engine")
+            if engine is None:
+                return "Please load a design file first"
             if elem_id and role:
                 success = engine.update_element_role(elem_id, role)
                 if success:
@@ -215,7 +270,7 @@ def create_interface() -> object:
 
         edit_btn.click(
             update_role,
-            inputs=[edit_element_id, edit_role],
+            inputs=[edit_element_id, edit_role, session],
             outputs=[status],
         )
 
@@ -227,13 +282,17 @@ def create_interface() -> object:
             mode: str,
             anchor_preset_selected: str,
             manual_json: str,
+            state: dict,
         ) -> tuple:
-            if not engine.elements:
-                return [], None, "Please load a design file first"
+            state = dict(state or _new_session_state())
+            engine = state.get("engine")
+            if engine is None or not engine.elements:
+                return [], None, "Please load a design file first", state
 
             try:
-                # Clean previous temp files
-                _cleanup_temp_files()
+                # Only this session's previous ZIP is removed.
+                _remove_file(state.get("zip_path"))
+                state["zip_path"] = None
 
                 # Build target sizes list
                 targets = []
@@ -249,7 +308,7 @@ def create_interface() -> object:
                     targets.append((int(cw), int(ch), cname or "Custom"))
 
                 if not targets:
-                    return [], None, "Please select at least one size"
+                    return [], None, "Please select at least one size", state
 
                 manual_anchors = None
                 if anchor_preset_selected == "flat_banner_3anchors" and (
@@ -283,11 +342,9 @@ def create_interface() -> object:
                         },
                     ]
                 elif manual_json and manual_json.strip():
-                    import json
-
                     manual_anchors = json.loads(manual_json)
                     if not isinstance(manual_anchors, list):
-                        return [], None, "manual anchors JSON must be a list"
+                        return [], None, "manual anchors JSON must be a list", state
 
                 # Generate
                 results = engine.batch_relayout(
@@ -299,7 +356,7 @@ def create_interface() -> object:
                 # Prepare gallery
                 gallery_items = []
                 for name, result in results.items():
-                    gallery_items.append((result.image, name))
+                    gallery_items.append((result.image, f"{name} — {result.verdict}"))
 
                 # Create ZIP
                 zip_buffer = io.BytesIO()
@@ -309,6 +366,11 @@ def create_interface() -> object:
                         result.image.save(img_buffer, format="PNG", optimize=True)
                         filename = f"{name.replace(' ', '_')}.png"
                         zf.writestr(filename, img_buffer.getvalue())
+                        if result.quality is not None:
+                            zf.writestr(
+                                f"{name.replace(' ', '_')}.quality.json",
+                                json.dumps(result.quality.to_dict(), indent=2),
+                            )
 
                 # Save ZIP to temp file
                 with tempfile.NamedTemporaryFile(
@@ -316,15 +378,16 @@ def create_interface() -> object:
                 ) as tmp:
                     tmp.write(zip_buffer.getvalue())
                     zip_path = tmp.name
+                    state["zip_path"] = zip_path
                     _temp_files.append(zip_path)
 
-                return gallery_items, zip_path, f"Generated {len(results)} layouts!"
+                return gallery_items, zip_path, _verdict_summary(results), state
 
             except AutoBannerError as e:
-                return [], None, f"Error: {str(e)}"
+                return [], None, f"Error: {str(e)}", state
             except Exception as e:
                 traceback.print_exc()
-                return [], None, f"Unexpected error: {str(e)}"
+                return [], None, f"Unexpected error: {str(e)}", state
 
         generate_btn.click(
             generate_layouts,
@@ -336,8 +399,9 @@ def create_interface() -> object:
                 generation_mode,
                 anchor_preset,
                 manual_anchors_json,
+                session,
             ],
-            outputs=[gallery, download_zip, status],
+            outputs=[gallery, download_zip, status, session],
         )
 
     return interface

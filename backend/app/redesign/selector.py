@@ -13,7 +13,6 @@ from .validators import (
     AnchorIntegrityValidator,
     DecorCutoffValidator,
     HorizonContinuityValidator,
-    OCRTextValidator,
     PaletteDistanceValidator,
     SeamArtifactHeuristic,
 )
@@ -36,11 +35,15 @@ class SelectionResult:
     selected_reason: str
     candidates: list[CandidateRecord]
     selected_meta: dict[str, object]
+    # "valid": a candidate passed the hard anchor-integrity check.
+    # "degraded": every candidate failed hard checks; best scoring one returned.
+    # "last_resort": nothing usable was generated; source background stretched.
+    status: str = "valid"
 
 
 def _compose_anchors(base: Image.Image, anchors: list[Anchor]) -> Image.Image:
     out = base.convert("RGBA")
-    for a in anchors:
+    for a in sorted(anchors, key=lambda an: an.z_index):
         target = a.image.resize((a.target_bbox.width, a.target_bbox.height))
         out.alpha_composite(target, dest=(a.target_bbox.x, a.target_bbox.y))
     return out
@@ -56,7 +59,6 @@ def select_best_candidate(
     seed: int = 42,
 ) -> SelectionResult:
     integrity = AnchorIntegrityValidator()
-    ocr = OCRTextValidator()
     seam = SeamArtifactHeuristic()
     palette = PaletteDistanceValidator()
     decor = DecorCutoffValidator()
@@ -94,7 +96,6 @@ def select_best_candidate(
             )
             continue
 
-        _ = ocr.validate(cand, anchors)
         seam_v = seam.validate(cand, plan.fill_mask)
         pal_v = palette.validate(cand, source_background, plan.fill_mask)
         decor_v = decor.validate(gen_meta.get("decor_stats", {}))
@@ -171,10 +172,15 @@ def select_best_candidate(
                 "best_any_candidate",
                 records,
                 selected_meta={},
+                status="degraded",
             )
         fallback = _compose_anchors(
             source_background.resize(target_size).convert("RGBA"), anchors
         )
-        return SelectionResult(fallback, 0, "phase3_last_resort", records, selected_meta={})
+        return SelectionResult(
+            fallback, 0, "phase3_last_resort", records, selected_meta={}, status="last_resort"
+        )
 
-    return SelectionResult(best_img, best_id, best_reason, records, selected_meta=best_meta)
+    return SelectionResult(
+        best_img, best_id, best_reason, records, selected_meta=best_meta, status="valid"
+    )

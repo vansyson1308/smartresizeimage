@@ -153,11 +153,24 @@ def _build_role_mask(
 
 def _extract_text_boxes(image: Image.Image) -> list[tuple[int, int, int, int]]:
     try:
+        import os
+
         import pytesseract  # type: ignore
 
+        os.environ.setdefault("OMP_THREAD_LIMIT", "1")
+        rgb = image.convert("RGB")
+        scale = 1.0
+        longest = max(rgb.size)
+        if longest > 1200:
+            scale = 1200 / longest
+            rgb = rgb.resize(
+                (max(1, int(rgb.width * scale)), max(1, int(rgb.height * scale))),
+                Image.Resampling.LANCZOS,
+            )
         data = pytesseract.image_to_data(
-            image.convert("RGB"),
+            rgb,
             output_type=pytesseract.Output.DICT,
+            timeout=20.0,
         )
     except Exception as exc:  # noqa: BLE001
         logger.info("OCR extractor unavailable for gates: %s", exc)
@@ -172,10 +185,10 @@ def _extract_text_boxes(image: Image.Image) -> list[tuple[int, int, int, int]]:
             continue
         boxes.append(
             (
-                int(data["left"][i]),
-                int(data["top"][i]),
-                int(data["width"][i]),
-                int(data["height"][i]),
+                int(data["left"][i] / scale),
+                int(data["top"][i] / scale),
+                int(data["width"][i] / scale),
+                int(data["height"][i] / scale),
             )
         )
 
