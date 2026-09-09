@@ -70,6 +70,19 @@ def test_hard_to_read_cta_becomes_a_scaled_minimum_text_size(tmp_path) -> None:
     assert _min_text_px_constraint([c], "cta") == 28
 
 
+def test_approval_in_the_same_second_as_the_rejection_still_pairs(tmp_path) -> None:
+    """Timestamps have second precision; a fast reject -> fix -> approve must not be lost."""
+    doc, _ = _doc(tmp_path)
+    ts = "2026-09-09T10:00:00+00:00"
+    rej = _rejection("logo too small", _placements(logo=(50, 50, 90, 40)), ts=ts)
+    approved = _approved(_placements(logo=(50, 50, 180, 80)), ts=ts)
+    proposals, unresolved = derive_corrections(doc, [rej], [approved])
+    assert unresolved == [] and [p.kind for p in proposals] == ["scale_range"]
+    earlier = _approved(_placements(logo=(50, 50, 180, 80)), ts="2026-09-09T09:59:59+00:00")
+    proposals, unresolved = derive_corrections(doc, [rej], [earlier])
+    assert proposals == [] and unresolved[0].approved_variant is None
+
+
 def test_overlap_reason_becomes_clear_space(tmp_path) -> None:
     doc, _ = _doc(tmp_path)
     rej = _rejection(

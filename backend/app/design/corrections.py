@@ -190,7 +190,9 @@ def derive_corrections(
 
     ``approved`` holds ``(variant_record_dict, plan_dict)`` for approved, finished
     variants. A rejection pairs with the earliest approved variant of the same size
-    whose ``updated_at`` is later than the rejection.
+    whose ``updated_at`` is not earlier than the rejection (timestamps have second
+    precision, and a variant that is approved is by definition no longer rejected,
+    so an equal stamp still means "approved after").
     """
     proposals: dict[tuple[str, str], CorrectionProposal] = {}
     unresolved: list[UnresolvedCorrection] = []
@@ -204,7 +206,7 @@ def derive_corrections(
             for rec, plan in approved
             if int(rec.get("width", 0)) == rej.width
             and int(rec.get("height", 0)) == rej.height
-            and str(rec.get("updated_at", "")) > rej.ts
+            and str(rec.get("updated_at", "")) >= rej.ts
             and plan.get("placements")
         ]
         if not candidates:
