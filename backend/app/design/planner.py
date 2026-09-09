@@ -74,33 +74,69 @@ def aspect_class(aspect: float) -> str:
 def families_for(aspect: float) -> list[Family]:
     if aspect >= 1.25:  # landscape
         return [
-            Family("landscape_text_left", Region(0.05, 0.10, 0.50, 0.80),
-                   Region(0.58, 0.06, 0.38, 0.88), Region(0.80, 0.04, 0.16, 0.14)),
-            Family("landscape_text_right", Region(0.45, 0.10, 0.50, 0.80),
-                   Region(0.04, 0.06, 0.38, 0.88), Region(0.04, 0.04, 0.16, 0.14),
-                   text_align="left"),
-            Family("landscape_wide_text", Region(0.05, 0.14, 0.62, 0.72),
-                   Region(0.70, 0.10, 0.27, 0.80), Region(0.82, 0.04, 0.14, 0.12)),
+            Family(
+                "landscape_text_left",
+                Region(0.05, 0.10, 0.50, 0.80),
+                Region(0.58, 0.06, 0.38, 0.88),
+                Region(0.80, 0.04, 0.16, 0.14),
+            ),
+            Family(
+                "landscape_text_right",
+                Region(0.45, 0.10, 0.50, 0.80),
+                Region(0.04, 0.06, 0.38, 0.88),
+                Region(0.04, 0.04, 0.16, 0.14),
+                text_align="left",
+            ),
+            Family(
+                "landscape_wide_text",
+                Region(0.05, 0.14, 0.62, 0.72),
+                Region(0.70, 0.10, 0.27, 0.80),
+                Region(0.82, 0.04, 0.14, 0.12),
+            ),
         ]
     if aspect <= 0.8:  # portrait
         return [
-            Family("portrait_text_top", Region(0.07, 0.16, 0.86, 0.36),
-                   Region(0.10, 0.54, 0.80, 0.42), Region(0.07, 0.04, 0.30, 0.09)),
-            Family("portrait_subject_top", Region(0.07, 0.56, 0.86, 0.38),
-                   Region(0.10, 0.12, 0.80, 0.42), Region(0.07, 0.03, 0.30, 0.08),
-                   subject_first=True),
-            Family("portrait_centered", Region(0.08, 0.12, 0.84, 0.30),
-                   Region(0.15, 0.46, 0.70, 0.40), Region(0.35, 0.03, 0.30, 0.07),
-                   text_align="center"),
+            Family(
+                "portrait_text_top",
+                Region(0.07, 0.16, 0.86, 0.36),
+                Region(0.10, 0.54, 0.80, 0.42),
+                Region(0.07, 0.04, 0.30, 0.09),
+            ),
+            Family(
+                "portrait_subject_top",
+                Region(0.07, 0.56, 0.86, 0.38),
+                Region(0.10, 0.12, 0.80, 0.42),
+                Region(0.07, 0.03, 0.30, 0.08),
+                subject_first=True,
+            ),
+            Family(
+                "portrait_centered",
+                Region(0.08, 0.12, 0.84, 0.30),
+                Region(0.15, 0.46, 0.70, 0.40),
+                Region(0.35, 0.03, 0.30, 0.07),
+                text_align="center",
+            ),
         ]
     return [  # square-ish
-        Family("square_text_left", Region(0.06, 0.12, 0.46, 0.76),
-               Region(0.54, 0.16, 0.42, 0.72), Region(0.06, 0.03, 0.22, 0.08)),
-        Family("square_text_top", Region(0.07, 0.15, 0.86, 0.34),
-               Region(0.20, 0.52, 0.60, 0.44), Region(0.07, 0.04, 0.26, 0.09)),
-        Family("square_subject_top", Region(0.07, 0.58, 0.86, 0.36),
-               Region(0.20, 0.10, 0.60, 0.44), Region(0.70, 0.03, 0.26, 0.08),
-               subject_first=True),
+        Family(
+            "square_text_left",
+            Region(0.06, 0.12, 0.46, 0.76),
+            Region(0.54, 0.16, 0.42, 0.72),
+            Region(0.06, 0.03, 0.22, 0.08),
+        ),
+        Family(
+            "square_text_top",
+            Region(0.07, 0.15, 0.86, 0.34),
+            Region(0.20, 0.52, 0.60, 0.44),
+            Region(0.07, 0.04, 0.26, 0.09),
+        ),
+        Family(
+            "square_subject_top",
+            Region(0.07, 0.58, 0.86, 0.36),
+            Region(0.20, 0.10, 0.60, 0.44),
+            Region(0.70, 0.03, 0.26, 0.08),
+            subject_first=True,
+        ),
     ]
 
 
@@ -152,12 +188,18 @@ def choose_families(
     targets: list[tuple[int, int]],
     *,
     registry: FontRegistry | None = None,
+    learned: dict[str, Family] | None = None,
+    learned_bonus: float = 5.0,
 ) -> dict[str, Family]:
     """Joint choice: one layout family per aspect class for a whole size set.
 
     Instead of letting every size pick its own best family, the family whose
     summed score over all targets of the class is highest wins, so a campaign
     keeps one composition per orientation (H2: joint planning for consistency).
+
+    ``learned`` families (inferred from approved examples, H1) compete with the
+    hand-written ones and receive ``learned_bonus`` per target, so a designer's
+    demonstrated composition wins unless it scores clearly worse.
     """
     reg = registry or default_registry()
     by_class: dict[str, list[tuple[int, int]]] = {}
@@ -165,15 +207,20 @@ def choose_families(
         by_class.setdefault(aspect_class(t[0] / max(1, t[1])), []).append(t)
     chosen: dict[str, Family] = {}
     for cls, sizes in by_class.items():
-        candidates = families_for(sizes[0][0] / max(1, sizes[0][1]))
-        best_name, best_total = None, float("-inf")
+        candidates = list(families_for(sizes[0][0] / max(1, sizes[0][1])))
+        if learned and cls in learned:
+            candidates.append(learned[cls])
+        best_fam, best_total = None, float("-inf")
         for fam in candidates:
             total = 0.0
             for t in sizes:
                 total += _plan_family(doc, elements, t, fam, reg).score
+            if learned and cls in learned and fam is learned[cls]:
+                total += learned_bonus * len(sizes)
             if total > best_total:
-                best_name, best_total = fam.name, total
-        chosen[cls] = next(f for f in candidates if f.name == best_name)
+                best_fam, best_total = fam, total
+        assert best_fam is not None
+        chosen[cls] = best_fam
     return chosen
 
 
@@ -267,15 +314,19 @@ def _plan_family(
         if extra > 0:
             if fam.subject_first:
                 # subject above text: shrink subject height, move text up
-                new_subj = BoundingBox(subj_box.x, subj_box.y, subj_box.width,
-                                       subj_box.height - extra)
-                new_text = BoundingBox(text_box.x, text_box.y - extra, text_box.width,
-                                       text_box.height + extra)
+                new_subj = BoundingBox(
+                    subj_box.x, subj_box.y, subj_box.width, subj_box.height - extra
+                )
+                new_text = BoundingBox(
+                    text_box.x, text_box.y - extra, text_box.width, text_box.height + extra
+                )
             else:
-                new_subj = BoundingBox(subj_box.x, subj_box.y + extra, subj_box.width,
-                                       subj_box.height - extra)
-                new_text = BoundingBox(text_box.x, text_box.y, text_box.width,
-                                       text_box.height + extra)
+                new_subj = BoundingBox(
+                    subj_box.x, subj_box.y + extra, subj_box.width, subj_box.height - extra
+                )
+                new_text = BoundingBox(
+                    text_box.x, text_box.y, text_box.width, text_box.height + extra
+                )
             layout = [r for r in layout if r.element_id not in {s.id for s in subjects}]
             for i, e in enumerate(subjects):
                 slot = new_subj
@@ -295,8 +346,10 @@ def _plan_family(
     # --- others (badges, decorations, unknown): scale uniformly, keep relative master position
     for e in others:
         box = BoundingBox(
-            int(e.bbox.x / cw * tw), int(e.bbox.y / ch * th),
-            max(1, int(e.bbox.width * scale)), max(1, int(e.bbox.height * scale)),
+            int(e.bbox.x / cw * tw),
+            int(e.bbox.y / ch * th),
+            max(1, int(e.bbox.width * scale)),
+            max(1, int(e.bbox.height * scale)),
         )
         layout.append(LayoutResult(e.id, box, scale, visible=e.priority <= 7))
 
@@ -345,8 +398,15 @@ def _plan_text_stack(
             master_px = _master_px(de, e)
             preferred = max(lo, min(hi, int(round(master_px * scale * factor))))
             max_lines = de.text.max_lines if de is not None and de.text is not None else None
-            fitted = fit_text(content, column.width, None, min_px=lo, max_px=preferred,
-                              registry=reg, max_lines=max_lines)
+            fitted = fit_text(
+                content,
+                column.width,
+                None,
+                min_px=lo,
+                max_px=preferred,
+                registry=reg,
+                max_lines=max_lines,
+            )
             h = max(1, fitted.height)
             w = min(column.width, max(1, fitted.width))
             x = column.x
@@ -360,8 +420,10 @@ def _plan_text_stack(
             # vertically centre the stack inside the column
             offset = max(0, (column.height - total) // 2)
             if offset:
-                placed = [(e, BoundingBox(b.x, b.y + offset, b.width, b.height), px, ov)
-                          for e, b, px, ov in placed]
+                placed = [
+                    (e, BoundingBox(b.x, b.y + offset, b.width, b.height), px, ov)
+                    for e, b, px, ov in placed
+                ]
             return placed
         factor *= max(0.5, column.height / max(1, total)) * 0.98
     return placed
@@ -549,8 +611,13 @@ def _score(
 ) -> float:
     tw, th = target
     score = 100.0
-    content = [r for r in layout if by_id.get(r.element_id) and
-               by_id[r.element_id].role.value not in BACKGROUND_ROLES and r.visible]
+    content = [
+        r
+        for r in layout
+        if by_id.get(r.element_id)
+        and by_id[r.element_id].role.value not in BACKGROUND_ROLES
+        and r.visible
+    ]
     allowed = doc.allowed_overlaps()
     # overlaps between content boxes
     for i in range(len(content)):
@@ -586,8 +653,12 @@ def _score(
         if lr is None:
             continue
         pad = int(lr.new_bbox.height * float(c.params.get("ratio", 0.5)))
-        zone = BoundingBox(lr.new_bbox.x - pad, lr.new_bbox.y - pad,
-                           lr.new_bbox.width + 2 * pad, lr.new_bbox.height + 2 * pad)
+        zone = BoundingBox(
+            lr.new_bbox.x - pad,
+            lr.new_bbox.y - pad,
+            lr.new_bbox.width + 2 * pad,
+            lr.new_bbox.height + 2 * pad,
+        )
         for other in content:
             if other.element_id != lr.element_id and _inter(zone, other.new_bbox) > 0:
                 score -= 4.0

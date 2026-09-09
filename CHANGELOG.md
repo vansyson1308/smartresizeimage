@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 ### Added
+- Learning from approved variants (H1, `design/examples.py`): approved variants of a project
+  become examples; per orientation the planner infers a layout family (text column, subject
+  slot, logo slot, alignment, stacking order), a hierarchy scale and soft constraint
+  proposals with confidence, exposed at `GET /api/projects/{id}/learned` and in the rules
+  panel, and used by the next generation (`planner_meta.from_examples`).
+- Joint family planning across a size set (H2) with cross-variant consistency checks
+  (`quality/family.py`); ablation harness (`tools/run_ablations.py`) with tuning/holdout split,
+  Wilson intervals and the H1 designer-agreement protocol.
 - Design representation (`backend/app/design`): typed document with native text, assets by
   content hash, roles with confidence, constraints, allowed transforms and provenance;
   constraint-aware planner with layout families; native text fitting/rendering with font

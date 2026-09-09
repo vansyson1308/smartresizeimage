@@ -397,3 +397,48 @@ def test_multi_size_job_plans_jointly_and_records_family_checks(
             "family_layout",
         } <= ids
         assert d["quality"]["verdict"] == d["variant"]["verdict"]
+
+
+def test_approved_variant_teaches_the_next_generation(client: TestClient, tmp_path: Path) -> None:
+    """H1 in the product: approving a variant makes later runs of that orientation follow it."""
+    payload = _layered_project(client, tmp_path)
+    pid = payload["project"]["id"]
+    assert client.get(f"/api/projects/{pid}/learned").json()["families"] == []
+    res = client.post(
+        f"/api/projects/{pid}/variants",
+        json={"targets": [{"width": 1080, "height": 1920, "name": "P1"}]},
+    )
+    assert res.status_code == 202, res.text
+    service = client.app.state.service
+    job = service.jobs.wait(res.json()["job"]["id"], timeout=300)
+    assert job.status == "done", job.to_dict()
+    p1 = client.get(f"/api/projects/{pid}/variants").json()["variants"][0]
+    first = client.get(f"/api/projects/{pid}/variants/{p1['id']}").json()
+    assert first["plan"]["planner_meta"]["from_examples"] is False
+    client.post(f"/api/projects/{pid}/variants/{p1['id']}/approval", json={"approval": "approved"})
+
+    learned = client.get(f"/api/projects/{pid}/learned").json()
+    assert learned["examples"] == [p1["id"]]
+    assert [f["aspect"] for f in learned["families"]] == ["portrait"]
+    assert learned["families"][0]["examples"] == 1
+    assert learned["families"][0]["confidence"] == 0.5
+
+    res = client.post(
+        f"/api/projects/{pid}/variants",
+        json={"targets": [{"width": 1080, "height": 1350, "name": "P2"}]},
+    )
+    assert res.status_code == 202, res.text
+    job = service.jobs.wait(res.json()["job"]["id"], timeout=300)
+    assert job.status == "done", job.to_dict()
+    variants = client.get(f"/api/projects/{pid}/variants").json()["variants"]
+    p2 = next(v for v in variants if v["name"] == "P2")
+    second = client.get(f"/api/projects/{pid}/variants/{p2['id']}").json()
+    meta = second["plan"]["planner_meta"]
+    assert meta["family"] == "learned_portrait" and meta["from_examples"] is True
+
+    # the learned composition keeps the approved reading order on the new size
+    def order(detail: dict) -> list[str]:
+        placed = sorted(detail["plan"]["placements"], key=lambda p: p["y"])
+        return [p["element_id"] for p in placed if p["visible"]]
+
+    assert order(first) == order(second)

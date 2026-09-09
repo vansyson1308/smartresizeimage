@@ -35,6 +35,7 @@ from ..design.document import (
     Provenance,
     new_id,
 )
+from ..design.examples import example_from_plan, infer_families
 from ..design.fonts import FontRegistry
 from ..design.planner import Family, aspect_class, choose_families
 from ..design.project import Project, VariantRecord
@@ -589,8 +590,19 @@ class ProjectService:
         locale = spec.get("locale")
 
         # Joint planning (H2): one layout family per orientation for the whole job.
+        # Approved variants of this project act as examples (H1): their inferred
+        # families compete with the hand-written ones for every orientation.
         families: dict[str, Family] = {}
-        if Config.DESIGN_PLANNER == "constraints" and len(targets) > 1:
+        learned: dict[str, Family] = {}
+        if Config.DESIGN_PLANNER == "constraints":
+            try:
+                learned = {
+                    cls: inf.family
+                    for cls, inf in self._learned_from_approved(project).items()
+                }
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("learning from approved variants failed: %s", exc)
+        if Config.DESIGN_PLANNER == "constraints" and (len(targets) > 1 or learned):
             try:
                 engine_elements = elements_from_document(
                     project.document, project.assets, registry=self.registry,
@@ -602,6 +614,7 @@ class ProjectService:
                 families = choose_families(
                     project.document, engine_elements,
                     [(t["width"], t["height"]) for t in targets], registry=self.registry,
+                    learned=learned or None,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("joint family choice failed; planning per variant: %s", exc)
@@ -689,6 +702,52 @@ class ProjectService:
             repair_steps=len(result.repair_steps),
         )
         return {"variant_id": rec.id, "verdict": rec.verdict}
+
+    # ---- learning from approved variants (H1) -----------------------------------------
+    def _approved_examples(self, project: Project) -> tuple[list[str], list]:
+        """Approved, finished variants of a project as example documents."""
+        ids: list[str] = []
+        examples = []
+        for rec in project.variants.values():
+            if rec.status != "done" or rec.approval != "approved":
+                continue
+            detail = project.variant_detail(rec.id)
+            plan = (detail or {}).get("plan") or {}
+            placements = plan.get("placements") or []
+            if not placements:
+                continue
+            examples.append(
+                example_from_plan(
+                    project.document,
+                    (rec.width, rec.height),
+                    placements,
+                    plan.get("typography") or {},
+                    example_id=f"{project.id}_{rec.id}",
+                )
+            )
+            ids.append(rec.id)
+        return ids, examples
+
+    def _learned_from_approved(self, project: Project) -> dict:
+        ids, examples = self._approved_examples(project)
+        if not examples:
+            return {}
+        return infer_families(project.document, examples)
+
+    def learned_rules(self, project_id: str, owner: str | None = LOCAL_OWNER) -> dict:
+        """Reviewable summary of what the planner learned from approved variants."""
+        project = self.get_project(project_id, owner)
+        ids, examples = self._approved_examples(project)
+        inferred = infer_families(project.document, examples) if examples else {}
+        return {
+            "examples": ids,
+            "families": [inf.to_dict() for inf in inferred.values()],
+            "note": (
+                "Approved variants are examples: their composition per orientation "
+                "competes with the built-in layout families on the next generation. "
+                "Nothing is trained; rules are inferred per project and can be reviewed here."
+            ),
+        }
 
     def _apply_family_checks(self, project_id: str, variant_ids: list[str]) -> None:
         """Run cross-variant checks for the variants of one job and update their reports."""

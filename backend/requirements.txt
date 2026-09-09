@@ -4,6 +4,7 @@ uvicorn[standard]>=0.29,<1.0
 python-multipart>=0.0.9
 # Optional OCR for the quality contract (needs the tesseract binary; otherwise checks report not_checked)
 pytesseract>=0.3.10
+fonttools>=4.40
 # Legacy Gradio interface
 gradio>=4.0.0,<5.0.0
 Pillow>=10.0.0,<11.0.0

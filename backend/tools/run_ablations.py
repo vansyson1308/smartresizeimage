@@ -37,7 +37,8 @@ from PIL import Image
 from backend.app.config import Config
 from backend.app.design.adapter import document_from_elements, elements_from_document
 from backend.app.design.assets import AssetStore
-from backend.app.design.planner import Family, aspect_class, choose_families
+from backend.app.design.examples import example_from_plan, learned_families
+from backend.app.design.planner import Family, aspect_class, choose_families, plan_layout
 from backend.app.design.variant import VariantBrief, generate_variant
 from backend.app.models import DesignElement
 from backend.app.quality import CONTRACT_VERSION, QualityConfig
@@ -55,6 +56,7 @@ class AblationConfig:
     plates: bool = True
     ocr: bool = True
     joint: bool = False  # choose one family per orientation for the whole size set
+    learned: bool = False  # infer families from one "approved" example per orientation (H1)
     notes: str = ""
 
     def to_dict(self) -> dict:
@@ -65,6 +67,7 @@ class AblationConfig:
             "plates": self.plates,
             "ocr": self.ocr,
             "joint": self.joint,
+            "learned": self.learned,
             "notes": self.notes,
         }
 
@@ -83,6 +86,18 @@ CONFIGS: dict[str, AblationConfig] = {
     "joint": AblationConfig(
         "joint", joint=True, notes="one family per orientation chosen jointly for the size set"
     ),
+    "learned": AblationConfig(
+        "learned",
+        joint=True,
+        learned=True,
+        notes="H1: families inferred from one approved example per orientation "
+        "(the designer's example uses the second-best hand-written family)",
+    ),
+    "designer_ref": AblationConfig(
+        "designer_ref",
+        joint=True,
+        notes="reference: the designer's (second-best) family applied directly to all sizes",
+    ),
 }
 
 
@@ -99,6 +114,8 @@ class RunRecord:
     family: str | None
     issues: list[str] = field(default_factory=list)
     family_issues: int = 0  # cross-variant consistency checks not passing
+    agreement: float | None = None  # mean IoU with the designer-family plan (H1 protocol)
+    role: str = "test"  # "example" when the size served as the approved example
 
 
 def _parse_sizes(raw: str) -> list[tuple[int, int]]:
@@ -165,8 +182,31 @@ def run_config(
                     elements, source_size, store, name=case_dir.name, origin="fixture"
                 )
                 families: dict[str, Family] = {}
-                if cfg.joint and cfg.planner == "constraints":
-                    engine_elements = elements_from_document(doc, store)
+                designer: dict[str, Family] = {}
+                example_sizes: set[tuple[int, int]] = set()
+                setup_s = 0.0
+                engine_elements = elements_from_document(doc, store)
+                if cfg.planner == "constraints":
+                    # H1 protocol (same for every config so agreement is comparable):
+                    # the designer's family per orientation, and the largest size of
+                    # each orientation as the approved example; the other sizes of
+                    # that orientation are the held-out sizes.
+                    designer = _designer_families(doc, engine_elements, sizes)
+                    example_sizes = {
+                        sorted(ts, key=lambda t: -(t[0] * t[1]))[0]
+                        for ts in _sizes_by_class(sizes).values()
+                    }
+                if cfg.name == "designer_ref":
+                    families = designer
+                elif cfg.learned and cfg.planner == "constraints":
+                    t_setup = time.perf_counter()
+                    examples = [
+                        _example_document(doc, store, designer, t) for t in sorted(example_sizes)
+                    ]
+                    learned = learned_families(doc, examples)
+                    families = choose_families(doc, engine_elements, sizes, learned=learned)
+                    setup_s = time.perf_counter() - t_setup
+                elif cfg.joint and cfg.planner == "constraints":
                     families = choose_families(doc, engine_elements, sizes)
                 snapshots: list[VariantSnapshot] = []
                 case_records: list[RunRecord] = []
@@ -198,6 +238,12 @@ def run_config(
                             },
                         )
                     )
+                    agreement = None
+                    if designer:
+                        ref_fam = designer.get(aspect_class(w / max(1, h)))
+                        if ref_fam is not None:
+                            ref_plan = plan_layout(doc, engine_elements, (w, h), families=[ref_fam])
+                            agreement = _plan_agreement(result.plan.get("placements", []), ref_plan)
                     case_records.append(
                         RunRecord(
                             config=cfg.name,
@@ -206,10 +252,14 @@ def run_config(
                             split=split,
                             verdict=result.verdict,
                             accepted=result.verdict == "accepted",
-                            elapsed_s=round(elapsed, 3),
+                            elapsed_s=round(
+                                elapsed + (setup_s if (w, h) in example_sizes else 0.0), 3
+                            ),
                             repair_steps=len(result.repair_steps),
                             family=result.plan.get("planner_meta", {}).get("family"),
                             issues=[c.message for c in result.report.issues()][:4],
+                            agreement=agreement,
+                            role="example" if (w, h) in example_sizes else "test",
                         )
                     )
                 family_checks = family_consistency_checks(snapshots)
@@ -220,6 +270,72 @@ def run_config(
     finally:
         Config.TEXT_SAFE_PLATE_ENABLED, Config.LAYOUT_PROFILE_SCORING_ENABLED = prev
     return records
+
+
+def _sizes_by_class(sizes: list[tuple[int, int]]) -> dict[str, list[tuple[int, int]]]:
+    out: dict[str, list[tuple[int, int]]] = {}
+    for w, h in sizes:
+        out.setdefault(aspect_class(w / max(1, h)), []).append((w, h))
+    return out
+
+
+def _designer_families(doc, elements, sizes) -> dict[str, Family]:
+    """The 'designer's choice': the second-best hand-written family per orientation.
+
+    This stands in for a composition the planner would not pick on its own, so
+    the H1 protocol measures whether one approved example is enough to make the
+    planner reproduce it on the other sizes.
+    """
+    from backend.app.design.fonts import default_registry
+    from backend.app.design.planner import _plan_family, families_for
+
+    reg = default_registry()
+    chosen: dict[str, Family] = {}
+    for cls, ts in _sizes_by_class(sizes).items():
+        candidates = families_for(ts[0][0] / max(1, ts[0][1]))
+        scored = sorted(
+            candidates,
+            key=lambda fam: -sum(_plan_family(doc, elements, t, fam, reg).score for t in ts),
+        )
+        chosen[cls] = scored[1] if len(scored) > 1 else scored[0]
+    return chosen
+
+
+def _example_document(doc, store, designer: dict[str, Family], target: tuple[int, int]):
+    """Render an 'approved' variant with the designer family and turn its plan into a document."""
+    fam = designer[aspect_class(target[0] / max(1, target[1]))]
+    result = generate_variant(
+        doc,
+        store,
+        VariantBrief(target[0], target[1], name="example"),
+        planner="constraints",
+        family=fam,
+        quality_config=QualityConfig(run_ocr=False),
+    )
+    return example_from_plan(
+        doc,
+        target,
+        result.plan.get("placements", []),
+        result.plan.get("typography", {}),
+        example_id=doc.id + "_ex",
+    )
+
+
+def _plan_agreement(placements: list[dict], ref_plan) -> float:
+    """Mean IoU between this plan's boxes and the designer-family plan's boxes."""
+    ref = {r.element_id: r.new_bbox for r in ref_plan.layout if r.visible}
+    ious = []
+    for p in placements:
+        b = ref.get(p["element_id"])
+        if b is None or not p.get("visible", True):
+            continue
+        ax1, ay1, ax2, ay2 = p["x"], p["y"], p["x"] + p["width"], p["y"] + p["height"]
+        ix1, iy1 = max(ax1, b.x), max(ay1, b.y)
+        ix2, iy2 = min(ax2, b.x2), min(ay2, b.y2)
+        inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+        union = p["width"] * p["height"] + b.area - inter
+        ious.append(inter / union if union > 0 else 0.0)
+    return round(sum(ious) / len(ious), 4) if ious else 0.0
 
 
 def summarize(records: list[RunRecord]) -> dict:
@@ -238,8 +354,15 @@ def summarize(records: list[RunRecord]) -> dict:
             "mean_s": round(sum(r.elapsed_s for r in subset) / n, 3),
             "mean_repair_steps": round(sum(r.repair_steps for r in subset) / n, 3),
             "family_issue_runs": sum(1 for r in subset if r.family_issues > 0),
+            "agreement_heldout_sizes": _mean(
+                [r.agreement for r in subset if r.agreement is not None and r.role == "test"]
+            ),
         }
     return out
+
+
+def _mean(values: list[float]) -> float | None:
+    return round(sum(values) / len(values), 4) if values else None
 
 
 def _wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -265,8 +388,9 @@ def build_report(results: dict[str, list[RunRecord]], run_meta: dict) -> str:
         f"(holdout from case {run_meta['holdout_from']})",
         "",
         "| Config | Split | Runs | Accepted | Needs review | Failed | "
-        "Acceptance (95% CI) | Mean s | Repair steps | Family-issue runs |",
-        "|---|---|---:|---:|---:|---:|---|---:|---:|---:|",
+        "Acceptance (95% CI) | Mean s | Repair steps | Family-issue runs | "
+        "Agreement w/ designer (held-out sizes) |",
+        "|---|---|---:|---:|---:|---:|---|---:|---:|---:|---:|",
     ]
     for name, records in results.items():
         summary = summarize(records)
@@ -278,14 +402,15 @@ def build_report(results: dict[str, list[RunRecord]], run_meta: dict) -> str:
             lines.append(
                 f"| {name} | {split} | {s['runs']} | {s['accepted']} | {s['needs_review']} | "
                 f"{s['failed']} | {s['acceptance_rate']:.2f} ({lo:.2f}–{hi:.2f}) | "
-                f"{s['mean_s']:.2f} | {s['mean_repair_steps']:.2f} | {s['family_issue_runs']} |"
+                f"{s['mean_s']:.2f} | {s['mean_repair_steps']:.2f} | {s['family_issue_runs']} | "
+                f"{'-' if s['agreement_heldout_sizes'] is None else s['agreement_heldout_sizes']} |"
             )
     lines += ["", "## Configurations", ""]
     for name in results:
         cfg = CONFIGS[name]
         lines.append(
             f"- `{name}`: planner={cfg.planner}, repair={cfg.repair}, plates={cfg.plates}, "
-            f"ocr={cfg.ocr}, joint={cfg.joint} — {cfg.notes}"
+            f"ocr={cfg.ocr}, joint={cfg.joint}, learned={cfg.learned} — {cfg.notes}"
         )
     lines += [
         "",
@@ -294,6 +419,16 @@ def build_report(results: dict[str, list[RunRecord]], run_meta: dict) -> str:
         "- `no_ocr` cannot reach `accepted` by contract (a critical check did not run); it "
         "measures how much OCR costs, not quality.",
         "- Synthetic fixtures; not customer validation.",
+        "- H1 protocol: `designer_ref` plans every size with the second-best hand-written "
+        "family per orientation (a stand-in for a composition the planner would not pick "
+        "on its own). `learned` sees exactly one designer_ref variant per aspect class as "
+        "the approved example (the largest size of that class) and must reproduce the "
+        "designer's plan on the other sizes of that class. `Agreement` is the mean IoU of "
+        "planned element boxes against the designer plan on those held-out sizes; it is "
+        "reported for every constraint-planner config, so `joint`/`full` give the "
+        "no-example counterfactual and `designer_ref` the ceiling (1.0 by construction). "
+        "`Mean s` for `learned` includes the setup (render example, match, infer) on the "
+        "example sizes.",
     ]
     return "\n".join(lines)
 

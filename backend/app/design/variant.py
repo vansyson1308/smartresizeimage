@@ -133,7 +133,11 @@ def generate_variant(
         )
         layout = plan_result.layout
         layout_debug = {"profile_name": plan_result.family, "fallback_reason": ""}
-        plan_meta = {**plan_result.to_dict(), "joint_family": family is not None}
+        plan_meta = {
+            **plan_result.to_dict(),
+            "joint_family": family is not None,
+            "from_examples": family is not None and family.name.startswith("learned_"),
+        }
     else:
         layout_engine = LayoutEngine()
         layout = layout_engine.calculate_layout(

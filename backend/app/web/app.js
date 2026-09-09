@@ -435,6 +435,18 @@
     const opts = d.elements.filter((e) => !isBg(e)).map((e) => `<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("");
     $("#c-a").innerHTML = opts; $("#c-b").innerHTML = opts;
     updateConstraintForm();
+    renderLearned();
+  }
+  async function renderLearned() {
+    const wrap = $("#learned-list");
+    const anyApproved = (state.project.variants || []).some((v) => v.approval === "approved" && v.status === "done");
+    if (!anyApproved) { wrap.innerHTML = ""; return; }
+    try {
+      const res = await api(`/api/projects/${pid()}/learned`);
+      if (!res.families.length) { wrap.innerHTML = ""; return; }
+      wrap.innerHTML = `<div><strong>Learned from ${res.examples.length} approved variant${res.examples.length === 1 ? "" : "s"}</strong> (applied to the next generation):</div>` +
+        res.families.map((f) => `<div>· ${esc(f.aspect)}: text ${esc(f.text_align)}, ${f.subject_first ? "subject above text" : "text before subject"}, confidence ${f.confidence}${f.constraints.length ? ", proposes " + esc(f.constraints.join(", ")) : ""}${f.examples === 1 ? ' <span class="badge warn" title="One example is under-determined; approve another size of this orientation to confirm">single example</span>' : ""}</div>`).join("");
+    } catch (e) { wrap.innerHTML = ""; }
   }
   function updateConstraintForm() {
     const t = $("#c-type").value;
