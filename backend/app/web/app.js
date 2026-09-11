@@ -98,6 +98,7 @@
     renderWorkspace();
     try {
       const data = await api("/api/projects");
+      loadBrands();
       const list = $("#project-list");
       list.innerHTML = "";
       $("#projects-empty").classList.toggle("hidden", data.projects.length > 0);
@@ -701,6 +702,51 @@
   }
   $("#btn-export-approved").addEventListener("click", () => exportZip("approved"));
   $("#btn-export-all").addEventListener("click", () => exportZip("all"));
+
+  // ---------- brand profiles ----------
+  async function loadBrands() {
+    try {
+      const res = await api("/api/brands");
+      state.brands = res.brands || [];
+      $("#brand-list").innerHTML = state.brands.map((b) => `<option value="${esc(b.brand)}">`).join("");
+      $("#brand-font-list").innerHTML = (state.fonts || []).map((f) => `<option value="${esc(f)}">`).join("");
+    } catch (e) { /* brand card is optional */ }
+  }
+  function fillBrandForm(profile) {
+    const p = profile || {};
+    const c = p.colors || {}, f = p.fonts || {}, l = p.logo || {}, t = p.text || {};
+    $("#brand-primary").value = c.primary || ""; $("#brand-secondary").value = c.secondary || ""; $("#brand-accent").value = c.accent || "";
+    $("#brand-palette").value = (c.palette || []).join(", "); $("#brand-strict").checked = !!c.strict;
+    $("#brand-font-head").value = f.headline ? f.headline.family : ""; $("#brand-font-body").value = f.body ? f.body.family : "";
+    $("#brand-logo-clear").value = l.clear_space_ratio == null ? "" : l.clear_space_ratio;
+    $("#brand-logo-min").value = l.min_height_ratio == null ? "" : Math.round(l.min_height_ratio * 1000) / 10;
+    $("#brand-text-min").value = t.min_px || "";
+    $("#brand-tone").value = p.tone || ""; $("#brand-donot").value = (p.do_not || []).join("\n");
+    $("#brand-status").textContent = profile ? `Saved ${profile.updated_at || ""}${profile.updated_by ? " by " + profile.updated_by : ""}` : "New brand: nothing saved yet.";
+    $("#brand-form").classList.remove("hidden");
+  }
+  $("#brand-load").addEventListener("click", async () => {
+    const name = $("#brand-name").value.trim();
+    if (!name) { toast("Enter a brand name.", true); return; }
+    try { const res = await api(`/api/brands/${encodeURIComponent(name)}`); fillBrandForm(res.profile); } catch (e) { toast(e.message, true); }
+  });
+  $("#brand-save").addEventListener("click", async () => {
+    const name = $("#brand-name").value.trim();
+    if (!name) { toast("Enter a brand name.", true); return; }
+    const body = {
+      colors: { primary: $("#brand-primary").value.trim(), secondary: $("#brand-secondary").value.trim(), accent: $("#brand-accent").value.trim(), palette: $("#brand-palette").value, strict: $("#brand-strict").checked },
+      fonts: { headline: $("#brand-font-head").value.trim() || null, body: $("#brand-font-body").value.trim() || null },
+      logo: { clear_space_ratio: $("#brand-logo-clear").value || null, min_height_ratio: $("#brand-logo-min").value ? Number($("#brand-logo-min").value) / 100 : null, always_visible: true },
+      text: { min_px: $("#brand-text-min").value || 0 },
+      tone: $("#brand-tone").value, do_not: $("#brand-donot").value,
+    };
+    try { const res = await api(`/api/brands/${encodeURIComponent(name)}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); fillBrandForm(res.profile); await loadBrands(); toast("Brand saved. Its rules are proposed in projects of this brand; variants are checked against it."); } catch (e) { toast(e.message, true); }
+  });
+  $("#brand-delete").addEventListener("click", async () => {
+    const name = $("#brand-name").value.trim(); if (!name) return;
+    if (!confirm(`Delete the brand profile "${name}"?`)) return;
+    try { await api(`/api/brands/${encodeURIComponent(name)}`, { method: "DELETE" }); $("#brand-form").classList.add("hidden"); await loadBrands(); toast("Brand profile deleted."); } catch (e) { toast(e.message, true); }
+  });
 
   // ---------- auth ----------
   function applyRoleGates() {

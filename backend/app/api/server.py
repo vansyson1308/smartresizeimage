@@ -464,6 +464,33 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
     def brand_rules(brand: str, owner: str = Owner) -> dict:
         return {"brand": brand, "rules": service.brand_rules(owner, brand)}
 
+    @app.get("/api/brands", dependencies=dep)
+    def list_brands(owner: str = Owner) -> dict:
+        return {"brands": service.list_brand_profiles(owner)}
+
+    @app.get("/api/brands/{brand}", dependencies=dep)
+    def get_brand(brand: str, owner: str = Owner) -> dict:
+        return {
+            "brand": brand,
+            "profile": service.get_brand_profile(owner, brand),
+            "rules": service.brand_rules(owner, brand),
+        }
+
+    @app.put("/api/brands/{brand}", dependencies=edit)
+    async def put_brand(brand: str, request: Request, principal: Principal = Who) -> dict:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="body must be an object")
+        profile = service.save_brand_profile(
+            principal.owner, brand, body, by=principal.username or principal.owner
+        )
+        return {"brand": brand, "profile": profile}
+
+    @app.delete("/api/brands/{brand}", dependencies=edit, status_code=204)
+    def delete_brand(brand: str, owner: str = Owner) -> Response:
+        service.delete_brand_profile(owner, brand)
+        return Response(status_code=204)
+
     @app.post("/api/projects/{project_id}/learned/corrections/{index}/apply", dependencies=edit)
     def apply_correction(project_id: str, index: int, owner: str = Owner) -> dict:
         return service.apply_correction(project_id, index, owner)

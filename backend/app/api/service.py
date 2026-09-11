@@ -29,7 +29,12 @@ from ..config import Config
 from ..constants import SUPPORTED_EXTENSIONS
 from ..design.adapter import document_from_elements, elements_from_document
 from ..design.assets import AssetStore
-from ..design.brand import collect_brand_rules, propose_brand_rules
+from ..design.brand import (
+    collect_brand_rules,
+    normalize_profile,
+    propose_brand_rules,
+    propose_profile_rules,
+)
 from ..design.corrections import RejectionSnapshot, derive_corrections
 from ..design.decompose import decompose_flat_image
 from ..design.document import (
@@ -150,9 +155,12 @@ class ProjectService:
         self.projects_dir.mkdir(parents=True, exist_ok=True)
         self.fonts_dir = self.data_dir / "fonts"
         self.fonts_dir.mkdir(parents=True, exist_ok=True)
+        self.brands_dir = self.data_dir / "brands"
+        self.brands_dir.mkdir(parents=True, exist_ok=True)
         self.registry = FontRegistry(extra_dirs=[self.fonts_dir])
         self.jobs = JobManager(max_workers=max_workers, persist_dir=self.data_dir / "jobs")
         self.usage = UsageMeter(self.data_dir / "usage")
+        self.entitlements = Entitlements(self.data_dir / "plans.json")
         self.events = EventLog(self.data_dir / "events")
         self.quota = quota or Quota.from_env()
         self.use_ai = use_ai
@@ -815,6 +823,13 @@ class ProjectService:
         with self._lock(project_id):
             project.mark_variant(variant_id, "running")
             doc_snapshot = document_from_dict(document_to_dict(project.document))
+        # The brand profile travels with the snapshot so the verifier can check palette and
+        # fonts; the stored document is not changed.
+        profile = self.get_brand_profile(
+            job.owner or project.meta.get("owner"), project.meta.get("brand")
+        )
+        if profile:
+            doc_snapshot.metadata["brand_profile"] = profile
         result = generate_variant(
             doc_snapshot,
             project.assets,
@@ -1049,19 +1064,25 @@ class ProjectService:
         return [r.to_dict() for r in collect_brand_rules(docs)]
 
     def _apply_brand_rules(self, project: Project, owner: str | None) -> list[str]:
+        """Propose the brand's rules into a project: profile rules first, then carried ones."""
         brand = project.meta.get("brand")
         if not self._brand_key(brand):
             return []
+        profile = self.get_brand_profile(owner, brand)
         rules = collect_brand_rules(
             [
                 (name, doc)
                 for name, doc in self._brand_documents(owner, brand, exclude_project=project.id)
             ]
         )
-        if not rules:
+        if not rules and not profile:
             return []
         with self._lock(project.id):
-            added = propose_brand_rules(project.document, rules, brand=str(brand))
+            added = []
+            if profile:
+                added.extend(propose_profile_rules(project.document, profile, brand=str(brand)))
+            if rules:
+                added.extend(propose_brand_rules(project.document, rules, brand=str(brand)))
             if added:
                 project.save(snapshot=True, label=f"brand rules proposed ({len(added)})")
         if added:
@@ -1070,6 +1091,63 @@ class ProjectService:
                 brand=str(brand), count=len(added),
             )
         return [c.id for c in added]
+
+    # ---- brand profiles ---------------------------------------------------------------
+    def _brand_profile_path(self, owner: str | None, brand: str) -> Path:
+        safe_owner = "".join(
+            ch if ch.isalnum() or ch in "-_" else "_" for ch in (owner or LOCAL_OWNER)
+        )[:64] or "owner"
+        safe_brand = "".join(
+            ch if ch.isalnum() or ch in "-_" else "_" for ch in self._brand_key(brand)
+        )[:64]
+        return self.brands_dir / safe_owner / f"{safe_brand}.json"
+
+    def get_brand_profile(self, owner: str | None, brand: str | None) -> dict | None:
+        if not self._brand_key(brand):
+            return None
+        path = self._brand_profile_path(owner, str(brand))
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except ValueError:
+            logger.warning("unreadable brand profile %s", path)
+            return None
+
+    def list_brand_profiles(self, owner: str | None) -> list[dict]:
+        folder = self._brand_profile_path(owner, "x").parent
+        out = []
+        for path in sorted(folder.glob("*.json")) if folder.exists() else []:
+            try:
+                out.append(json.loads(path.read_text(encoding="utf-8")))
+            except ValueError:
+                continue
+        return out
+
+    def save_brand_profile(self, owner: str | None, brand: str, raw: dict,
+                           *, by: str | None = None) -> dict:
+        brand = str(brand).strip()
+        if not self._brand_key(brand) or len(brand) > 80:
+            raise ServiceError("brand: 1-80 characters", 400)
+        try:
+            profile = normalize_profile(raw, brand=brand)
+        except ValueError as exc:
+            raise ServiceError(str(exc), 400) from exc
+        profile["updated_at"] = _now()
+        profile["updated_by"] = by
+        path = self._brand_profile_path(owner, brand)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(profile, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+        self.events.record(owner or LOCAL_OWNER, "brand_profile_saved", brand=brand, by=by)
+        return profile
+
+    def delete_brand_profile(self, owner: str | None, brand: str) -> None:
+        path = self._brand_profile_path(owner, brand)
+        if not path.exists():
+            raise ServiceError("brand profile not found", 404)
+        path.unlink()
 
     def _brand_documents(
         self, owner: str | None, brand: str | None, *, exclude_project: str | None = None

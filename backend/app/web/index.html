@@ -71,8 +71,38 @@
       <div id="project-list" class="project-list"></div>
       <div id="projects-empty" class="empty hidden">No projects yet.</div>
     </div>
+    <div id="brand-card" class="card" style="margin-top:16px">
+      <h2>Brand profiles</h2>
+      <p class="small muted">Colours, fonts and logo rules from the brand book. Projects with this brand get the logo and text rules as reviewable proposals, and every variant is checked against the palette and fonts (off-brand → needs review, never silent). Nothing leaves this machine.</p>
+      <div class="row">
+        <div class="grow"><label>Brand</label><input id="brand-name" type="text" list="brand-list" placeholder="Acme"><datalist id="brand-list"></datalist></div>
+        <div><label>&nbsp;</label><button id="brand-load" type="button">Open</button></div>
+      </div>
+      <div id="brand-form" class="hidden">
+        <div class="row">
+          <div class="grow"><label>Primary colour</label><input id="brand-primary" type="text" placeholder="#1f3b63"></div>
+          <div class="grow"><label>Secondary</label><input id="brand-secondary" type="text" placeholder="#ffd166"></div>
+          <div class="grow"><label>Accent</label><input id="brand-accent" type="text" placeholder="#ef476f"></div>
+        </div>
+        <label>More palette colours (comma separated) · <label class="small" style="display:inline"><input id="brand-strict" type="checkbox" style="width:auto"> strict (white/black not implied)</label></label>
+        <input id="brand-palette" type="text" placeholder="#ffffff, #000000">
+        <div class="row">
+          <div class="grow"><label>Headline font</label><input id="brand-font-head" type="text" list="brand-font-list" placeholder="Montserrat"><datalist id="brand-font-list"></datalist></div>
+          <div class="grow"><label>Body font</label><input id="brand-font-body" type="text" list="brand-font-list" placeholder="DejaVu Sans"></div>
+        </div>
+        <div class="row">
+          <div class="grow"><label>Logo clear space (× logo height)</label><input id="brand-logo-clear" type="number" step="0.1" min="0" max="3" placeholder="0.5"></div>
+          <div class="grow"><label>Min logo height (% of canvas)</label><input id="brand-logo-min" type="number" step="0.5" min="0" max="50" placeholder="6"></div>
+          <div class="grow"><label>Min text size (px)</label><input id="brand-text-min" type="number" min="0" max="200" placeholder="14"></div>
+        </div>
+        <label>Tone / notes</label><textarea id="brand-tone" placeholder="Confident, short sentences. Prices always with currency."></textarea>
+        <label>Never (one per line)</label><textarea id="brand-donot" placeholder="Logo on busy photos&#10;Headline in lowercase"></textarea>
+        <div class="row" style="margin-top:8px"><button id="brand-save" class="primary" type="button" data-needs="edit">Save brand</button><button id="brand-delete" type="button" class="danger" data-needs="edit">Delete</button><span id="brand-status" class="small muted grow"></span></div>
+      </div>
+    </div>
     <div id="workspace-card" class="card hidden" style="margin-top:16px">
       <h2>Workspace <span id="workspace-name" class="muted"></span></h2>
+      <div id="plan-line" class="small muted" style="margin:-4px 0 8px"></div>
       <div id="members-wrap" class="hidden">
         <h3>Members</h3>
         <table class="members" id="member-table"><thead><tr><th>User</th><th>Role</th><th></th></tr></thead><tbody></tbody></table>

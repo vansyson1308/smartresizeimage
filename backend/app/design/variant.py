@@ -580,6 +580,11 @@ def _verify(
     extra = constraint_checks(doc, layout, target, typography, required)
     extra.extend(_typography_checks(typography, doc))
     extra.extend(_provenance_checks(doc, layout))
+    profile = doc.metadata.get("brand_profile") if isinstance(doc.metadata, dict) else None
+    if isinstance(profile, dict) and profile:
+        from .brand import brand_profile_checks
+
+        extra.extend(brand_profile_checks(doc, layout, typography, profile))
     if extra:
         checks = report.checks + extra
         report = QualityReport(

@@ -436,6 +436,24 @@ def _run(j: Journey, page, base: str, logo: Path, hero: Path) -> None:
     page.click("#member-add")
     page.wait_for_selector("#member-table td:has-text('reviewer')")
     j.step("add approver member via UI")
+    j.step("plan and usage shown in the workspace card",
+           page.inner_text("#plan-line").startswith("Plan unlimited"),
+           text=page.inner_text("#plan-line"))
+    # brand profile card: colours, fonts and logo rules stored per workspace
+    page.fill("#brand-name", "Acme")
+    page.click("#brand-load")
+    page.wait_for_selector("#brand-form:not(.hidden)")
+    page.fill("#brand-primary", "#1f3b63")
+    page.fill("#brand-font-head", "DejaVu Sans")
+    page.fill("#brand-logo-clear", "0.6")
+    page.fill("#brand-text-min", "12")
+    page.click("#brand-save")
+    page.wait_for_selector("#brand-status:has-text('Saved')")
+    saved = j.get("/api/brands/Acme")["profile"]
+    j.step("brand profile saved via UI",
+           saved["colors"]["primary"] == "#1f3b63"
+           and saved["fonts"]["headline"]["family"] == "DejaVu Sans"
+           and saved["logo"]["clear_space_ratio"] == 0.6 and saved["text"]["min_px"] == 12)
     page.fill("#token-name", "ci")
     page.click("#token-create")
     page.wait_for_selector("#token-new:not(.hidden)")
