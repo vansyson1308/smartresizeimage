@@ -15,6 +15,10 @@ lands behind flags with a rollback path.
 
 ## Results log
 
+- 2026-09-11 — Extreme strips (`results/strips_2026-09-11.md`): measuring 728×90 exposed a
+  false positive in the new subject-integrity check (a 22×10 px logo called "stretched" by
+  integer rounding), fixed with a rounding-aware tolerance: 728×90 acceptance 3/15 → 12/15,
+  970×250 15/15. The remaining three are long-copy stacks that do not fit a 90 px strip.
 - 2026-09-11 — Counterexample search (`results/counterexamples_2026-09-11.md`, 420 renders
   under seeded perturbations, OCR on): 0 accepted renders rejected by an independent oracle
   (rendered-mask overlap, bounds, hard rules on final boxes, subject correlation) and 0

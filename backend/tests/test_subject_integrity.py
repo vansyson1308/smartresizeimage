@@ -86,3 +86,21 @@ def test_stretched_and_occluded_subjects_are_caught(tmp_path: Path) -> None:
     off = [LayoutResult("hero", BoundingBox(598, 398, 195, 215), 0.5)]
     nc = subject_integrity_checks(doc, elements, off, canvas)
     assert nc[0].status.value == "not_checked"
+
+
+def test_tiny_boxes_tolerate_integer_rounding_but_not_real_stretching(tmp_path: Path) -> None:
+    """Found on 728x90 strips: a 180x80 logo scaled to 22x10 px is 0.122 by 0.125, which is
+    rounding, not stretching. A 30x10 box of the same logo is stretching."""
+    doc, store = _patterned_doc(tmp_path)
+    elements = elements_from_document(doc, store)
+    logo = next(e for e in elements if e.id == "logo")
+    canvas = Image.new("RGBA", (728, 90), (255, 255, 255, 255))
+    box = BoundingBox(10, 10, 22, 10)
+    canvas.alpha_composite(logo.image.convert("RGBA").resize((22, 10)), (10, 10))
+    ok = subject_integrity_checks(doc, elements, [LayoutResult("logo", box, 0.12)], canvas)
+    assert ok[0].status.value in ("pass", "needs_review"), ok[0].message
+    assert "stretched" not in ok[0].message
+    bad = subject_integrity_checks(
+        doc, elements, [LayoutResult("logo", BoundingBox(10, 10, 30, 10), 0.12)], canvas
+    )
+    assert bad[0].status.value == "fail" and "stretched" in bad[0].message

@@ -208,6 +208,10 @@ isolated → token lists projects → 900 px without horizontal scroll.
 - **Offline guard** (B5): `AUTOBANNER_OFFLINE=1` refuses non-loopback connections at the
   socket level; the committed browser journey runs its server under the guard, so the whole
   declared workflow is exercised without network.
+- **Extreme strips**: measuring 728×90 exposed a false positive of the subject-integrity
+  check on tiny boxes (integer rounding), fixed with a rounding-aware tolerance; 728×90
+  acceptance 3/15 → 12/15, 970×250 15/15 (`results/strips_2026-09-11.md`). The remaining
+  three 728×90 failures are long-copy stacks that cannot fit 90 px and fail honestly.
 - Browser journey grew to 40 steps (campaign table read from CSV, count, generation, review
   filtered by row) and stays green.
 

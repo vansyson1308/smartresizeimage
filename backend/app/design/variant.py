@@ -638,7 +638,10 @@ def subject_integrity_checks(
         box = r.new_bbox
         sx, sy = box.width / src_w, box.height / src_h
         distortion = abs(sx - sy) / max(sx, sy, 1e-6)
-        if distortion > DISTORTION_TOLERANCE:
+        # Boxes are integers: on a tiny box (a 22x10 logo on a 728x90 strip) one pixel of
+        # rounding is already a 10% ratio change, so the tolerance grows with 1/min side.
+        tolerance = DISTORTION_TOLERANCE + 1.0 / max(1, min(box.width, box.height))
+        if distortion > tolerance:
             out.append(CheckResult(
                 "subject_integrity", CheckStatus.FAIL, Severity.CRITICAL,
                 f"{de.name} is stretched (scale x{sx:.2f} by y{sy:.2f})",
