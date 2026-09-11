@@ -196,3 +196,23 @@ def test_hard_rule_that_cannot_be_evaluated_is_not_checked_critical(tmp_path) ->
     for c in doc.constraints:
         c.hard = False
     assert _run(doc, _layout(boxes), {}) == []
+
+
+def test_repair_never_moves_an_element_against_a_hard_order_rule(tmp_path) -> None:
+    """Found by the counterexample search: the planner honoured a hard 'subheadline below
+    CTA' rule and the overlap repair then moved the CTA back below it. A repair move that
+    would break a hard order rule is undone."""
+    doc, store = _doc(tmp_path, long_copy=True)
+    doc.add_constraint(
+        Constraint(id="c_order2", type="order_below", elements=["sub", "cta"], hard=True)
+    )
+    for size in ((1080, 1080), (300, 250), (1080, 1920)):
+        result = generate_variant(
+            doc, store, VariantBrief(*size, name="t"), quality_config=QualityConfig(run_ocr=False),
+            planner="constraints",
+        )
+        placed = _placed(result)
+        if "sub" in placed and "cta" in placed:
+            assert placed["sub"].y >= placed["cta"].y, (size, result.repair_steps)
+        chk = _check(result, "constraint_order", "sub")
+        assert chk.status != CheckStatus.FAIL, (size, chk.message, result.repair_steps)

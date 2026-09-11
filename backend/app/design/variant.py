@@ -1063,9 +1063,9 @@ def _repair(
                 changed = True
                 if _overlap(t_lr.new_bbox, other_side[1].new_bbox) == 0:
                     continue
-            # 2) move text (never onto another element)
+            # 2) move text (never onto another element, never against a hard order rule)
             obstacles = _obstacles_for(layout, elements, {t_elem.id, other_side[0].id})
-            if _move_clear(t_lr, other_side[1], w, h, margin, obstacles):
+            if _move_clear_within_rules(doc, layout, t_lr, other_side[1], w, h, margin, obstacles):
                 steps.append(f"move:{t_elem.id}:clear_of:{other_side[0].id}")
                 changed = True
                 continue
@@ -1084,13 +1084,53 @@ def _repair(
                 continue
         # 4) move the non-text element
         obstacles = _obstacles_for(layout, elements, {victim_elem.id, partner_lr.element_id})
-        if victim_elem.layer_type != "type" and _move_clear(
-            victim_lr, partner_lr, w, h, margin, obstacles
+        if victim_elem.layer_type != "type" and _move_clear_within_rules(
+            doc, layout, victim_lr, partner_lr, w, h, margin, obstacles
         ):
             steps.append(f"move:{victim_elem.id}:clear_of:{partner_lr.element_id}")
             changed = True
 
     return changed, steps
+
+
+def _violates_hard_order(doc: DesignDocument, layout: list[LayoutResult], eid: str) -> bool:
+    """True when a hard order_below rule involving ``eid`` is broken by the current boxes."""
+    boxes = {r.element_id: r.new_bbox for r in layout if r.visible}
+    for c in doc.constraints:
+        if not c.enabled or not c.hard or c.type != "order_below" or len(c.elements) != 2:
+            continue
+        if eid not in c.elements:
+            continue
+        a, b = boxes.get(c.elements[0]), boxes.get(c.elements[1])
+        if a is not None and b is not None and a.y < b.y:
+            return True
+    return False
+
+
+def _move_clear_within_rules(
+    doc: DesignDocument,
+    layout: list[LayoutResult],
+    lr: LayoutResult,
+    other: LayoutResult,
+    w: int,
+    h: int,
+    margin: int,
+    obstacles: list[BoundingBox],
+) -> bool:
+    """A repair move that would break a hard order rule is undone, not kept.
+
+    Found by the counterexample search: the planner had reordered a subheadline
+    below the CTA to honour a hard rule and the overlap repair then moved the CTA
+    back below it. The verdict caught that (failed), but a repair must not create
+    the violation in the first place.
+    """
+    before = lr.new_bbox
+    if not _move_clear(lr, other, w, h, margin, obstacles):
+        return False
+    if _violates_hard_order(doc, layout, lr.element_id):
+        lr.new_bbox = before
+        return False
+    return True
 
 
 def _priority(elem: DesignElement | None) -> int:
