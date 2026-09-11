@@ -160,7 +160,7 @@
     "browser": "pytest backend/tests/e2e -rs (server runs with AUTOBANNER_OFFLINE=1)",
     "last_run": {
       "date": "2026-09-11",
-      "unit": "336 passed",
+      "unit": "337 passed",
       "browser": "41 steps, 0 errors, offline"
     },
     "campaign": "python backend/tools/run_campaign.py --rows 12 --formats 6",

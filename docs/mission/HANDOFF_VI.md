@@ -24,7 +24,7 @@ cái gì mới chỉ có code, cái gì bị chặn vì thiếu điều kiện b
 python3 -m venv .venv && .venv/bin/pip install -r backend/requirements-ci.txt
 .venv/bin/pip install "uvicorn[standard]" playwright && .venv/bin/python -m playwright install --with-deps chromium
 .venv/bin/ruff check backend                                   # sạch
-.venv/bin/python -m pytest backend/tests --ignore=backend/tests/e2e -q   # 336 passed (11/09)
+.venv/bin/python -m pytest backend/tests --ignore=backend/tests/e2e -q   # 337 passed (11/09)
 .venv/bin/python -m pytest backend/tests/e2e -rs               # browser journey 41 bước, 0 lỗi, server chạy AUTOBANNER_OFFLINE=1
 AUTOBANNER_AUTH=local AUTOBANNER_DATA_DIR=./data .venv/bin/uvicorn backend.app.api.server:app --port 8000
 ```
