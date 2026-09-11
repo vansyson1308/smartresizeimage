@@ -79,16 +79,16 @@
       ]
     },
     "B_commercial_spine": {
-      "status": "IN_PROGRESS",
+      "status": "DONE_LOCAL",
       "done": [
         "campaign table: rows x formats in one job (12 x 6 = 72 measured: results/campaign_12x6_2026-09-11.md), CSV import, per-row checks, row-grouped review and export",
-        "restart resume of interrupted variant jobs (durable job records + stored briefs)"
+        "restart resume of interrupted variant jobs (durable job records + stored briefs)",
+        "brand profile per workspace: proposals into projects of the brand and palette/font checks on every variant",
+        "plan entitlements per workspace (usage shows used/remaining, 402 beyond the plan, operator assignment)",
+        "offline guard: browser journey runs with outbound network refused"
       ],
       "next": [
-        "brand model + editor (colours, fonts, logo rules, tone) applied as proposals and checks",
-        "entitlement/plan limits per workspace",
-        "offline guard proving the installed product works without network",
-        "creative directions per row"
+        "creative directions per row (deferred to phase C: they are a planner concern)"
       ]
     },
     "C_owned_intelligence": {
@@ -151,11 +151,11 @@
   "verification": {
     "lint": "ruff check backend",
     "unit": "pytest backend/tests --ignore=backend/tests/e2e",
-    "browser": "pytest backend/tests/e2e -rs",
+    "browser": "pytest backend/tests/e2e -rs (server runs with AUTOBANNER_OFFLINE=1)",
     "last_run": {
       "date": "2026-09-11",
-      "unit": "303 passed",
-      "browser": "34 steps, 0 errors"
+      "unit": "see STATE.md",
+      "browser": "40 steps, 0 errors, offline"
     },
     "campaign": "python backend/tools/run_campaign.py --rows 12 --formats 6"
   },

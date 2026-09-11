@@ -46,16 +46,14 @@ Screenshots and `journey_report.json` (every step with its result) land in
 Mission V2 phase A (audit closure) is done locally; see `LEDGER.json`. Continue with phase B,
 in this order:
 
-1. Brand model + editor: colours, fonts, logo rules, tone; stored per workspace and applied
-   as proposals and checks in every project of the brand (extends `design/brand.py`).
-2. Entitlement limits per workspace (plan record surfaced in `GET /api/usage`).
-3. Offline guard (`AUTOBANNER_OFFLINE=1`) and the browser journey under it; creative
-   directions per campaign row.
-   Done in this phase: campaign table (`rows`, CSV import, per-row review/export,
-   `tools/run_campaign.py`) and restart resume of interrupted jobs.
-4. Then phases C (adaptive grammar/compiler, mascot invariants, incremental compilation,
-   counterexample tooling), D (R1–R4 on a designed 12-brand corpus with baselines) and E
-   (Docker build on a machine with a daemon, packaging, Vietnamese handoff).
+Phase B is done locally: campaign table (`rows`, CSV import, per-row review/export,
+`tools/run_campaign.py`), restart resume, brand profiles, plan entitlements, offline guard.
+
+1. Phase C (owned intelligence): creative directions per campaign row as planner inputs;
+   adaptive grammar/compiler over the layout families; mascot/subject invariants;
+   incremental compilation; counterexample tooling.
+2. Then phase D (R1–R4 on a designed 12-brand corpus with baselines and ablations) and
+   phase E (Docker build on a machine with a daemon, packaging, Vietnamese handoff).
 
 ## Files to know
 

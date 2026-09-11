@@ -865,6 +865,7 @@ class ProjectService:
                 f"too many variants in one job ({total}; max {MAX_VARIANTS_PER_JOB})", 400
             )
         meter_owner = owner or project.meta.get("owner") or LOCAL_OWNER
+        self.check_campaign_rows(meter_owner, len(rows))
         self._check_quota_variants(meter_owner, total)
         text_overrides = dict(spec.get("text_overrides") or {})
         for eid in text_overrides:

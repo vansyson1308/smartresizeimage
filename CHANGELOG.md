@@ -10,6 +10,18 @@ All notable changes to this project will be documented in this file.
   (`POST /api/projects/{id}/campaign/rows`) or the table in the Variants view; review
   filters by row, exports keep one folder per row and list the row in the manifest;
   consistency checks run within a row. `backend/tools/run_campaign.py` measures a 12 × 6 run.
+- Brand profiles (`PUT/GET/DELETE /api/brands/{brand}`, brand card in the UI): colours,
+  fonts, logo clear space and minimum size, minimum text size, tone and "never" notes per
+  workspace; proposed as soft rules into projects of the brand and checked on every variant
+  (`brand_palette`, `brand_font` → needs_review when off-brand).
+- Plan entitlements per workspace (`free`/`team`/`business`/`unlimited`, operator-defined
+  plans via `AUTOBANNER_PLANS`, assignments via `PUT /api/plans/{workspace}` with the setup
+  token or `AUTOBANNER_WORKSPACE_PLANS`): variants per day, projects, members, campaign rows
+  per job and storage; shown in `GET /api/usage` and the workspace card; refused with 402
+  naming the plan. Global quotas still apply on top.
+- Offline guard (`AUTOBANNER_OFFLINE=1`): outbound connections refused at the socket level;
+  the browser journey runs its server under the guard as evidence that the product works
+  without network after installation.
 - Restart resume: variant jobs cut short by a restart continue on the next start from the
   briefs and layout families stored with the job (`resumed_from` / `resumed_by` on job
   records; `AUTOBANNER_RESUME_JOBS=0` keeps the old mark-as-failed behaviour).

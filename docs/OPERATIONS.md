@@ -29,6 +29,10 @@ auth mode and limits. API docs: `/api/docs`.
 | `AUTOBANNER_RETENTION_DAYS` | unset | Delete projects (variants, history, corrections) untouched for longer than this, and trim event-log lines older than this, at startup and once a day. Logged as `project_purged`. No undo: export a project zip first if you want to keep it. |
 | `AUTOBANNER_API_KEY` | unset | Single-key form of `AUTOBANNER_API_KEYS` (owner `default`). |
 | `AUTOBANNER_JOB_WORKERS` | `2` | Concurrent variant jobs. Each variant is CPU-bound (1–4 s on 4 cores). |
+| `AUTOBANNER_OFFLINE` | unset | Refuse every outbound network connection at the socket level (loopback and Unix sockets stay allowed). The product needs no network after installation; the guard makes a hidden dependency an error in the logs instead of a silent call. `/api/health` reports `offline`. |
+| `AUTOBANNER_DEFAULT_PLAN` | `unlimited` | Plan for workspaces without an assignment (`free`, `team`, `business`, `unlimited` or a plan from `AUTOBANNER_PLANS`). |
+| `AUTOBANNER_PLANS` | unset | JSON that adds or overrides plan definitions, e.g. `{"free": {"variants_per_day": 20}}`; keys `variants_per_day`, `projects`, `members`, `campaign_rows`, `storage_bytes` (null = unlimited). |
+| `AUTOBANNER_WORKSPACE_PLANS` | unset | Fixed assignments `acme:team,globex:free`; they override `data/plans.json`. |
 | `AUTOBANNER_RESUME_JOBS` | `1` | On start, continue variant jobs a restart cut short: unfinished variants are queued again in a new job that records `resumed_from`; the interrupted job records `resumed_by`. Set `0` to mark them failed instead (`interrupted by restart`). |
 | `AUTOBANNER_QUOTA_VARIANTS_PER_DAY` | unlimited | Per-owner daily variant cap → HTTP 429. |
 | `AUTOBANNER_QUOTA_PROJECTS` | unlimited | Per-owner project cap → HTTP 429. |
@@ -95,6 +99,45 @@ rows: the header names text elements (by name, id or unique role) plus optional
 and ignored. The UI's Variants view has the same table with a file picker.
 `backend/tools/run_campaign.py` measures a 12 × 6 run on the synthetic fixture.
 
+## Plans (entitlement)
+
+Every workspace is on a plan. Built-in plans:
+
+| Plan | Variants / day | Projects | Members | Campaign rows / job | Storage |
+|---|---:|---:|---:|---:|---:|
+| free | 50 | 3 | 2 | 3 | 512 MB |
+| team | 1 000 | 100 | 10 | 50 | 20 GB |
+| business | 10 000 | 1 000 | 100 | 200 | 200 GB |
+| unlimited | – | – | – | – | – |
+
+`GET /api/usage` shows the plan with its limits, what is used and what remains;
+`GET /api/plans` lists the definitions. A request beyond the plan is refused with HTTP 402
+and a message naming the plan (nothing is created). The operator assigns plans with
+`PUT /api/plans/{workspace}` `{"plan": "team"}` and the setup token in `X-Setup-Token`
+(local auth mode), or with `AUTOBANNER_WORKSPACE_PLANS`. Workspace administrators cannot
+change their own plan. Global `AUTOBANNER_QUOTA_*` caps still apply on top (the stricter
+limit wins, reported as 429). No billing provider is contacted: plans are a local record.
+
+## Brand profiles
+
+`PUT /api/brands/{brand}` (editor or admin) stores the brand book as data for the workspace:
+
+```json
+{"colors": {"primary": "#1f3b63", "accent": "#ffd166", "palette": "#ffffff, #000000",
+            "strict": false},
+ "fonts": {"headline": "Montserrat", "body": {"family": "DejaVu Sans", "weight": "regular"}},
+ "logo": {"clear_space_ratio": 0.6, "min_height_ratio": 0.06, "always_visible": true},
+ "text": {"min_px": 14}, "tone": "Short, confident.", "do_not": ["Logo on busy photos"]}
+```
+
+`GET /api/brands` lists the workspace's profiles, `GET /api/brands/{brand}` returns the
+profile with the rules carried from the brand's projects, `DELETE` removes it. Projects with
+that brand get the logo and text rules as reviewable proposals (soft constraints marked
+"brand profile"); every rendered variant is checked against the palette (`brand_palette`)
+and fonts (`brand_font`), landing in `needs_review` when off-brand. White and black count as
+part of the palette unless `strict` is set. Profiles live under `data/brands/<workspace>/`
+and never leave the machine.
+
 ## Data layout
 
 ```
@@ -105,6 +148,8 @@ $AUTOBANNER_DATA_DIR/
   projects/<proj_id>/history/NNNNN.json # document snapshots (undo/restore)
   projects/<proj_id>/source/original.*  # uploaded master
   jobs/job_*.json                        # durable job records
+  brands/<workspace>/<brand>.json        # brand profiles (colours, fonts, logo rules)
+  plans.json                             # plan assignments per workspace
   usage/<owner>.json                     # metering counters
   auth/users.json                        # users (hashed passwords), session/token digests
   fonts/                                 # deployment fonts

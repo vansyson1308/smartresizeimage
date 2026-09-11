@@ -195,7 +195,20 @@ isolated → token lists projects → 900 px without horizontal scroll.
   brief, so a restart continues unfinished variants in a new job (`resumed_from` /
   `resumed_by`, event `job_resumed`) instead of failing them; `AUTOBANNER_RESUME_JOBS=0`
   restores the old behaviour. Finished variants of the interrupted job are untouched.
-- Browser journey grew to 39 steps (campaign table read from CSV, count, generation, review
+- **Brand profile** (B3): the brand book as data per workspace (colours with an optional
+  strict palette, headline/body fonts, logo clear space and minimum height, minimum text
+  size, tone, never-list); projects of the brand get the logo/text rules as reviewable soft
+  constraints and every variant carries `brand_palette` / `brand_font` checks that land
+  off-brand copy in review. Stored under `data/brands/<workspace>/`, never sent anywhere.
+- **Plan entitlements** (B4): each workspace is on a plan (built-in free/team/business/
+  unlimited or operator-defined) capping variants per day, projects, members, campaign rows
+  per job and storage; `GET /api/usage` shows used/remaining; over-limit requests get 402
+  naming the plan before anything is created; operator assignment with the setup token or
+  `AUTOBANNER_WORKSPACE_PLANS`; global quotas still win when stricter.
+- **Offline guard** (B5): `AUTOBANNER_OFFLINE=1` refuses non-loopback connections at the
+  socket level; the committed browser journey runs its server under the guard, so the whole
+  declared workflow is exercised without network.
+- Browser journey grew to 40 steps (campaign table read from CSV, count, generation, review
   filtered by row) and stays green.
 
 ## Release-criteria check (2026-09-09, end of this session)
