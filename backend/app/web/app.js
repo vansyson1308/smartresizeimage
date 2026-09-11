@@ -93,6 +93,7 @@
       for (const p of data.projects) {
         const el = document.createElement("div");
         el.className = "card project-tile";
+        el.dataset.id = p.id;
         el.innerHTML = `<strong>${esc(p.name)}</strong><div class="small muted">${esc(p.brand || "")} · ${p.canvas.width}×${p.canvas.height} · ${p.element_count} elements · ${p.variant_count} variants</div><div class="small muted">Updated ${esc(p.updated_at || "")}</div>`;
         el.addEventListener("click", () => openProject(p.id));
         list.appendChild(el);
@@ -224,6 +225,12 @@
     if (isText) {
       const st = e.text.runs[0] ? e.text.runs[0].style : {};
       $("#el-text").value = e.text.runs.map((r) => r.text).join("");
+      const runsNote = $("#el-runs-note");
+      runsNote.classList.toggle("hidden", e.text.runs.length <= 1);
+      if (e.text.runs.length > 1) {
+        const parts = e.text.runs.map((r) => `"${r.text.length > 18 ? r.text.slice(0, 18) + "…" : r.text}" ${r.style.weight || "regular"} ${Math.round(r.style.font_size || 0)}px ${r.style.color || ""}`);
+        runsNote.textContent = `${e.text.runs.length} styled runs (kept on edit; the fields below show the first run and apply changes to all): ${parts.join(" · ")}`;
+      }
       $("#el-font").value = st.font_family || "";
       $("#el-size").value = Math.round(st.font_size || 24);
       $("#el-weight").value = st.weight || "regular";

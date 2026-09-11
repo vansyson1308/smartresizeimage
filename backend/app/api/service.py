@@ -1396,6 +1396,81 @@ def _apply_decomposition(doc: DesignDocument, result, store: AssetStore, size) -
     doc.constraints = propose_constraints(doc)
 
 
+_STYLE_STR = ("font_family", "weight", "color", "align")
+_STYLE_NUM = ("font_size", "line_height", "letter_spacing")
+_STYLE_BOOL = ("italic", "uppercase")
+
+
+def _apply_style_to_runs(text, style: dict) -> None:
+    """Apply a style edit to every run, keeping what makes the runs different.
+
+    Only fields that actually change against the primary run are touched, so a
+    colour or size edit made in the single-style editor does not flatten a bold or
+    differently coloured second run: sizes scale by the same ratio and every run
+    keeps its own value for fields the edit leaves alone.
+    """
+    if not style or not text.runs:
+        return
+    primary = text.primary_style
+    changes: dict[str, object] = {}
+    for key in _STYLE_STR:
+        if key in style and str(style[key]) != getattr(primary, key):
+            changes[key] = str(style[key])
+    for key in _STYLE_NUM:
+        if key in style and float(style[key]) != float(getattr(primary, key)):
+            changes[key] = float(style[key])
+    for key in _STYLE_BOOL:
+        if key in style and bool(style[key]) != bool(getattr(primary, key)):
+            changes[key] = bool(style[key])
+    if not changes:
+        return
+    ratio = None
+    if "font_size" in changes:
+        base = float(primary.font_size) or 1.0
+        ratio = float(changes["font_size"]) / base
+    for run in text.runs:
+        st = run.style
+        for key, value in changes.items():
+            if key == "font_size":
+                st.font_size = round(float(st.font_size) * ratio, 2) if ratio else float(value)
+            elif key == "letter_spacing" and run is not text.runs[0] and st.letter_spacing:
+                # keep a run's own tracking unless the edit clears it
+                st.letter_spacing = float(value) if not value else st.letter_spacing
+            else:
+                setattr(st, key, value)
+
+
+def _runs_from_payload(raw, primary) -> list:
+    """Validate an explicit ``runs`` edit: [{"text": ..., "style": {...}}, ...]."""
+    from ..design.document import TextRun, TextStyle
+
+    if not isinstance(raw, list) or not raw:
+        raise ServiceError("runs must be a non-empty list of {text, style}", 400)
+    runs = []
+    for item in raw[:64]:
+        if not isinstance(item, dict) or "text" not in item:
+            raise ServiceError("each run needs a text", 400)
+        st = TextStyle(**{k: getattr(primary, k) for k in TextStyle.__dataclass_fields__})
+        style = item.get("style") or {}
+        if not isinstance(style, dict):
+            raise ServiceError("run style must be an object", 400)
+        for key in _STYLE_STR:
+            if key in style:
+                setattr(st, key, str(style[key]))
+        for key in _STYLE_NUM:
+            if key in style:
+                setattr(st, key, float(style[key]))
+        for key in _STYLE_BOOL:
+            if key in style:
+                setattr(st, key, bool(style[key]))
+        text = str(item["text"])
+        if text:
+            runs.append(TextRun(text=text, style=st))
+    if not runs:
+        raise ServiceError("runs must contain text", 400)
+    return runs
+
+
 def _import_notes(doc: DesignDocument, ext: str, decomposition=None) -> list[str]:
     notes: list[str] = []
     if ext != ".psd" and decomposition is None:
@@ -1421,9 +1496,26 @@ def _import_notes(doc: DesignDocument, ext: str, decomposition=None) -> list[str
     if missing:
         names = ", ".join(sorted({f.family for f in missing}))
         notes.append(f"Fonts not available and substituted: {names}.")
-    unsupported = sorted({k for e in doc.elements for k in e.effects if k != "drop_shadow"})
+    unsupported = sorted({
+        k for e in doc.elements for k in e.effects
+        if k not in ("drop_shadow", "unsupported_text_attributes")
+    })
     if unsupported:
         notes.append("Unsupported layer effects are ignored: " + ", ".join(unsupported[:6]))
+    attrs = sorted({
+        a for e in doc.elements for a in (e.effects.get("unsupported_text_attributes") or [])
+    })
+    if attrs:
+        notes.append(
+            "Text attributes not reproduced by the renderer (kept as plain runs): "
+            + ", ".join(attrs) + "."
+        )
+    mixed = [e for e in doc.elements if e.text is not None and len(e.text.runs) > 1]
+    if mixed:
+        notes.append(
+            f"{len(mixed)} text element(s) keep several styled runs (mixed weight, size or "
+            "colour); they are fitted and rendered per run."
+        )
     return notes
 
 
@@ -1468,20 +1560,13 @@ def _apply_op(doc: DesignDocument, op: dict) -> None:
             raise ServiceError("element is not text", 400)
         if e.locked:
             raise ServiceError(f"element {e.id} is locked", 409)
-        if "text" in op and op["text"] is not None:
-            e.text.replace_text(str(op["text"]))
+        if "runs" in op:
+            e.text.runs = _runs_from_payload(op["runs"], e.text.primary_style)
+        elif "text" in op and op["text"] is not None:
+            # keeps the styled runs around the edited characters (finding 3)
+            e.text.edit_text(str(op["text"]))
         style = op.get("style") or {}
-        st = e.text.primary_style
-        for key in ("font_family", "weight", "color", "align"):
-            if key in style:
-                setattr(st, key, str(style[key]))
-        for key in ("font_size", "line_height", "letter_spacing"):
-            if key in style:
-                setattr(st, key, float(style[key]))
-        if "italic" in style:
-            st.italic = bool(style["italic"])
-        if "uppercase" in style:
-            st.uppercase = bool(style["uppercase"])
+        _apply_style_to_runs(e.text, style)
         if "protected" in op:
             e.text.protected = bool(op["protected"])
         if "max_lines" in op:

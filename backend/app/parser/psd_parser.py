@@ -160,31 +160,58 @@ class PSDParser(BaseParser):
             return None
 
     def _extract_font_info(self, layer: object) -> dict:
-        """Extract font information from type layer."""
+        """Extract font information from a type layer.
+
+        Returns the first run's family/size/colour (legacy keys) plus ``runs``: one
+        entry per Photoshop style run with its character ``length`` and style, so a
+        headline like "50% OFF" keeps a different face, weight or colour on "OFF".
+        Unsupported attributes (underline, strikethrough, baseline shift) are
+        recorded so the import can disclose them.
+        """
+        info: dict = {"text": layer.text if hasattr(layer, "text") else ""}
         try:
-            info = {
-                "text": layer.text if hasattr(layer, "text") else "",
-            }
-
-            # Try to get font details from engine_dict
-            if hasattr(layer, "engine_dict") and layer.engine_dict:
-                ed = layer.engine_dict
-                if "StyleRun" in ed:
-                    style_run = ed["StyleRun"]
-                    if "RunArray" in style_run and style_run["RunArray"]:
-                        first_run = style_run["RunArray"][0]
-                        if "StyleSheet" in first_run:
-                            ss = first_run["StyleSheet"]["StyleSheetData"]
-                            info["font_size"] = ss.get("FontSize", 12)
-                            info["font_name"] = ss.get("Font", "Unknown")
-                            info["color"] = ss.get("FillColor", {}).get(
-                                "Values", [1, 0, 0, 0]
-                            )
-
-            return info
-        except (KeyError, IndexError, AttributeError, TypeError) as e:
+            ed = getattr(layer, "engine_dict", None) or {}
+            rd = getattr(layer, "resource_dict", None) or {}
+            fontset = [str(f.get("Name", "")) for f in rd.get("FontSet", [])]
+            style_run = ed.get("StyleRun", {}) if hasattr(ed, "get") else {}
+            arr = list(style_run.get("RunArray", []) or [])
+            lengths = list(style_run.get("RunLengthArray", []) or [])
+            runs: list[dict] = []
+            for i, run in enumerate(arr):
+                ss = run.get("StyleSheet", {}).get("StyleSheetData", {})
+                font_index = int(ss.get("Font", 0))
+                name = fontset[font_index] if 0 <= font_index < len(fontset) else "Unknown"
+                lower = name.lower()
+                color = ss.get("FillColor", {}).get("Values", [1, 0, 0, 0])
+                runs.append(
+                    {
+                        "length": int(lengths[i]) if i < len(lengths) else 0,
+                        "font_name": name,
+                        "font_size": float(ss.get("FontSize", 12)),
+                        "color": [float(v) for v in color],
+                        "bold": bool(ss.get("FauxBold", False)) or "bold" in lower,
+                        "italic": bool(ss.get("FauxItalic", False))
+                        or "italic" in lower
+                        or "oblique" in lower,
+                        "tracking": float(ss.get("Tracking", 0) or 0),
+                        "underline": bool(ss.get("Underline", False)),
+                        "strikethrough": bool(ss.get("Strikethrough", False)),
+                        "baseline_shift": float(ss.get("BaselineShift", 0) or 0),
+                    }
+                )
+            if runs:
+                info["runs"] = runs
+                info["font_size"] = runs[0]["font_size"]
+                info["font_name"] = runs[0]["font_name"]
+                info["color"] = runs[0]["color"]
+            para = list(ed.get("ParagraphRun", {}).get("RunArray", []) or [])
+            if para:
+                props = para[0].get("ParagraphSheet", {}).get("Properties", {})
+                just = int(props.get("Justification", 0))
+                info["align"] = {0: "left", 1: "right", 2: "center"}.get(just, "left")
+        except (KeyError, IndexError, AttributeError, TypeError, ValueError) as e:
             logger.debug("Could not extract font info: %s", e)
-            return {"text": getattr(layer, "text", "")}
+        return info
 
     def _extract_effects(self, layer: object) -> dict:
         """Extract layer effects (shadow, glow, etc.)."""

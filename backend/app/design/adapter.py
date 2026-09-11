@@ -84,6 +84,95 @@ def _origin_for(elem: DesignElement, default: str) -> str:
     return default
 
 
+
+
+def _family_from_font_name(name: str) -> str:
+    """The family recorded for a PostScript name.
+
+    The full name (``Montserrat-Bold``) is kept: the registry matches it by prefix
+    and the weight/italic flags are carried separately, so nothing is guessed away.
+    """
+    return name.strip() or "DejaVu Sans"
+
+
+def _run_style(run: dict, size: float, align: str, fallback_size: float) -> TextStyle:
+    name = str(run.get("font_name") or run.get("family") or "DejaVu Sans")
+    lower = name.lower()
+    px = float(run.get("font_size") or size or fallback_size)
+    bold = bool(run.get("bold")) or "bold" in lower or "black" in lower or "heavy" in lower
+    italic = bool(run.get("italic")) or "italic" in lower or "oblique" in lower
+    tracking = float(run.get("tracking") or 0.0)
+    return TextStyle(
+        font_family=_family_from_font_name(name),
+        font_size=px,
+        weight="bold" if bold else "regular",
+        italic=italic,
+        color=_color_from_font_info(run),
+        letter_spacing=round(px * tracking / 1000.0, 2) if tracking else 0.0,
+        align=align if align in ("left", "center", "right") else "left",
+    )
+
+
+def text_runs_from_font_info(
+    text: str, info: dict, *, fallback_size: float = 24.0
+) -> list[TextRun]:
+    """Build styled runs for ``text`` from a parser ``font_info`` dict.
+
+    ``info["runs"]`` (one entry per style run with its character ``length``) is split
+    over the text in order; a length table that does not add up gives the remainder
+    to the last run so no character is lost. Without runs the legacy first-run keys
+    style the whole text. Photoshop paragraph breaks (``\r``) become newlines.
+    """
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    align = str(info.get("align") or "left")
+    size = float(info.get("font_size") or fallback_size)
+    raw = info.get("runs")
+    if not isinstance(raw, list) or not raw:
+        return [TextRun(text=text, style=_run_style(info, size, align, fallback_size))]
+    runs: list[TextRun] = []
+    cursor = 0
+    for idx, run in enumerate(raw):
+        if not isinstance(run, dict):
+            continue
+        length = max(0, int(run.get("length") or 0))
+        piece = text[cursor:] if idx == len(raw) - 1 else text[cursor:cursor + length]
+        cursor += len(piece)
+        if not piece:
+            continue
+        runs.append(TextRun(text=piece, style=_run_style(run, size, align, fallback_size)))
+    if cursor < len(text):
+        rest = text[cursor:]
+        if runs:
+            runs[-1].text += rest
+        else:
+            runs.append(TextRun(text=rest, style=_run_style(info, size, align, fallback_size)))
+    if not runs:
+        runs.append(TextRun(text=text, style=_run_style(info, size, align, fallback_size)))
+    # Adjacent runs with identical styles are one run (keeps documents small).
+    merged: list[TextRun] = []
+    for run in runs:
+        if merged and merged[-1].style == run.style:
+            merged[-1].text += run.text
+        else:
+            merged.append(run)
+    return merged
+
+
+def unsupported_text_attributes(info: dict) -> list[str]:
+    """Names of per-run text attributes the renderer does not reproduce (disclosed)."""
+    found: set[str] = set()
+    for run in info.get("runs") or []:
+        if not isinstance(run, dict):
+            continue
+        if run.get("underline"):
+            found.add("underline")
+        if run.get("strikethrough"):
+            found.add("strikethrough")
+        if run.get("baseline_shift"):
+            found.add("baseline shift")
+    return sorted(found)
+
+
 def document_from_elements(
     elements: list[DesignElement],
     source_size: tuple[int, int],
@@ -134,25 +223,25 @@ def document_from_elements(
         shape = None
         if kind == "text":
             info = elem.font_info or {}
-            family = str(info.get("font_name") or info.get("family") or "DejaVu Sans")
-            size = float(info.get("font_size") or max(8.0, elem.bbox.height * 0.7))
-            style = TextStyle(
-                font_family=family,
-                font_size=size,
-                color=_color_from_font_info(info),
-            )
-            text = TextContent(runs=[TextRun(text=str(elem.text_content), style=style)])
-            key = (family, style.weight, style.italic)
-            if key not in fonts:
-                resolved = reg.resolve(family, style.weight, style.italic)
-                fonts[key] = FontRef(
-                    family=family,
-                    weight=style.weight,
-                    italic=style.italic,
-                    path=resolved.path,
-                    status=resolved.status,
-                    substitute=resolved.family if resolved.substituted else None,
-                )
+            fallback_size = max(8.0, elem.bbox.height * 0.7)
+            text = TextContent(runs=text_runs_from_font_info(str(elem.text_content), info,
+                                                            fallback_size=fallback_size))
+            for run in text.runs:
+                key = (run.style.font_family, run.style.weight, run.style.italic)
+                if key not in fonts:
+                    resolved = reg.resolve(*key)
+                    fonts[key] = FontRef(
+                        family=key[0],
+                        weight=key[1],
+                        italic=key[2],
+                        path=resolved.path,
+                        status=resolved.status,
+                        substitute=resolved.family if resolved.substituted else None,
+                    )
+            unsupported = unsupported_text_attributes(info)
+            if unsupported:
+                elem.effects = dict(elem.effects or {})
+                elem.effects["unsupported_text_attributes"] = unsupported
             # Keep the original raster as a reference asset for fidelity checks.
             if elem.image is not None:
                 asset = assets.put(elem.image, elem.name)

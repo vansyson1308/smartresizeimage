@@ -133,6 +133,47 @@ class TextContent:
         style = self.primary_style
         self.runs = [TextRun(text=text, style=style)]
 
+    def edit_text(self, text: str) -> None:
+        """Change the plain text while keeping the styled runs around the edit.
+
+        The unchanged head and tail of the text keep their runs; the replaced middle
+        takes the style of the run it starts in (like typing in an editor). A single
+        run behaves exactly like :meth:`replace_text`.
+        """
+        old = self.plain
+        if text == old:
+            return
+        if len(self.runs) <= 1:
+            self.replace_text(text)
+            return
+        limit = min(len(old), len(text))
+        p = 0
+        while p < limit and old[p] == text[p]:
+            p += 1
+        s = 0
+        while s < limit - p and old[len(old) - 1 - s] == text[len(text) - 1 - s]:
+            s += 1
+        replacement = text[p:len(text) - s]
+        end_old = len(old) - s
+        runs: list[TextRun] = []
+        pos = 0
+        inserted = False
+        for run in self.runs:
+            start, end = pos, pos + len(run.text)
+            pos = end
+            head = run.text[: max(0, min(len(run.text), p - start))]
+            tail = run.text[max(0, min(len(run.text), end_old - start)):]
+            piece = head
+            if not inserted and end >= p:
+                piece += replacement
+                inserted = True
+            piece += tail
+            if piece:
+                runs.append(TextRun(text=piece, style=run.style))
+        if not inserted:
+            runs.append(TextRun(text=replacement, style=self.runs[-1].style))
+        self.runs = runs or [TextRun(text=text, style=self.primary_style)]
+
 
 @dataclass
 class AssetRef:

@@ -457,7 +457,35 @@ def _typeset_one(
     elem.image = render_text(content, fitted, box_w, new_h, registry=reg)
     lr.new_bbox = BoundingBox(lr.new_bbox.x, lr.new_bbox.y, box_w, new_h)
     lr.scale_factor = fitted.font_px / max(1.0, base_px)
-    missing = reg.missing_glyphs(fitted.resolved_font.path, content.plain)
+    # Glyph coverage is checked per run: each run may use a different face.
+    run_fonts = fitted.run_fonts or [fitted.resolved_font] * max(1, len(content.runs))
+    run_px = fitted.run_px or [fitted.font_px] * len(run_fonts)
+    runs_meta: list[dict] = []
+    missing: list[str] | None = []
+    for idx, run in enumerate(content.runs or [type("R", (), {"text": content.plain})()]):
+        rf = run_fonts[idx] if idx < len(run_fonts) else fitted.resolved_font
+        px = run_px[idx] if idx < len(run_px) else fitted.font_px
+        text = run.text.upper() if getattr(getattr(run, "style", None), "uppercase", False) \
+            else run.text
+        run_missing = reg.missing_glyphs(rf.path, text)
+        if run_missing is None:
+            missing = None
+        elif missing is not None:
+            missing.extend(ch for ch in run_missing if ch not in missing)
+        style = getattr(run, "style", None)
+        runs_meta.append(
+            {
+                "text": run.text[:40],
+                "font_px": int(px),
+                "font_family_requested": rf.requested_family,
+                "font_family_used": rf.family,
+                "font_status": rf.status,
+                "weight": getattr(style, "weight", "regular"),
+                "italic": bool(getattr(style, "italic", False)),
+                "color": getattr(style, "color", "#000000"),
+                "missing_glyphs": None if run_missing is None else "".join(run_missing),
+            }
+        )
     typography[elem.id] = {
         "font_px": fitted.font_px,
         "min_px": min_px,
@@ -468,6 +496,7 @@ def _typeset_one(
         "font_status": fitted.resolved_font.status,
         "missing_glyphs": None if missing is None else "".join(missing),
         "box_h": box_h,
+        "runs": runs_meta,
     }
     if missing:
         warnings.append(
@@ -475,11 +504,13 @@ def _typeset_one(
         )
     if fitted.overflow:
         warnings.append(f"text '{content.plain[:30]}' does not fit at minimum size")
-    if fitted.resolved_font.substituted:
-        warnings.append(
-            f"font '{fitted.resolved_font.requested_family}' missing; "
-            f"substituted {fitted.resolved_font.family}"
-        )
+    seen: set[str] = set()
+    for rf in run_fonts:
+        if rf.substituted and rf.requested_family not in seen:
+            seen.add(rf.requested_family)
+            warnings.append(
+                f"font '{rf.requested_family}' missing; substituted {rf.family}"
+            )
     return warnings
 
 
@@ -1062,15 +1093,21 @@ def _doc_elem(doc: DesignDocument, eid: str) -> Element | None:
 
 
 def _font_disclosure(typography: dict[str, dict]) -> list[dict]:
+    """Every face the variant used (one entry per requested family and status).
+
+    Multi-run text contributes each of its runs' faces, so a substituted bold face
+    inside an otherwise available family is disclosed, not hidden behind run 0.
+    """
     seen: dict[tuple[str, str], dict] = {}
     for t in typography.values():
-        key = (t["font_family_requested"], t["font_status"])
-        seen.setdefault(
-            key,
-            {
-                "requested": t["font_family_requested"],
-                "used": t["font_family_used"],
-                "status": t["font_status"],
-            },
-        )
+        for r in t.get("runs") or [t]:
+            key = (r["font_family_requested"], r["font_status"])
+            seen.setdefault(
+                key,
+                {
+                    "requested": r["font_family_requested"],
+                    "used": r["font_family_used"],
+                    "status": r["font_status"],
+                },
+            )
     return list(seen.values())
