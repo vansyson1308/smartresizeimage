@@ -13,7 +13,9 @@ cái gì mới chỉ có code, cái gì bị chặn vì thiếu điều kiện b
   `3b9b329` (F5), `cd4ea58` (docs kiểm toán), `5087bd7` (bảng chiến dịch + chạy tiếp job),
   `3f9d3c0` (hồ sơ thương hiệu), `3fe6858` (gói dịch vụ), `f0e0b7a` (chế độ offline),
   `1f62e64` (grammar + chỉ dẫn sáng tạo), `6ed7ca5` (giữ nguyên chủ thể), `2a6288c` (làm mới
-  tăng dần), `bd2c1c7` (tool phản ví dụ), `e27be88` (kết quả ablation grammar).
+  tăng dần), `bd2c1c7` (tool phản ví dụ), `e27be88` (kết quả ablation grammar), `8891194` (chữ
+  được phép bỏ trên cỡ nhỏ), `d6b7cea` (sửa race khi chạy tiếp job sau restart), `ff35220` (tóm
+  tắt bố cục trong chi tiết biến thể), `943e1c2` (sửa từng run chữ trong panel).
 - Kết quả đo: `docs/mission/results/` (ablation 09-09, H1/H2/H3/H5, `campaign_12x6_2026-09-11`,
   `ablations_grammar_2026-09-11`, `counterexamples_2026-09-11`). Ảnh chụp browser journey và
   `journey_report.json` là artifact của job CI `browser-journey`.
