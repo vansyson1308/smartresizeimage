@@ -60,5 +60,22 @@ the layout is now caught between two rules and is handed to a human instead of q
 breaking either. The mask-overlap oracle stays silent there (overlap under its 5 % floor),
 which is the one remaining disagreement, in the safe direction.
 
+## Re-run of `long_copy`, `hard_order` and `direction` with the proportional out-of-canvas penalty (`9b6e0c8`)
+
+The bounds firings came from text stacks planned into narrow columns on small formats
+while every box outside the canvas cost the same flat 25 points. The penalty now grows
+with the share of the box outside, so the family that keeps the most copy on the canvas
+wins. Same 180 renders (15 cases × 3 perturbations × 4 sizes, OCR on), before → after:
+
+| | accepted | needs_review | failed | bounds firings (runs) | counterexamples |
+|---|---:|---:|---:|---:|---:|
+| before | 145 | 5 | 30 | 15 (8) | 0 |
+| after | 153 | 7 | 20 | 10 (6) | 0 |
+
+The six remaining bounds runs are the two long-copy fixtures with the extra 13 words on
+300×250 (and one 1200×628 hard-order case): the copy does not fit at the minimum size in
+any family and the contract fails them for the right reason. The grammar ablation re-run
+after the change is unchanged (32/36 tuning, 22/24 holdout, same six non-acceptances).
+
 Raw runs: `counterexamples_2026-09-11.json` (summary); per-run records are in the tool's
 `runs.json` output. Synthetic fixtures; not customer validation.

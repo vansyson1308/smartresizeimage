@@ -21,8 +21,9 @@ lands behind flags with a rollback path.
   unexplained failures; the 20 oracle firings all coincided with non-accepted verdicts. Two
   findings turned into fixes/follow-ups: repair moves could undo a hard order rule the
   planner had honoured (now reverted, `acfeebd`), and long copy or hard rules on small
-  formats can push the text stack past the canvas (reported by the contract; planner
-  follow-up).
+  formats can push the text stack past the canvas; scoring boxes by how far they leave the
+  canvas (`9b6e0c8`) lifts the same 180 renders 145 → 153 accepted and cuts bounds
+  firings 15 → 10, the rest being copy that fits no family and fails for the right reason.
 - 2026-09-11 — H6 layout grammar (`results/ablations_grammar_2026-09-11.md`, 15 cases × 4
   sizes, holdout from case 10, joint planning in both arms): acceptance identical with and
   without the grammar (0.89 tuning, 0.92 holdout), same six honest non-accepted 300×250

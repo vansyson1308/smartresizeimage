@@ -105,11 +105,13 @@
         "subject/mascot integrity check with an independent pixel oracle",
         "counterexample search tool (independent oracles under seeded perturbations)",
         "incremental refresh: re-render only the variants a document change touched",
-        "repair moves that would break a hard order rule are reverted (found by the counterexample search)"
+        "repair moves that would break a hard order rule are reverted (found by the counterexample search)",
+        "planner penalises boxes by how far they leave the canvas (counterexample re-run: 145 -> 153 accepted, bounds firings 15 -> 10)"
       ],
       "next": [
-        "planner follow-up: clip or shrink the text stack when it cannot fit small formats (bounds firings in the counterexample sweep)",
-        "grammar families for extreme strips (728x90)"
+        "grammar families for extreme strips (728x90)",
+        "directions shown in the per-variant detail view",
+        "run-level text editing in the UI"
       ]
     },
     "D_research": {

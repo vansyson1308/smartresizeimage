@@ -237,8 +237,9 @@ isolated → token lists projects → 900 px without horizontal scroll.
   oracle firings all had non-accepted verdicts. It surfaced that overlap repair could undo a
   hard order rule the planner had honoured (fixed: such moves are reverted; the hard-order
   perturbation re-run with the guard has 0 order firings instead of 9) and that long copy or
-  hard rules on small formats can push the text stack past the canvas (reported by the
-  contract; planner follow-up).
+  hard rules on small formats can push the text stack past the canvas; the planner now
+  penalises boxes by how far they leave the canvas (145 → 153 accepted, bounds firings
+  15 → 10 on the same 180 renders; the rest is copy that fits no family and fails honestly).
 
 ## Release-criteria check (updated 2026-09-11)
 

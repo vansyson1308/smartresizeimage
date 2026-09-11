@@ -80,7 +80,7 @@ Chi tiết vận hành: `docs/OPERATIONS.md`.
   300×250 ở sàn 16 px).
 - H6 grammar bố cục: **không** tăng chấp nhận trên corpus này (0,89 / 0,92 cả hai nhánh), họ grammar
   thắng 6/60; giữ bật để đáp ứng chỉ dẫn sáng tạo, không tuyên bố là cải thiện chất lượng.
-- Tìm phản ví dụ bằng oracle độc lập (420 render, có OCR): 0 render được chấp nhận mà oracle bác bỏ, 0 fail không giải thích được; 20 lần oracle bật đều trùng verdict không chấp nhận. Phát hiện kèm theo: bước repair có thể làm hỏng rule cứng về thứ tự mà planner đã tuân thủ (đã sửa, `acfeebd`); copy dài hoặc rule cứng ở kích thước nhỏ có thể đẩy chồng chữ vượt canvas (contract báo fail, planner sẽ cải thiện sau).
+- Tìm phản ví dụ bằng oracle độc lập (420 render, có OCR): 0 render được chấp nhận mà oracle bác bỏ, 0 fail không giải thích được; 20 lần oracle bật đều trùng verdict không chấp nhận. Phát hiện kèm theo: bước repair có thể làm hỏng rule cứng về thứ tự mà planner đã tuân thủ (đã sửa, `acfeebd`); copy dài hoặc rule cứng ở kích thước nhỏ đẩy chồng chữ vượt canvas — planner nay phạt theo phần diện tích vượt canvas (`9b6e0c8`): cùng 180 render, chấp nhận 145 → 153, oracle bounds bật 15 → 10; phần còn lại là copy không vừa bất kỳ họ nào và fail đúng lý do.
 
 ## 6. Mức hoàn thiện thương mại và điểm chặn
 
