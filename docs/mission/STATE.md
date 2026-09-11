@@ -36,7 +36,7 @@ This file is a checkpoint, not a completion claim.
 Environment: Python 3.11.15, Pillow 10.4.0, NumPy 1.26.4, SciPy 1.17.1, opencv-headless
 4.11.0.86, psd-tools 1.19.0, tesseract 5.3.4, FastAPI 0.141.1. 4 CPUs, no GPU.
 
-- `ruff check backend` clean; `pytest backend/tests` → **303 passed** (unit) + 1 browser journey (API round trips, roles,
+- `ruff check backend` clean; `pytest backend/tests` → **336 passed** (unit) + 1 browser journey (41 steps) (API round trips, roles,
   rate limit, retention, planner, examples, local edits, corrections, decomposition).
 - Measurement tools (all synthetic, seed 42): `run_layout_bench.py` (modes), `run_ablations.py`
   (planner/repair/plates, joint, H1 protocol), `run_local_edits.py` (H3), `run_corrections.py`
@@ -235,9 +235,10 @@ isolated → token lists projects → 900 px without horizontal scroll.
   `results/counterexamples_2026-09-11.md`): 420 renders under seeded perturbations with OCR
   on; 0 accepted renders rejected by an independent oracle, 0 unexplained failures; the 20
   oracle firings all had non-accepted verdicts. It surfaced that overlap repair could undo a
-  hard order rule the planner had honoured (fixed: such moves are reverted) and that hiding
-  the subject can leave boxes past the canvas on some sizes (reported by the contract;
-  planner follow-up).
+  hard order rule the planner had honoured (fixed: such moves are reverted; the hard-order
+  perturbation re-run with the guard has 0 order firings instead of 9) and that hiding the
+  subject can leave boxes past the canvas on some sizes (reported by the contract; planner
+  follow-up).
 
 ## Release-criteria check (updated 2026-09-11)
 

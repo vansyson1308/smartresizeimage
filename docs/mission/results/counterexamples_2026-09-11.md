@@ -47,5 +47,17 @@ Runs where an oracle fired, by perturbation:
   superseded by this one, and the oracle's semantics are pinned by
   `test_counterexample_tool.py`.
 
+## Re-run of the `hard_order` perturbation with the repair guard (`acfeebd`)
+
+`--perturbations hard_order --ocr`, 60 renders (15 cases × 4 sizes), 115 s: **order oracle
+firings 9 → 0**; 53 accepted, 3 needs_review, 4 failed. The four failures are the contract's
+honest calls: two "CTA does not fit at 14 px" on 300×250, one 300×250 where the headline
+and subheadline leave the canvas (bounds oracle agrees, `inside_canvas` fails), and one
+1080×1080 where the CTA still overlaps the subheadline (`text_overlap` fails) because the
+only repair move that would have cleared it was the one that broke the hard order rule —
+the layout is now caught between two rules and is handed to a human instead of quietly
+breaking either. The mask-overlap oracle stays silent there (overlap under its 5 % floor),
+which is the one remaining disagreement, in the safe direction.
+
 Raw runs: `counterexamples_2026-09-11.json` (summary); per-run records are in the tool's
 `runs.json` output. Synthetic fixtures; not customer validation.
