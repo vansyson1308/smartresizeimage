@@ -286,3 +286,25 @@ def test_family_consistency_checks_flag_missing_and_drift() -> None:
     assert family_consistency_checks([snap("only", (1080, 1080), "square_text_left", 50, 25)]) == {
         "only": []
     }
+
+
+def test_long_copy_on_a_small_format_prefers_a_wide_text_column(tmp_path) -> None:
+    """Found by the counterexample search: a 75-word headline on 300x250 was planned into a
+    narrow side column and ran three canvases tall. Boxes far outside the canvas now cost
+    proportionally, so the planner picks the family that keeps the most copy on the canvas;
+    what still does not fit is reported, never hidden."""
+    from backend.app.design.grammar import family_traits
+    from backend.app.design.planner import families_for
+
+    doc, store = _doc(tmp_path)
+    head = doc.element("headline")
+    head.text.replace_text(head.text.plain + " and everything you need for the whole season "
+                           "at prices you will remember")
+    elements = elements_from_document(doc, store)
+    plan = plan_layout(doc, elements, (300, 250))
+    fam = next(f for f in families_for(300 / 250) if f.name == plan.family)
+    traits = family_traits(fam)
+    assert traits["arrangement"] == "stack" or traits["text_share"] >= 0.6, plan.family
+    boxes = {r.element_id: r.new_bbox for r in plan.layout if r.visible}
+    # the stack is not three canvases tall any more
+    assert max(b.y2 for b in boxes.values()) < 2 * 250

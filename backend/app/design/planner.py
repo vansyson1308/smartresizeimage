@@ -661,11 +661,15 @@ def _score(
             if inter > 0:
                 smaller = min(a.new_bbox.area, b.new_bbox.area)
                 score -= 40.0 * inter / max(1, smaller)
-    # outside canvas
+    # outside canvas: a flat penalty plus one proportional to how much of the box is
+    # outside, so a family whose text stack runs far past the canvas (long copy in a
+    # narrow column) loses to one whose wider column keeps more of it on the canvas
     for r in content:
         b = r.new_bbox
         if b.x < 0 or b.y < 0 or b.x2 > tw or b.y2 > th:
-            score -= 25.0
+            inside = max(0, min(b.x2, tw) - max(b.x, 0)) * max(0, min(b.y2, th) - max(b.y, 0))
+            outside = 1.0 - inside / max(1, b.area)
+            score -= 25.0 + 75.0 * outside
     # text size: reward larger relative to the target height (hierarchy preserved by construction)
     for px in text_px.values():
         score += min(6.0, 60.0 * px / max(1, th))
