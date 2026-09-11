@@ -7,7 +7,7 @@ or the checks they audit:
     overlap   opaque pixels of two content elements (their rendered masks at the planned
               boxes) overlap by more than 5% of the smaller one, and no allowed_overlap rule
     bounds    a visible content box leaves the canvas by more than 1 px
-    order     a hard order_below rule is violated by the final boxes
+    order     a hard order_below [a, b] rule (a below b) is violated by the final boxes
     clear     a hard clear_space rule is violated by the final boxes
     subject   the rendered subject/logo region correlates below 0.9 with the master asset
 
@@ -149,9 +149,10 @@ def _oracles(doc, result, target) -> list[str]:
         if not c.enabled or not c.hard:
             continue
         if c.type == "order_below" and len(c.elements) == 2:
+            # order_below [a, b]: a sits below b (its top edge at or under b's top edge)
             a, b = content.get(c.elements[0]), content.get(c.elements[1])
-            if a is not None and b is not None and not a.y2 <= b.y + 1:
-                fired.append(f"order:{c.elements[0]}<{c.elements[1]}")
+            if a is not None and b is not None and a.y < b.y:
+                fired.append(f"order:{c.elements[0]}>{c.elements[1]}")
         elif c.type == "clear_space" and c.elements:
             lb = content.get(c.elements[0])
             if lb is None:
