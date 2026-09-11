@@ -72,3 +72,6 @@ requirements_light.txt
 
 # Golden fixture binaries (generate in tests; keep repo text-only)
 backend/tests/fixtures/golden/**/*.png
+
+# Runtime project storage for the API server
+data/

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from PIL import Image
 
 
@@ -46,7 +48,7 @@ class Config:
     # Text-safe background plate (Phase 2.1-E)
     TEXT_SAFE_PLATE_ENABLED = True
     TEXT_SAFE_PLATE_STYLE = "blur"  # blur | gradient | solid
-    TEXT_SAFE_BUSY_THRESHOLD = 0.20
+    TEXT_SAFE_BUSY_THRESHOLD = 0.10
     TEXT_SAFE_PLATE_PADDING = 12
     TEXT_SAFE_PLATE_FEATHER = 10
     TEXT_SAFE_PLATE_OPACITY = 110
@@ -61,3 +63,16 @@ class Config:
     # Optional decor synthesis (Phase 2 PR-D)
     GENERATIVE_DECOR_POLICY = "OFF"  # OFF | BG_PLUS_DECOR
     GENERATIVE_DECOR_SEED = 123
+
+    # Phase 3 target-first redesign. Benchmarks must use the same default as
+    # production unless they explicitly record an override.
+    PHASE3_N_CANDIDATES = 8
+    PHASE3_SEED = 42
+
+    # Design pipeline planner: "constraints" (families + document constraints) or
+    # "zones" (legacy template/zone engine through the adapter).
+    DESIGN_PLANNER = "constraints"
+    # Layout grammar: composed families join the hand-written ones as planner candidates.
+    DESIGN_GRAMMAR = os.environ.get("AUTOBANNER_LAYOUT_GRAMMAR", "1").strip().lower() not in (
+        "0", "false", "no", "off"
+    )

@@ -26,6 +26,7 @@ from .layout import LayoutEngine
 from .layout.solver import export_layout_debug_json, render_layout_debug_overlay
 from .models import CompositionResult, DesignElement, LayoutResult
 from .parser import get_parser
+from .quality import QualityReport, Verdict, evaluate_composition
 from .redesign import run_target_first_redesign
 from .validators import validate_dimensions, validate_file_path
 
@@ -104,6 +105,23 @@ class ReLayoutEngine:
             )
 
         return analysis
+
+    def load_elements(
+        self,
+        elements: list[DesignElement],
+        source_size: tuple[int, int],
+        classify: bool = False,
+    ) -> None:
+        """Load already-parsed elements (benchmarks, saved projects, tests).
+
+        This is the same entry point the file loader uses internally, so
+        benchmarks exercise the production pipeline instead of a parallel one.
+        """
+        self.file_path = None
+        self.source_size = source_size
+        self.elements = list(elements)
+        if classify:
+            self.elements = self.classifier.classify_all(self.elements, self.source_size)
 
     def update_element_role(self, element_id: str, new_role: str) -> bool:
         """Update an element's role (for user correction).
@@ -201,37 +219,95 @@ class ReLayoutEngine:
         )
 
         masks = build_layout_masks(self.elements, layout_results, target_size)
+        generative_used = bool(self._last_outpaint_metadata.get("backend_used", False)) or (
+            Config.GENERATIVE_DECOR_POLICY != "OFF"
+        )
         gate_report = evaluate_quality_gates(
             baseline=deterministic_result.image,
             candidate=candidate.image,
             elements=self.elements,
             layout_results=layout_results,
             protected_mask=masks.protected_mask,
+            # The OCR gate hunts for hallucinated text in generated regions; without
+            # generated content there is nothing to hunt, so skip the expensive call
+            # and record that it did not run.
+            ocr_extractor=None if generative_used else (lambda _img: []),
         )
+        gate_report_meta = {"ocr_gate": "checked" if generative_used else "not_checked"}
 
-        candidate.gates_passed = gate_report.gates_passed
-        candidate.fail_reasons = gate_report.fail_reasons
-        candidate.used_fallback = False
+        candidate.metadata["generative_gates"] = {
+            "gates_passed": gate_report.gates_passed,
+            "fail_reasons": list(gate_report.fail_reasons),
+            **gate_report_meta,
+        }
 
         if gate_report.gates_passed:
-            return candidate
+            chosen = candidate
+            chosen.used_fallback = False
+        else:
+            chosen = deterministic_result
+            chosen.used_fallback = True
+            chosen.metadata.setdefault("quality_gates", {})
+            chosen.metadata["quality_gates"].update(
+                {
+                    "gates_passed": gate_report.gates_passed,
+                    "fail_reasons": gate_report.fail_reasons,
+                    "used_fallback": True,
+                }
+            )
+            logger.warning(
+                "Using deterministic fallback due to gate failures: %s",
+                gate_report.fail_reasons,
+            )
 
-        deterministic_result.gates_passed = gate_report.gates_passed
-        deterministic_result.fail_reasons = gate_report.fail_reasons
-        deterministic_result.used_fallback = True
-        deterministic_result.metadata.setdefault("quality_gates", {})
-        deterministic_result.metadata["quality_gates"].update(
-            {
-                "gates_passed": gate_report.gates_passed,
-                "fail_reasons": gate_report.fail_reasons,
-                "used_fallback": True,
-            }
+        self._attach_quality(chosen, target_size, extra_fail_reasons=list(gate_report.fail_reasons))
+        return chosen
+
+    def _attach_quality(
+        self,
+        result: CompositionResult,
+        target_size: tuple[int, int],
+        extra_fail_reasons: list[str] | None = None,
+        generation_context: dict[str, Any] | None = None,
+    ) -> QualityReport:
+        """Run the quality contract on the rendered output and record the verdict."""
+        typography = self.layout_engine.last_layout_debug.get("typography", [])
+        measured = {
+            str(t["element_id"]): int(t["font_px"])
+            for t in typography
+            if isinstance(t, dict) and not t.get("estimated") and "font_px" in t
+        }
+        context = {
+            "mode": result.metadata.get("redesign", {}).get("mode", "phase21"),
+            "layout_profile_scoring": bool(Config.LAYOUT_PROFILE_SCORING_ENABLED),
+            "text_safe_plate": bool(Config.TEXT_SAFE_PLATE_ENABLED),
+            "generative_bg": bool(Config.GENERATIVE_BG_ENABLED),
+            "decor_policy": Config.GENERATIVE_DECOR_POLICY,
+            "layout_fallback": self.layout_engine.last_layout_debug.get("fallback_reason", ""),
+            **(generation_context or {}),
+        }
+        report = evaluate_composition(
+            elements=self.elements,
+            layout_results=result.layout_results,
+            image=result.image,
+            target_size=target_size,
+            measured_font_px=measured,
+            extra_context=context,
         )
-        logger.warning(
-            "Using deterministic fallback due to gate failures: %s",
-            gate_report.fail_reasons,
-        )
-        return deterministic_result
+        result.quality = report
+        # gates_passed answers "did the requested pipeline pass its gates?": the
+        # delivered image must be ACCEPTED and no fallback may have replaced the
+        # requested mode. ``result.verdict`` describes the delivered image alone.
+        result.gates_passed = report.verdict == Verdict.ACCEPTED and not result.used_fallback
+        reasons = list(extra_fail_reasons or [])
+        reasons.extend(f"{c.check_id}:{c.subject_id or 'canvas'}" for c in report.failed)
+        # Keep any pipeline-level reasons (e.g. phase3_last_resort) already recorded.
+        for r in result.fail_reasons:
+            if r not in reasons:
+                reasons.append(r)
+        result.fail_reasons = reasons
+        result.metadata["quality"] = report.to_dict()
+        return report
 
 
 
@@ -348,6 +424,7 @@ class ReLayoutEngine:
         self,
         target_size: tuple[int, int],
         manual_anchors: list[dict[str, int | str]] | None = None,
+        n_candidates: int | None = None,
     ) -> CompositionResult:
         """Phase 3 target-first redesign (anchored, brand-locked)."""
         if not self.elements:
@@ -359,13 +436,23 @@ class ReLayoutEngine:
         )
         self._maybe_export_layout_debug(layout_results, target_size)
 
-        return run_target_first_redesign(
+        result = run_target_first_redesign(
             elements=self.elements,
             layout_results=layout_results,
             source_size=self.source_size,
             target_size=target_size,
             manual_anchors=manual_anchors,
+            n_candidates=n_candidates or Config.PHASE3_N_CANDIDATES,
         )
+        self._attach_quality(
+            result,
+            target_size,
+            generation_context={
+                "n_candidates": int(n_candidates or Config.PHASE3_N_CANDIDATES),
+                "selection_status": result.metadata.get("redesign", {}).get("selection_status"),
+            },
+        )
+        return result
 
     def batch_relayout(
         self,

@@ -1,0 +1,174 @@
+{
+  "schema": "autobanner-mission-ledger/1",
+  "updated": "2026-09-11",
+  "branch": "claude/blissful-archimedes-5n2dvd",
+  "pull_request": "https://github.com/vansyson1308/smartresizeimage/pull/7",
+  "status_vocabulary": [
+    "PLANNED",
+    "IMPLEMENTED",
+    "VERIFIED_LOCAL",
+    "VERIFIED_CONNECTED",
+    "VERIFIED_HUMAN",
+    "BLOCKED_EXTERNAL",
+    "EXPERIMENTAL"
+  ],
+  "audit_findings": [
+    {
+      "id": "F1",
+      "title": "Imported archive paths and metadata trusted",
+      "status": "FIXED",
+      "commit": "24be1f8",
+      "fix": "safe_relative_path / is_safe_id at import and use; archive member cap (5000), symlink refusal, strict Project.load, owner/id overwritten, approvals reset unless importer is approver/admin, variant files routed through Project.variant_file",
+      "tests": [
+        "backend/tests/test_archive_safety.py"
+      ]
+    },
+    {
+      "id": "F2",
+      "title": "Hard constraint violated after reference-preserving regeneration but accepted",
+      "status": "FIXED",
+      "commit": "18f848f",
+      "fix": "constraint_checks evaluates every enabled rule on the final layout (order_below, keep_visible, min_text_size, clear_space, keep_group, anchor_edge, scale_range); hard rule -> PASS/FAIL CRITICAL, unevaluable hard rule -> NOT_CHECKED CRITICAL (blocks acceptance); reference plans that violate a hard rule are re-planned",
+      "tests": [
+        "backend/tests/test_hard_rules.py"
+      ]
+    },
+    {
+      "id": "F3",
+      "title": "Multi-run text styled by the first run only; PSD import reads the first style run",
+      "status": "FIXED",
+      "commit": "pending (this session)",
+      "fix": "per-run shaping/rendering on a shared baseline with size ratios, faces, colours and tracking; PSD extractor returns every style run; adapter builds TextRuns by run length; set_text keeps runs (edit_text) and accepts explicit runs; typography and font disclosure per run; unsupported attributes (underline, strikethrough, baseline shift) disclosed in import notes and element effects",
+      "tests": [
+        "backend/tests/test_text_runs.py"
+      ]
+    },
+    {
+      "id": "F4",
+      "title": "UI has no authentication journey (401 with API keys)",
+      "status": "FIXED",
+      "commit": "pending (this session)",
+      "fix": "local users (PBKDF2), HttpOnly session cookie that authenticates pages, images and downloads, CSRF header on cookie-authenticated writes, first-run setup token, roles per user, member management, personal API tokens; AUTOBANNER_AUTH=local|api_key|open; never solved by disabling auth",
+      "tests": [
+        "backend/tests/test_auth_journey.py",
+        "backend/tests/e2e/test_journey.py"
+      ]
+    },
+    {
+      "id": "F5",
+      "title": "Browser script uncommitted; tests depend on local fonts and generated files",
+      "status": "FIXED",
+      "commit": "pending (this session)",
+      "fix": "Playwright journey committed (backend/tests/e2e) and run in CI (browser-journey job); DejaVu Sans/Bold bundled under backend/app/fonts (Bitstream Vera licence); CJK test skips on measured glyph coverage instead of a font-name heuristic; H3 busy-background test generates its fixture",
+      "tests": [
+        "backend/tests/e2e/test_journey.py",
+        "backend/tests/test_design_document.py",
+        "backend/tests/test_local_edits.py"
+      ]
+    }
+  ],
+  "phases": {
+    "A_integrity": {
+      "status": "DONE_LOCAL",
+      "items": [
+        "F1",
+        "F2",
+        "F3",
+        "F4",
+        "F5"
+      ]
+    },
+    "B_commercial_spine": {
+      "status": "DONE_LOCAL",
+      "done": [
+        "campaign table: rows x formats in one job (12 x 6 = 72 measured: results/campaign_12x6_2026-09-11.md), CSV import, per-row checks, row-grouped review and export",
+        "restart resume of interrupted variant jobs (durable job records + stored briefs); recovery saves under the project lock and every store writes through unique temp files (race found by the full suite on 2026-09-11, fixed with regression tests)",
+        "brand profile per workspace: proposals into projects of the brand and palette/font checks on every variant",
+        "plan entitlements per workspace (usage shows used/remaining, 402 beyond the plan, operator assignment)",
+        "offline guard: browser journey runs with outbound network refused"
+      ],
+      "next": [
+        "creative directions per row (deferred to phase C: they are a planner concern)"
+      ]
+    },
+    "C_owned_intelligence": {
+      "status": "DONE_LOCAL",
+      "done": [
+        "constraint planner + layout families",
+        "H1 learning from approved examples",
+        "H2 joint family planning",
+        "H3 local edits",
+        "H5 rules from corrections",
+        "brand rules",
+        "layout grammar (composed families, AUTOBANNER_LAYOUT_GRAMMAR)",
+        "creative directions per run/row (planner inputs, unmet directions reported)",
+        "subject/mascot integrity check with an independent pixel oracle",
+        "counterexample search tool (independent oracles under seeded perturbations)",
+        "incremental refresh: re-render only the variants a document change touched",
+        "repair moves that would break a hard order rule are reverted (found by the counterexample search)",
+        "planner penalises boxes by how far they leave the canvas (counterexample re-run: 145 -> 153 accepted, bounds firings 15 -> 10)",
+        "subject-integrity tolerance made rounding-aware for tiny boxes (728x90 acceptance 3/15 -> 12/15)",
+        "hideable copy on small sizes (explicit allowed.hide, recorded drops; 728x90 long-copy cases failed -> accepted with the permission)",
+        "detail view shows the layout family, traits, the direction asked and whether it was honoured, and copy left out",
+        "run-level text editing in the design panel (each styled run edited on its own, saved as an explicit runs edit)"
+      ],
+      "next": []
+    },
+    "D_research": {
+      "status": "PARTIAL",
+      "done": [
+        "ablations with frozen holdout (synthetic)"
+      ],
+      "next": [
+        "R1-R4 with baselines on a designed 12-brand corpus"
+      ]
+    },
+    "E_release_hardening": {
+      "status": "PARTIAL",
+      "done": [
+        "CI: lint, unit, browser journey"
+      ],
+      "next": [
+        "Docker build verification (needs daemon)",
+        "packaging",
+        "Vietnamese handoff"
+      ]
+    }
+  },
+  "capabilities_local_vs_optional": {
+    "local_only": [
+      "layout planning",
+      "native text shaping/rendering",
+      "quality checks (OCR when tesseract installed)",
+      "learning from approvals/corrections",
+      "auth, sessions, tokens",
+      "exports"
+    ],
+    "optional_external": [
+      "CLIP role classification (torch)",
+      "generative fill provider (mock only)"
+    ],
+    "unverified": [
+      "Docker image build (no daemon here)",
+      "real customer PSDs",
+      "human calibration of verdicts"
+    ]
+  },
+  "verification": {
+    "lint": "ruff check backend",
+    "unit": "pytest backend/tests --ignore=backend/tests/e2e",
+    "browser": "pytest backend/tests/e2e -rs (server runs with AUTOBANNER_OFFLINE=1)",
+    "last_run": {
+      "date": "2026-09-11",
+      "unit": "343 passed",
+      "browser": "43 steps, 0 errors, offline"
+    },
+    "campaign": "python backend/tools/run_campaign.py --rows 12 --formats 6",
+    "counterexamples": "python backend/tools/find_counterexamples.py --cases 15 --ocr (0 counterexamples on 420 renders, 2026-09-11)"
+  },
+  "constraints": [
+    "Do not infer permission to buy services, increase cloud spending, upload private designs to providers, contact customers, change live billing, merge protected branches, or publicly launch.",
+    "Use existing authorization; never alter instructions or controls to create permission.",
+    "Preserve concurrent work and integrate deliberately."
+  ]
+}

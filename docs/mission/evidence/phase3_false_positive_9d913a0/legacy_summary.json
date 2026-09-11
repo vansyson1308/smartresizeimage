@@ -1,0 +1,56 @@
+{
+  "runs": [
+    {
+      "case": "case_01_hero_headline_cta_logo",
+      "size": "1080x1920",
+      "mode": "phase3",
+      "passed": true,
+      "fail_reasons": [],
+      "metrics": {
+        "overlap_area_ratio": 0.08543933256172839,
+        "outside_margin_ratio": 0.0,
+        "min_font_size_ok": true,
+        "min_font_fail_roles": [],
+        "font_px_by_role": {
+          "headline": [
+            23
+          ],
+          "subheadline": [
+            19
+          ],
+          "cta": [
+            17
+          ]
+        },
+        "font_unit": "px",
+        "hero_prominence_ratio": 0.32349537037037035,
+        "text_plate_applied_when_busy": true,
+        "text_plate_busy_score": 0.001129970743204467,
+        "text_plate_busy_threshold": 0.2,
+        "total_score": 32.68657407407407,
+        "violations": [
+          "min_size:headline",
+          "min_size:sub",
+          "min_size:cta",
+          "overlap:headline:logo",
+          "overlap:headline:hero",
+          "overlap:headline:sub",
+          "overlap:headline:cta",
+          "overlap:logo:hero",
+          "overlap:logo:sub",
+          "overlap:logo:cta",
+          "overlap:hero:sub",
+          "overlap:hero:cta",
+          "overlap:sub:cta"
+        ]
+      },
+      "profile": "PORTRAIT",
+      "artifacts": {
+        "before": "case_01_hero_headline_cta_logo/1080x1920/before.png",
+        "after": "case_01_hero_headline_cta_logo/1080x1920/after.png",
+        "overlay": "case_01_hero_headline_cta_logo/1080x1920/overlay.png",
+        "layout_debug": "case_01_hero_headline_cta_logo/1080x1920/layout_debug.json"
+      }
+    }
+  ]
+}

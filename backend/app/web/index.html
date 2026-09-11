@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoBanner</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%232f6fed%27/%3E%3Crect x=%277%27 y=%279%27 width=%2718%27 height=%274%27 rx=%272%27 fill=%27white%27/%3E%3Crect x=%277%27 y=%2716%27 width=%2712%27 height=%274%27 rx=%272%27 fill=%27white%27 opacity=%27.8%27/%3E%3Crect x=%277%27 y=%2723%27 width=%278%27 height=%273%27 rx=%271.5%27 fill=%27%23ffd166%27/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">AutoBanner</div>
+  <nav>
+    <button data-view="projects" class="active">Projects</button>
+    <button data-view="design" disabled>Design</button>
+    <button data-view="brief" disabled>Variants</button>
+    <button data-view="review" disabled>Review</button>
+  </nav>
+  <div id="status-bar">Ready</div>
+  <div id="user-chip" class="user-chip hidden"><span id="user-name"></span><span id="user-role" class="badge neutral"></span><button id="btn-logout" class="small" type="button">Sign out</button></div>
+  <span id="open-badge" class="badge warn hidden" title="No users or API keys are configured: everyone who can reach this server is the local administrator. Set AUTOBANNER_AUTH=local before exposing it.">open mode</span>
+</header>
+
+<main>
+  <!-- Sign in / first-run setup -->
+  <section id="view-auth" class="view hidden">
+    <div class="card auth-card">
+      <div id="auth-setup" class="hidden">
+        <h2>Create the workspace administrator</h2>
+        <p class="small muted">This server has no users yet. Enter the setup token the server printed at startup (or <span class="kbd">AUTOBANNER_SETUP_TOKEN</span>) to create the first administrator. Nothing leaves this machine.</p>
+        <label>Workspace</label><input id="setup-workspace" type="text" value="default" autocomplete="organization">
+        <label>Username</label><input id="setup-username" type="text" autocomplete="username">
+        <label>Password (at least 8 characters)</label><input id="setup-password" type="password" autocomplete="new-password">
+        <label>Setup token</label><input id="setup-token" type="password" autocomplete="off">
+        <div class="row" style="margin-top:12px"><button id="setup-submit" class="primary" type="button">Create administrator</button></div>
+      </div>
+      <div id="auth-login" class="hidden">
+        <h2>Sign in</h2>
+        <label>Username</label><input id="login-username" type="text" autocomplete="username">
+        <label>Password</label><input id="login-password" type="password" autocomplete="current-password">
+        <div class="row" style="margin-top:12px"><button id="login-submit" class="primary" type="button">Sign in</button></div>
+      </div>
+      <div id="auth-error" class="small auth-error hidden"></div>
+    </div>
+  </section>
+
+  <!-- Projects -->
+  <section id="view-projects" class="view">
+    <div class="card">
+      <h2>Start a project</h2>
+      <div id="dropzone" class="dropzone">
+        <div><strong>Drop a master design here</strong> or <button id="pick-file" type="button" data-needs="edit">choose a file</button></div>
+        <div class="small" style="margin-top:6px">PSD keeps text and layers editable. PNG/JPG/WEBP are imported as one picture and always need review.</div>
+        <input id="file-input" type="file" accept=".psd,.png,.jpg,.jpeg,.webp" class="hidden">
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div class="grow"><label>Project name (optional)</label><input id="new-name" type="text" placeholder="Summer campaign"></div>
+        <div class="grow"><label>Brand (optional)</label><input id="new-brand" type="text" placeholder="Acme"></div>
+        <div><label>&nbsp;</label><button id="import-project" type="button" data-needs="edit">Reopen a saved project (.zip)</button><input id="import-input" type="file" accept=".zip" class="hidden"></div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <span class="small muted">Or start from separated assets:</span>
+        <div style="width:100px"><label>Width</label><input id="blank-w" type="number" value="1200" min="16"></div>
+        <div style="width:100px"><label>Height</label><input id="blank-h" type="number" value="628" min="16"></div>
+        <div style="width:120px"><label>Background</label><input id="blank-bg" type="text" value="#1f3b63"></div>
+        <div><label>&nbsp;</label><button id="blank-create" type="button" data-needs="edit">Create blank canvas</button></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Your projects</h2>
+      <div id="project-list" class="project-list"></div>
+      <div id="projects-empty" class="empty hidden">No projects yet.</div>
+    </div>
+    <div id="brand-card" class="card" style="margin-top:16px">
+      <h2>Brand profiles</h2>
+      <p class="small muted">Colours, fonts and logo rules from the brand book. Projects with this brand get the logo and text rules as reviewable proposals, and every variant is checked against the palette and fonts (off-brand → needs review, never silent). Nothing leaves this machine.</p>
+      <div class="row">
+        <div class="grow"><label>Brand</label><input id="brand-name" type="text" list="brand-list" placeholder="Acme"><datalist id="brand-list"></datalist></div>
+        <div><label>&nbsp;</label><button id="brand-load" type="button">Open</button></div>
+      </div>
+      <div id="brand-form" class="hidden">
+        <div class="row">
+          <div class="grow"><label>Primary colour</label><input id="brand-primary" type="text" placeholder="#1f3b63"></div>
+          <div class="grow"><label>Secondary</label><input id="brand-secondary" type="text" placeholder="#ffd166"></div>
+          <div class="grow"><label>Accent</label><input id="brand-accent" type="text" placeholder="#ef476f"></div>
+        </div>
+        <label>More palette colours (comma separated) · <label class="small" style="display:inline"><input id="brand-strict" type="checkbox" style="width:auto"> strict (white/black not implied)</label></label>
+        <input id="brand-palette" type="text" placeholder="#ffffff, #000000">
+        <div class="row">
+          <div class="grow"><label>Headline font</label><input id="brand-font-head" type="text" list="brand-font-list" placeholder="Montserrat"><datalist id="brand-font-list"></datalist></div>
+          <div class="grow"><label>Body font</label><input id="brand-font-body" type="text" list="brand-font-list" placeholder="DejaVu Sans"></div>
+        </div>
+        <div class="row">
+          <div class="grow"><label>Logo clear space (× logo height)</label><input id="brand-logo-clear" type="number" step="0.1" min="0" max="3" placeholder="0.5"></div>
+          <div class="grow"><label>Min logo height (% of canvas)</label><input id="brand-logo-min" type="number" step="0.5" min="0" max="50" placeholder="6"></div>
+          <div class="grow"><label>Min text size (px)</label><input id="brand-text-min" type="number" min="0" max="200" placeholder="14"></div>
+        </div>
+        <label>Tone / notes</label><textarea id="brand-tone" placeholder="Confident, short sentences. Prices always with currency."></textarea>
+        <label>Never (one per line)</label><textarea id="brand-donot" placeholder="Logo on busy photos&#10;Headline in lowercase"></textarea>
+        <div class="row" style="margin-top:8px"><button id="brand-save" class="primary" type="button" data-needs="edit">Save brand</button><button id="brand-delete" type="button" class="danger" data-needs="edit">Delete</button><span id="brand-status" class="small muted grow"></span></div>
+      </div>
+    </div>
+    <div id="workspace-card" class="card hidden" style="margin-top:16px">
+      <h2>Workspace <span id="workspace-name" class="muted"></span></h2>
+      <div id="plan-line" class="small muted" style="margin:-4px 0 8px"></div>
+      <div id="members-wrap" class="hidden">
+        <h3>Members</h3>
+        <table class="members" id="member-table"><thead><tr><th>User</th><th>Role</th><th></th></tr></thead><tbody></tbody></table>
+        <div class="row" style="margin-top:8px">
+          <div class="grow"><label>Username</label><input id="member-username" type="text" autocomplete="off"></div>
+          <div class="grow"><label>Password (at least 8 characters)</label><input id="member-password" type="password" autocomplete="new-password"></div>
+          <div style="width:130px"><label>Role</label><select id="member-role"><option value="viewer">viewer</option><option value="editor" selected>editor</option><option value="approver">approver</option><option value="admin">admin</option></select></div>
+          <div><label>&nbsp;</label><button id="member-add" type="button">Add member</button></div>
+        </div>
+        <p class="small muted" style="margin:6px 0 0">viewer: read and export · editor: edit, generate, export · approver: approve/reject · admin: everything, including members.</p>
+      </div>
+      <div id="tokens-wrap">
+        <h3>Your API tokens</h3>
+        <p class="small muted" style="margin:0 0 6px">For scripts and CI: send the token as the <span class="kbd">X-API-Key</span> header. A token has your role; it is shown once.</p>
+        <ul id="token-list" class="notes small"></ul>
+        <div class="row"><div class="grow"><label>Token name</label><input id="token-name" type="text" placeholder="ci-pipeline"></div><div><label>&nbsp;</label><button id="token-create" type="button">Create token</button></div></div>
+        <pre id="token-new" class="json hidden"></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- Design / interpretation -->
+  <section id="view-design" class="view hidden">
+    <div class="grid-2">
+      <div class="card">
+        <div class="row">
+          <h2 id="design-title" class="grow" style="margin:0">Design</h2>
+          <button id="btn-undo" type="button" title="Undo last change (Ctrl+Z)">Undo</button>
+          <button id="btn-save-project" type="button" title="Download the editable project">Save project (.zip)</button>
+          <button id="btn-to-brief" class="primary" type="button">Next: choose sizes →</button>
+        </div>
+        <p class="small muted" style="margin:6px 0 10px">Click an element to select. Drag to move, drag the corner to resize (aspect kept for logos, images and text). Arrow keys nudge, <span class="kbd">Shift</span> + arrows nudge by 10.</p>
+        <div class="canvas-wrap"><div class="canvas-stage" id="stage"><img id="master-img" alt="Master design preview"><svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg></div></div>
+        <div id="import-notes-wrap" class="hidden" style="margin-top:12px"><h3>Import notes</h3><ul id="import-notes" class="notes small"></ul></div>
+      </div>
+      <div class="card">
+        <h3>Elements</h3>
+        <ul id="layer-list" class="layer-list"></ul>
+        <div class="row" style="margin-top:8px">
+          <button id="add-text" type="button" data-needs="edit">+ Text</button>
+          <button id="add-image" type="button" data-needs="edit">+ Image / logo</button>
+          <input id="add-image-input" type="file" accept=".png,.jpg,.jpeg,.webp" class="hidden">
+        </div>
+        <div id="element-panel" class="hidden">
+          <h3>Selected element</h3>
+          <label>Name</label><input id="el-name" type="text">
+          <label>Role <span id="el-confidence" class="badge neutral"></span></label>
+          <select id="el-role"></select>
+          <div id="el-recovered" class="hidden" style="margin-top:8px">
+            <label>Text read by OCR (unverified)</label>
+            <textarea id="el-recovered-text"></textarea>
+            <button id="el-convert" type="button" data-needs="edit">Convert to editable text</button>
+          </div>
+          <div id="el-text-wrap" class="hidden">
+            <label>Text</label><textarea id="el-text"></textarea>
+            <div id="el-runs-note" class="small muted hidden"></div>
+            <label class="row" style="color:var(--text)" title="Edit each styled run (text, weight, size, colour) on its own; font family and alignment below then apply to the whole element"><input id="el-runs-mode" type="checkbox" style="width:auto"> Edit styled runs separately</label>
+            <div id="el-runs" class="hidden"></div>
+            <div class="row">
+              <div class="grow"><label>Font family</label><input id="el-font" type="text" list="font-list"><datalist id="font-list"></datalist></div>
+              <div style="width:90px"><label>Size (px)</label><input id="el-size" type="number" min="4" step="1"></div>
+            </div>
+            <div class="row">
+              <div class="grow"><label>Weight</label><select id="el-weight"><option>regular</option><option>bold</option><option>light</option><option>medium</option></select></div>
+              <div class="grow"><label>Align</label><select id="el-align"><option>left</option><option>center</option><option>right</option></select></div>
+              <div style="width:110px"><label>Color</label><input id="el-color" type="text" placeholder="#000000"></div>
+            </div>
+            <label class="row" style="color:var(--text)"><input id="el-protected" type="checkbox" style="width:auto"> Verbatim copy (price / legal): never rewrite</label>
+            <label>Approved translations (one per line: <span class="kbd">vi = Giảm giá mùa hè</span>)</label>
+            <textarea id="el-translations" placeholder="vi = ...&#10;de-DE = ..."></textarea>
+          </div>
+          <div class="row" style="margin-top:8px">
+            <label class="row" style="color:var(--text)"><input id="el-locked" type="checkbox" style="width:auto"> Lock</label>
+            <label class="row" style="color:var(--text)"><input id="el-visible" type="checkbox" style="width:auto"> Visible</label>
+            <label class="row" style="color:var(--text)"><input id="el-scale-free" type="checkbox" style="width:auto"> Allow distortion</label>
+            <label class="row" style="color:var(--text)"><input id="el-crop" type="checkbox" style="width:auto"> Allow crop</label>
+            <label class="row" style="color:var(--text)" title="Only when the copy cannot fit a small size at its minimum text size; never for the headline, CTA or logo; every drop is recorded and flagged for review"><input id="el-hide" type="checkbox" style="width:auto"> May be left out on small sizes</label>
+          </div>
+          <div class="row" style="margin-top:8px">
+            <div style="width:110px"><label>Priority (1 = must keep)</label><input id="el-priority" type="number" min="1" max="9"></div>
+            <div><label>&nbsp;</label><button id="el-front" type="button" data-needs="edit">Bring forward</button></div>
+            <div><label>&nbsp;</label><button id="el-back" type="button" data-needs="edit">Send back</button></div>
+          </div>
+          <div class="row" style="margin-top:10px"><button id="el-apply" class="primary" type="button" data-needs="edit">Apply changes</button><button id="el-delete" class="danger" type="button" data-needs="edit">Remove element</button></div>
+          <div id="el-provenance" class="small muted" style="margin-top:8px"></div>
+        </div>
+        <h3>Rules for this design</h3>
+        <div id="constraint-list"></div>
+        <div id="learned-list" class="small muted" style="margin-top:6px"></div>
+        <div class="row" style="margin-top:8px">
+          <select id="c-type" style="width:auto">
+            <option value="keep_visible">Must stay visible</option>
+            <option value="clear_space">Clear space around</option>
+            <option value="allowed_overlap">Overlap is intentional</option>
+            <option value="order_below">Must follow (A below B)</option>
+            <option value="keep_group">Keep together</option>
+            <option value="min_text_size">Minimum text size</option>
+          </select>
+          <select id="c-a" style="width:auto"></select>
+          <select id="c-b" style="width:auto" class="hidden"></select>
+          <input id="c-param" type="number" style="width:80px" class="hidden" placeholder="px">
+          <button id="c-add" type="button" data-needs="edit">Add rule</button>
+        </div>
+        <h3>Fonts</h3>
+        <ul id="font-status" class="notes small"></ul>
+        <details style="margin-top:10px"><summary>History</summary><ul id="history-list" class="notes small"></ul></details>
+      </div>
+    </div>
+  </section>
+
+  <!-- Brief -->
+  <section id="view-brief" class="view hidden">
+    <div class="grid-2">
+      <div class="card">
+        <h2>Which sizes do you need?</h2>
+        <div id="preset-grid" class="preset-grid"></div>
+        <p id="preset-note" class="small muted" style="margin-top:8px"></p>
+        <h3>Custom size</h3>
+        <div class="row">
+          <div style="width:110px"><label>Width</label><input id="custom-w" type="number" min="10" value="1200"></div>
+          <div style="width:110px"><label>Height</label><input id="custom-h" type="number" min="10" value="628"></div>
+          <div class="grow"><label>Name</label><input id="custom-name" type="text" placeholder="Custom"></div>
+          <div><label>&nbsp;</label><button id="custom-add" type="button">Add</button></div>
+        </div>
+        <ul id="custom-list" class="notes small"></ul>
+      </div>
+      <div class="card">
+        <h2>Copy for this run</h2>
+        <p class="small muted">Leave a field empty to keep the approved master copy. Verbatim (price/legal) fields are shown read-only.</p>
+        <div id="copy-overrides"></div>
+        <label>Locale (uses each element's approved translation when one exists; recorded with the variants)</label><input id="brief-locale" type="text" placeholder="en, vi, de-DE…">
+        <label>Creative direction (narrows the layout families the planner may use; what cannot be met on a size is reported in the plan)</label>
+        <select id="brief-direction">
+          <option value="">Let the planner choose</option>
+          <option value="copy">Copy first (more room for text)</option>
+          <option value="subject">Subject first (bigger hero)</option>
+          <option value="text-left">Text on the left</option>
+          <option value="text-right">Text on the right</option>
+          <option value="text-top">Text on top (stacked)</option>
+          <option value="subject-top">Subject on top (stacked)</option>
+          <option value="center">Centered copy</option>
+        </select>
+        <div class="row" style="margin-top:14px"><button id="btn-generate" class="primary" type="button" data-needs="edit">Generate variants</button><button id="btn-cancel" type="button" class="hidden">Cancel</button></div>
+        <div id="job-progress" class="hidden" style="margin-top:10px"><div class="progress"><div id="job-bar"></div></div><div id="job-text" class="small muted" style="margin-top:6px"></div></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Campaign table (one row per message)</h2>
+      <p class="small muted">Paste a table (CSV or TSV) whose header names the text elements of this design (by name, id or role) plus optional <span class="kbd">row</span>, <span class="kbd">label</span>, <span class="kbd">locale</span> and <span class="kbd">direction</span> (copy, subject, text-left, text-right, text-top, subject-top, center) columns, or add rows by hand. Every row is generated in every selected size; empty cells keep the master copy; verbatim copy is never overridden. The copy fields above stay the defaults for every row.</p>
+      <textarea id="campaign-csv" placeholder="label,Headline,CTA,locale&#10;Week 1,SUMMER SALE,SHOP NOW,en&#10;Tuần 1,GIẢM GIÁ HÈ,MUA NGAY,vi"></textarea>
+      <div class="row" style="margin-top:6px">
+        <button id="campaign-parse" type="button" data-needs="edit">Read table</button>
+        <label class="small" style="margin:0;display:flex;align-items:center;gap:6px">or file <input id="campaign-file" type="file" accept=".csv,.tsv,.txt" style="width:auto"></label>
+        <button id="campaign-add-row" type="button" data-needs="edit">Add row</button>
+        <button id="campaign-clear" type="button">Clear rows</button>
+        <span id="campaign-count" class="small muted grow"></span>
+      </div>
+      <div id="campaign-note" class="small muted" style="margin-top:6px"></div>
+      <div id="campaign-table-wrap" style="margin-top:8px"></div>
+    </div>
+  </section>
+
+  <!-- Review -->
+  <section id="view-review" class="view hidden">
+    <div class="card">
+      <div class="row">
+        <h2 class="grow" style="margin:0">Review variants</h2>
+        <div class="filters row">
+          <button data-filter="all" class="active" type="button">All</button>
+          <button data-filter="failed" type="button">Failed</button>
+          <button data-filter="needs_review" type="button">Needs review</button>
+          <button data-filter="accepted" type="button">Accepted</button>
+          <button data-filter="approved" type="button">Approved</button>
+        </div>
+        <select id="review-row" class="hidden" style="width:auto" title="Campaign row"></select>
+        <select id="export-format" style="width:auto"><option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WebP</option><option value="pdf">PDF (one page per variant)</option></select>
+        <button id="btn-export-approved" type="button">Export approved</button>
+        <button id="btn-export-all" type="button">Export all</button>
+        <button id="btn-refresh" type="button" class="hidden" data-needs="edit" title="Re-render only the variants the design change touched; the others are marked current">Refresh stale</button>
+      </div>
+      <div id="review-summary" class="small muted" style="margin:8px 0"></div>
+      <div id="variant-grid" class="variant-grid"></div>
+      <div id="review-empty" class="empty hidden">No variants yet. Go to Variants to generate some.</div>
+    </div>
+    <div id="variant-detail" class="card hidden" style="margin-top:16px">
+      <div class="row"><h2 class="grow" id="detail-title" style="margin:0"></h2><button id="detail-close" type="button">Close</button></div>
+      <div class="detail-grid" style="margin-top:10px">
+        <div>
+          <div class="row small" style="margin-bottom:6px"><label class="row" style="margin:0;color:var(--text)"><input id="detail-compare" type="checkbox" style="width:auto"> Compare with master</label></div>
+          <div id="detail-single" class="detail-image"><img id="detail-img" alt="Variant"></div>
+          <div id="detail-compare-wrap" class="compare hidden"><div><div class="small muted">Master</div><img id="compare-master" alt="Master"></div><div><div class="small muted">Variant</div><img id="compare-variant" alt="Variant"></div></div>
+        </div>
+        <div>
+          <div id="detail-verdict"></div>
+          <div id="detail-plan" class="small muted" style="margin-top:6px"></div>
+          <h3>Issues</h3>
+          <ul id="detail-issues" class="issues"></ul>
+          <h3>Decision</h3>
+          <div class="row"><button id="detail-approve" class="primary" type="button" data-needs="approve">Approve</button><button id="detail-regenerate" type="button" data-needs="edit">Regenerate</button></div>
+          <label>Reject with reason</label>
+          <div class="row"><input id="detail-reason" type="text" class="grow" placeholder="e.g. logo too small"><button id="detail-reject" class="danger" type="button" data-needs="approve">Reject</button></div>
+          <h3>Edit copy for this variant only</h3>
+          <div id="detail-overrides"></div>
+          <div class="row" style="margin-top:6px"><button id="detail-apply-overrides" type="button" data-needs="edit">Apply and regenerate</button><label class="small" style="display:flex;align-items:center;gap:4px"><input id="detail-keep-layout" type="checkbox" checked style="width:auto"> Keep layout (only the edited copy changes)</label></div>
+          <details style="margin-top:12px"><summary>Technical details (plan, fonts, checks)</summary><pre id="detail-json" class="json"></pre></details>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+<div id="toast" class="toast hidden"></div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,145 @@
+{
+  "profile": "PORTRAIT",
+  "target_size": {
+    "width": 1080,
+    "height": 1920
+  },
+  "mode": "phase3",
+  "score": 32.68657407407407,
+  "violations": [
+    "min_size:headline",
+    "min_size:sub",
+    "min_size:cta",
+    "overlap:headline:logo",
+    "overlap:headline:hero",
+    "overlap:headline:sub",
+    "overlap:headline:cta",
+    "overlap:logo:hero",
+    "overlap:logo:sub",
+    "overlap:logo:cta",
+    "overlap:hero:sub",
+    "overlap:hero:cta",
+    "overlap:sub:cta"
+  ],
+  "fallback_used": true,
+  "fallback_reason": "catastrophic_overlap_after_repair",
+  "repair_applied": true,
+  "text_plate": {
+    "applied": true,
+    "plates": 0,
+    "avg_busy": 0.001129970743204467,
+    "busy_scores": [
+      0.001573,
+      0.001281,
+      0.000536
+    ],
+    "busy_threshold": 0.2,
+    "style": "blur",
+    "source": "phase3_target_first"
+  },
+  "results": [
+    {
+      "element_id": "bg",
+      "bbox": {
+        "x": 64,
+        "y": 115,
+        "width": 950,
+        "height": 1690
+      },
+      "visible": true
+    },
+    {
+      "element_id": "headline",
+      "bbox": {
+        "x": 270,
+        "y": 1756,
+        "width": 696,
+        "height": 49
+      },
+      "visible": true
+    },
+    {
+      "element_id": "logo",
+      "bbox": {
+        "x": 270,
+        "y": 1661,
+        "width": 324,
+        "height": 144
+      },
+      "visible": true
+    },
+    {
+      "element_id": "hero",
+      "bbox": {
+        "x": 236,
+        "y": 945,
+        "width": 780,
+        "height": 860
+      },
+      "visible": true
+    },
+    {
+      "element_id": "sub",
+      "bbox": {
+        "x": 270,
+        "y": 1764,
+        "width": 608,
+        "height": 41
+      },
+      "visible": true
+    },
+    {
+      "element_id": "cta",
+      "bbox": {
+        "x": 540,
+        "y": 1774,
+        "width": 169,
+        "height": 31
+      },
+      "visible": true
+    }
+  ],
+  "redesign_selected_reason": "phase3_last_resort",
+  "redesign_candidates": [
+    {
+      "candidate_id": 0,
+      "recipe": "background_only",
+      "score": 0.0,
+      "rejected": true,
+      "rejection_reason": "anchor_integrity:headline:0.0044",
+      "penalties": {
+        "hard": 100.0
+      }
+    },
+    {
+      "candidate_id": 1,
+      "recipe": "light_decor",
+      "score": 0.0,
+      "rejected": true,
+      "rejection_reason": "anchor_integrity:headline:0.0044",
+      "penalties": {
+        "hard": 100.0
+      }
+    },
+    {
+      "candidate_id": 2,
+      "recipe": "strong_decor",
+      "score": 0.0,
+      "rejected": true,
+      "rejection_reason": "anchor_integrity:headline:0.0044",
+      "penalties": {
+        "hard": 100.0
+      }
+    },
+    {
+      "candidate_id": 3,
+      "recipe": "background_only",
+      "score": 0.0,
+      "rejected": true,
+      "rejection_reason": "anchor_integrity:headline:0.0044",
+      "penalties": {
+        "hard": 100.0
+      }
+    }
+  ]
+}

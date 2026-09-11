@@ -22,6 +22,26 @@ from .resize import high_quality_resize
 logger = logging.getLogger("autobanner.composition")
 
 
+def _text_rgb(elem: DesignElement) -> tuple[int, int, int] | None:
+    """Best-effort text colour from font metadata (hex string or psd-tools values)."""
+    info = elem.font_info or {}
+    color = info.get("color")
+    if isinstance(color, str) and color.startswith("#") and len(color) >= 7:
+        try:
+            return int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+        except ValueError:
+            return None
+    if isinstance(color, (list, tuple)) and len(color) >= 3:
+        vals = [float(v) for v in color[:4]]
+        if len(vals) == 4 and all(0.0 <= v <= 1.0 for v in vals):
+            return int(vals[1] * 255), int(vals[2] * 255), int(vals[3] * 255)
+        if all(0.0 <= v <= 1.0 for v in vals[:3]):
+            return int(vals[0] * 255), int(vals[1] * 255), int(vals[2] * 255)
+        if all(0 <= v <= 255 for v in vals[:3]):
+            return int(vals[0]), int(vals[1]), int(vals[2])
+    return None
+
+
 class CompositionEngine:
     """Compose final image from elements and layout.
 
@@ -44,6 +64,7 @@ class CompositionEngine:
         source_size: tuple[int, int],
         target_size: tuple[int, int],
         bg_outpaint_fn: Callable[[Image.Image], Image.Image] | None = None,
+        plate_rects: list[tuple[int, int, int, int]] | None = None,
     ) -> CompositionResult:
         """Compose final image.
 
@@ -76,7 +97,8 @@ class CompositionEngine:
 
         # Standard multi-element composition (PSD, etc.)
         return self._compose_multi_element(
-            elements, layout_results, source_size, target_size, bg_outpaint_fn
+            elements, layout_results, source_size, target_size, bg_outpaint_fn,
+            plate_rects=plate_rects,
         )
 
     @staticmethod
@@ -148,6 +170,7 @@ class CompositionEngine:
         source_size: tuple[int, int],
         target_size: tuple[int, int],
         bg_outpaint_fn: Callable[[Image.Image], Image.Image] | None = None,
+        plate_rects: list[tuple[int, int, int, int]] | None = None,
     ) -> CompositionResult:
         """Standard composition for multi-element sources (PSD files)."""
         warnings: list[str] = []
@@ -180,7 +203,9 @@ class CompositionEngine:
             except Exception as e:
                 warnings.append(f"Background outpaint failed: {e}")
 
-        canvas, text_plate_meta = self._apply_text_safe_plate(canvas, content_elements, target_size)
+        canvas, text_plate_meta = self._apply_text_safe_plate(
+            canvas, content_elements, target_size, plate_rects=plate_rects
+        )
 
         # Sort content by z_index
         content_elements.sort(key=lambda x: x[0].z_index if x[0] else 0)
@@ -207,6 +232,7 @@ class CompositionEngine:
         canvas: Image.Image,
         content_elements: list[tuple[DesignElement, LayoutResult | None]],
         target_size: tuple[int, int],
+        plate_rects: list[tuple[int, int, int, int]] | None = None,
     ) -> tuple[Image.Image, dict[str, object]]:
         """Apply optional readability plate behind text roles on busy backgrounds."""
         if not Config.TEXT_SAFE_PLATE_ENABLED:
@@ -222,6 +248,7 @@ class CompositionEngine:
         avoid_roles = {ElementRole.LOGO, ElementRole.HERO_IMAGE}
 
         text_boxes: list[tuple[int, int, int, int]] = []
+        text_colors: list[tuple[int, int, int] | None] = []
         avoid_mask = np.zeros((target_size[1], target_size[0]), dtype=bool)
 
         for elem, layout in content_elements:
@@ -236,6 +263,7 @@ class CompositionEngine:
                 continue
             if elem.role in text_roles:
                 text_boxes.append((x1, y1, x2 - x1, y2 - y1))
+                text_colors.append(_text_rgb(elem))
             if elem.role in avoid_roles:
                 avoid_mask[y1:y2, x1:x2] = True
 
@@ -257,6 +285,8 @@ class CompositionEngine:
             text_boxes=text_boxes,
             avoid_mask=avoid_mask,
             config=plate_cfg,
+            text_colors=text_colors,
+            fixed_rects=[tuple(int(v) for v in r) for r in plate_rects] if plate_rects else None,
         )
         return plated, dict(meta)
 

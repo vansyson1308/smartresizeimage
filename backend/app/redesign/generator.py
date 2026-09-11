@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import random
+import zlib
 from dataclasses import dataclass
 
 import numpy as np
@@ -46,7 +47,8 @@ class DeterministicFlatGenerator(BackgroundGenerator):
         plan: RedesignPlan,
         recipe: str,
     ) -> tuple[Image.Image, dict[str, object]]:
-        rng = random.Random(seed + variant * 101 + hash(recipe) % 997)
+        # zlib.crc32 is stable across processes; built-in hash() is salted per process.
+        rng = random.Random(seed + variant * 101 + zlib.crc32(recipe.encode("utf-8")) % 997)
         src = self._ext.extend(source_background.convert("RGBA"), target_size)
         w, h = target_size
 
@@ -118,6 +120,12 @@ class GenerativeFillAdapter(BackgroundGenerator):
             recipe,
         )
         meta["prompt_style"] = "flat illustration background extension, consistent palette, masked"
+        meta["provider"] = "none"
+        meta["is_mock"] = True
+        meta["note"] = (
+            "GenerativeFillAdapter has no model provider wired; output is the deterministic "
+            "procedural generator. Not a generative model result."
+        )
         return img, meta
 
 

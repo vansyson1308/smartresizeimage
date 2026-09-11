@@ -16,6 +16,7 @@ class ValidationResult:
     hard_fail: bool
     score: float
     reason: str = ""
+    status: str = "checked"  # checked | not_checked
 
 
 def _ssim_like(a: np.ndarray, b: np.ndarray) -> float:
@@ -62,8 +63,17 @@ class AnchorIntegrityValidator:
 
 
 class OCRTextValidator:
+    """Placeholder kept for API compatibility.
+
+    Text legibility is verified by ``backend.app.quality`` on the final render.
+    This validator never ran OCR, so it reports ``not_checked`` and must not be
+    counted as evidence.
+    """
+
     def validate(self, _image: Image.Image, _anchors: list[Anchor]) -> ValidationResult:
-        return ValidationResult(True, False, 100.0, "ocr_skipped")
+        return ValidationResult(
+            passed=False, hard_fail=False, score=0.0, reason="ocr_not_checked", status="not_checked"
+        )
 
 
 class SeamArtifactHeuristic:

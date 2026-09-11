@@ -35,8 +35,9 @@ def generate_fixtures(outdir: Path, cases: int, seed: int) -> list[str]:
         case_dir = outdir / case_name
         case_dir.mkdir(parents=True, exist_ok=True)
 
-        img, elements, tags = _build_case(idx, scenario)
+        img, elements, tags, background = _build_case(idx, scenario)
         img.save(case_dir / "input.png")
+        background.save(case_dir / "background.png")
         payload = {
             "case_name": case_name,
             "seed": seed,
@@ -59,7 +60,7 @@ def _scenario_name(scenario: int) -> str:
     }[scenario]
 
 
-def _build_case(idx: int, scenario: int) -> tuple[Image.Image, list[dict], dict]:
+def _build_case(idx: int, scenario: int) -> tuple[Image.Image, list[dict], dict, Image.Image]:
     w, h = SOURCE_SIZE
     bg = Image.new("RGBA", SOURCE_SIZE, (86, 126, 164, 255))
     draw = ImageDraw.Draw(bg)
@@ -77,6 +78,9 @@ def _build_case(idx: int, scenario: int) -> tuple[Image.Image, list[dict], dict]
         for x in range(0, w, 30):
             color = (70 + (x % 90), 110 + (x % 50), 150, 255)
             draw.line((x, 0, (x * 7) % w, h), fill=color, width=2)
+
+    # Clean background (no foreground elements) for layered benchmark runs.
+    background = bg.copy()
 
     hero_x = 740 if not offcenter_hero else 930
     hero_y = 120
@@ -169,7 +173,7 @@ def _build_case(idx: int, scenario: int) -> tuple[Image.Image, list[dict], dict]
         "offcenter_hero": offcenter_hero,
         "scenario": _scenario_name(scenario),
     }
-    return bg, elements, tags
+    return bg, elements, tags, background
 
 
 def main() -> None:

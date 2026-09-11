@@ -4,13 +4,23 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     ports:
-      - "7860:7860"
+      - "8000:8000"
     volumes:
-      - ./outputs:/app/outputs
+      - ./data:/app/data
       - model-cache:/app/cache
     environment:
       - AUTOBANNER_LOG_LEVEL=INFO
-      - AUTOBANNER_USE_AI=true
+      - AUTOBANNER_USE_AI=false
+      - AUTOBANNER_DATA_DIR=/app/data
+      # Local users and sessions (first run: POST /api/auth/setup or the UI's setup
+      # screen with the setup token below or the one printed in the logs)
+      - AUTOBANNER_AUTH=local
+      # - AUTOBANNER_SETUP_TOKEN=change-me
+      # Air-gapped installs: refuse outbound connections at the socket level
+      # - AUTOBANNER_OFFLINE=1
+      # Plans: AUTOBANNER_DEFAULT_PLAN=team or AUTOBANNER_WORKSPACE_PLANS=acme:team
+      # Static keys for automation (optional, also work in local mode)
+      # - AUTOBANNER_API_KEYS=change-me:workspace:editor
 
       # Gradio in Docker: bind externally
       - GRADIO_SERVER_NAME=0.0.0.0
