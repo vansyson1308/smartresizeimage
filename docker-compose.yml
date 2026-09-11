@@ -12,8 +12,12 @@ services:
       - AUTOBANNER_LOG_LEVEL=INFO
       - AUTOBANNER_USE_AI=false
       - AUTOBANNER_DATA_DIR=/app/data
-      # Set to require X-API-Key on every /api request
-      # - AUTOBANNER_API_KEY=change-me
+      # Local users and sessions (first run: POST /api/auth/setup or the UI's setup
+      # screen with the setup token below or the one printed in the logs)
+      - AUTOBANNER_AUTH=local
+      # - AUTOBANNER_SETUP_TOKEN=change-me
+      # Static keys for automation (optional, also work in local mode)
+      # - AUTOBANNER_API_KEYS=change-me:workspace:editor
 
       # Gradio in Docker: bind externally
       - GRADIO_SERVER_NAME=0.0.0.0

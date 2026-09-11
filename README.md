@@ -36,7 +36,7 @@ cd .. && AUTOBANNER_DATA_DIR=./data uvicorn backend.app.api.server:app --port 80
 
 Mở http://localhost:8000 → kéo thả PSD/PNG (hoặc tạo canvas trống) → kiểm tra phần tử & quy tắc → chọn kích thước → Generate → Review → Export. Tài liệu API: http://localhost:8000/api/docs.
 
-Nhiều người dùng: đặt `AUTOBANNER_API_KEYS="key1:owner-a,key2:owner-b"`; mỗi key chỉ thấy project/job của owner đó (header `X-API-Key`). Hạn mức: `AUTOBANNER_QUOTA_VARIANTS_PER_DAY`, `AUTOBANNER_QUOTA_PROJECTS`. Vận hành, sao lưu, giới hạn: xem `docs/OPERATIONS.md`.
+Đăng nhập và phân quyền (chế độ triển khai): đặt `AUTOBANNER_AUTH=local`; lần chạy đầu server in ra một *setup token*, mở giao diện web và tạo quản trị viên của workspace (không gọi dịch vụ ngoài). Quản trị viên thêm thành viên với vai trò `viewer` / `editor` / `approver` / `admin` ngay trong thẻ Workspace; mỗi người dùng có thể tạo API token cá nhân cho script/CI (header `X-API-Key`). Mỗi workspace chỉ thấy project/job của mình. Không đặt gì cả = chế độ *open* (chỉ để phát triển; giao diện hiện cảnh báo). Hạn mức: `AUTOBANNER_QUOTA_VARIANTS_PER_DAY`, `AUTOBANNER_QUOTA_PROJECTS`. Vận hành, sao lưu, giới hạn: xem `docs/OPERATIONS.md`.
 
 Ảnh phẳng (PNG/JPG) được **tách thử** thành nền + khối chữ (OCR) + chủ thể; mọi phần tử tách ra đều đánh dấu `recovered` kèm độ tin cậy, giữ dạng raster cho đến khi bạn bấm "Convert to editable text". Biến thể sinh từ phần tử chưa xác nhận luôn ở trạng thái `needs_review`.
 

@@ -17,6 +17,8 @@
     previewNonce: 0,
     stageScale: 1,
     drag: null,
+    auth: null,           // /api/auth/status payload
+    can: { edit: true, approve: true, admin: true },
   };
 
   const ROLES = ["headline", "subheadline", "body_text", "cta", "badge", "label", "logo", "hero_image",
@@ -35,11 +37,18 @@
   }
   function setStatus(msg) { $("#status-bar").textContent = msg; }
   async function api(path, opts = {}) {
-    const res = await fetch(path, opts);
+    // Same-origin requests carry the session cookie; the custom header marks them as
+    // ours (cookie-authenticated writes without it are refused: CSRF protection).
+    const headers = Object.assign({ "X-Requested-With": "fetch" }, opts.headers || {});
+    const res = await fetch(path, Object.assign({ credentials: "same-origin" }, opts, { headers }));
     if (res.status === 204) return null;
     const ct = res.headers.get("content-type") || "";
     const body = ct.includes("application/json") ? await res.json() : await res.blob();
     if (!res.ok) {
+      if (res.status === 401 && state.auth && state.auth.mode !== "open" && !path.startsWith("/api/auth/")) {
+        showAuth(false);
+        throw new Error("Sign in required");
+      }
       const detail = body && body.detail ? body.detail : res.statusText;
       throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
     }
@@ -85,6 +94,7 @@
 
   // ---------- projects ----------
   async function loadProjects() {
+    renderWorkspace();
     try {
       const data = await api("/api/projects");
       const list = $("#project-list");
@@ -366,7 +376,7 @@
     const e = elementById(id);
     if (!e) return;
     if (state.selectedId !== id) selectElement(id);
-    if (e.locked || isBg(e)) return;
+    if (e.locked || isBg(e) || !state.can.edit) return;
     const p = svgPoint(ev);
     state.drag = { id, mode, start: p, orig: { ...e.geometry }, moved: false };
     $("#overlay").setPointerCapture(ev.pointerId);
@@ -404,7 +414,7 @@
     if (state.view !== "design") return;
     if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "z") { ev.preventDefault(); $("#btn-undo").click(); return; }
     const e = state.selectedId && elementById(state.selectedId);
-    if (!e || e.locked || ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) return;
+    if (!e || e.locked || !state.can.edit || ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) return;
     const step = ev.shiftKey ? 10 : 1;
     const g = { ...e.geometry };
     if (ev.key === "ArrowLeft") g.x -= step; else if (ev.key === "ArrowRight") g.x += step; else if (ev.key === "ArrowUp") g.y -= step; else if (ev.key === "ArrowDown") g.y += step; else return;
@@ -577,7 +587,8 @@
     const grid = $("#variant-grid");
     grid.innerHTML = filtered.map((v) => {
       const thumb = v.image_path ? `<div class="thumb" data-open="${esc(v.id)}"><img src="/api/projects/${pid()}/variants/${v.id}/image.png?n=${esc(v.updated_at)}" alt="${esc(v.name)}"></div>` : `<div class="thumb placeholder">${esc(v.status)}${v.error ? ": " + esc(v.error) : ""}</div>`;
-      return `<div class="card variant-card">${thumb}<div class="row"><strong class="grow">${esc(v.name)}</strong><span class="small muted">${v.width}×${v.height}</span></div><div class="row">${verdictBadge(v.verdict)} ${approvalBadge(v.approval)}</div><div class="row"><button data-open="${esc(v.id)}" class="small" type="button">Review</button><button data-approve="${esc(v.id)}" class="small" type="button" ${v.status !== "done" ? "disabled" : ""}>Approve</button><button data-regen="${esc(v.id)}" class="small" type="button">Regenerate</button><button data-del="${esc(v.id)}" class="small danger" type="button">Delete</button></div></div>`;
+      const ed = state.can.edit ? "" : "disabled", ap = state.can.approve ? "" : "disabled";
+      return `<div class="card variant-card">${thumb}<div class="row"><strong class="grow">${esc(v.name)}</strong><span class="small muted">${v.width}×${v.height}</span></div><div class="row">${verdictBadge(v.verdict)} ${approvalBadge(v.approval)}</div><div class="row"><button data-open="${esc(v.id)}" class="small" type="button">Review</button><button data-approve="${esc(v.id)}" class="small" type="button" ${v.status !== "done" || ap ? "disabled" : ""}>Approve</button><button data-regen="${esc(v.id)}" class="small" type="button" ${ed}>Regenerate</button><button data-del="${esc(v.id)}" class="small danger" type="button" ${ed}>Delete</button></div></div>`;
     }).join("");
     grid.querySelectorAll("[data-open]").forEach((b) => b.addEventListener("click", () => openDetail(b.dataset.open)));
     grid.querySelectorAll("[data-approve]").forEach((b) => b.addEventListener("click", () => setApproval(b.dataset.approve, "approved", "")));
@@ -626,10 +637,115 @@
   $("#btn-export-approved").addEventListener("click", () => exportZip("approved"));
   $("#btn-export-all").addEventListener("click", () => exportZip("all"));
 
-  // ---------- boot ----------
-  loadPresets().then(() => {
+  // ---------- auth ----------
+  function applyRoleGates() {
+    const role = state.auth ? state.auth.role : "admin";
+    const mode = state.auth ? state.auth.mode : "open";
+    state.can = {
+      edit: mode === "open" || ["editor", "admin"].includes(role),
+      approve: mode === "open" || ["approver", "admin"].includes(role),
+      admin: mode === "open" || role === "admin",
+    };
+    $$("[data-needs]").forEach((el) => { el.disabled = !state.can[el.dataset.needs]; el.title = state.can[el.dataset.needs] ? "" : `Your role (${role}) cannot do this`; });
+    const chip = $("#user-chip");
+    if (state.auth && state.auth.authenticated && state.auth.user) {
+      chip.classList.remove("hidden");
+      $("#user-name").textContent = `${state.auth.user} · ${state.auth.workspace}`;
+      $("#user-role").textContent = role;
+    } else chip.classList.add("hidden");
+    $("#open-badge").classList.toggle("hidden", mode !== "open");
+  }
+  function showAuth(setup) {
+    state.project = null;
+    $$(".view").forEach((v) => v.classList.toggle("hidden", v.id !== "view-auth"));
+    $$("header nav button").forEach((b) => { b.disabled = true; b.classList.remove("active"); });
+    $("#auth-setup").classList.toggle("hidden", !setup);
+    $("#auth-login").classList.toggle("hidden", !!setup);
+    $("#auth-error").classList.add("hidden");
+    $("#user-chip").classList.add("hidden");
+    setStatus(setup ? "First run: create the administrator" : "Sign in");
+    (setup ? $("#setup-username") : $("#login-username")).focus();
+  }
+  function authError(msg) { const el = $("#auth-error"); el.textContent = msg; el.classList.remove("hidden"); }
+  async function loadAuth() {
+    try { state.auth = await api("/api/auth/status"); } catch (e) { state.auth = { mode: "open", authenticated: true, role: "admin" }; }
+    applyRoleGates();
+    return state.auth.authenticated;
+  }
+  async function enterApp() {
+    $$("header nav button").forEach((b) => { b.disabled = b.dataset.view !== "projects"; });
+    await loadPresets();
     const { id, view } = parseHash();
     if (id) openProject(id, ["design", "brief", "review"].includes(view) ? view : "design");
-    else loadProjects();
+    else showView("projects");
+  }
+  async function submitAuth(path, body) {
+    try {
+      await api(path, json(body));
+      await loadAuth();
+      toast(path.endsWith("setup") ? "Administrator created. You are signed in." : "Signed in.");
+      await enterApp();
+    } catch (e) { authError(e.message); }
+  }
+  $("#setup-submit").addEventListener("click", () => submitAuth("/api/auth/setup", {
+    workspace: $("#setup-workspace").value.trim() || "default", username: $("#setup-username").value.trim(),
+    password: $("#setup-password").value, setup_token: $("#setup-token").value.trim(),
+  }));
+  $("#login-submit").addEventListener("click", () => submitAuth("/api/auth/login", { username: $("#login-username").value.trim(), password: $("#login-password").value }));
+  ["#setup-token", "#login-password"].forEach((sel) => $(sel).addEventListener("keydown", (ev) => { if (ev.key === "Enter") (sel === "#login-password" ? $("#login-submit") : $("#setup-submit")).click(); }));
+  $("#btn-logout").addEventListener("click", async () => {
+    try { await api("/api/auth/logout", { method: "POST" }); } catch (e) { /* session may already be gone */ }
+    await loadAuth();
+    showAuth(false);
+  });
+  async function renderWorkspace() {
+    const card = $("#workspace-card");
+    const a = state.auth;
+    if (!a || a.mode !== "local" || !a.authenticated) { card.classList.add("hidden"); return; }
+    card.classList.remove("hidden");
+    $("#workspace-name").textContent = a.workspace || "";
+    $("#members-wrap").classList.toggle("hidden", !state.can.admin);
+    $("#tokens-wrap").classList.toggle("hidden", !a.user);
+    if (state.can.admin) {
+      try {
+        const { users } = await api("/api/auth/users");
+        const tbody = $("#member-table tbody");
+        tbody.innerHTML = users.map((u) => `<tr><td>${esc(u.username)}${u.username === a.user ? ' <span class="muted">(you)</span>' : ""}</td><td><select data-role-for="${esc(u.username)}">${["viewer", "editor", "approver", "admin"].map((r) => `<option ${r === u.role ? "selected" : ""}>${r}</option>`).join("")}</select></td><td>${u.username === a.user ? "" : `<button class="small danger" data-remove-user="${esc(u.username)}" type="button">Remove</button>`}</td></tr>`).join("");
+        tbody.querySelectorAll("select[data-role-for]").forEach((sel) => sel.addEventListener("change", async () => {
+          try { await api(`/api/auth/users/${encodeURIComponent(sel.dataset.roleFor)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role: sel.value }) }); toast("Role updated."); } catch (e) { toast(e.message, true); renderWorkspace(); }
+        }));
+        tbody.querySelectorAll("button[data-remove-user]").forEach((b) => b.addEventListener("click", async () => {
+          if (!confirm(`Remove ${b.dataset.removeUser} from the workspace?`)) return;
+          try { await api(`/api/auth/users/${encodeURIComponent(b.dataset.removeUser)}`, { method: "DELETE" }); renderWorkspace(); } catch (e) { toast(e.message, true); }
+        }));
+      } catch (e) { toast(e.message, true); }
+    }
+    if (a.user) {
+      try {
+        const me = await api("/api/auth/me");
+        $("#token-list").innerHTML = (me.tokens || []).map((t) => `<li>${esc(t.name)} <span class="muted">· created ${esc(t.created_at)}${t.last_used ? " · last used " + esc(t.last_used) : ""}</span> <button class="small danger" data-revoke="${esc(t.id)}" type="button">Revoke</button></li>`).join("") || '<li class="muted">No tokens.</li>';
+        $("#token-list").querySelectorAll("button[data-revoke]").forEach((b) => b.addEventListener("click", async () => { try { await api(`/api/auth/tokens/${b.dataset.revoke}`, { method: "DELETE" }); renderWorkspace(); } catch (e) { toast(e.message, true); } }));
+      } catch (e) { /* tokens are optional */ }
+    }
+  }
+  $("#member-add").addEventListener("click", async () => {
+    try {
+      await api("/api/auth/users", json({ username: $("#member-username").value.trim(), password: $("#member-password").value, role: $("#member-role").value }));
+      $("#member-username").value = ""; $("#member-password").value = "";
+      toast("Member added."); renderWorkspace();
+    } catch (e) { toast(e.message, true); }
+  });
+  $("#token-create").addEventListener("click", async () => {
+    try {
+      const res = await api("/api/auth/tokens", json({ name: $("#token-name").value.trim() || "token" }));
+      const pre = $("#token-new"); pre.textContent = `Copy it now, it is not shown again:\n${res.token}`; pre.classList.remove("hidden");
+      $("#token-name").value = ""; renderWorkspace();
+    } catch (e) { toast(e.message, true); }
+  });
+
+  // ---------- boot ----------
+  loadAuth().then((authenticated) => {
+    if (!authenticated) showAuth(!!state.auth.setup_required);
+    else enterApp();
   });
 })();

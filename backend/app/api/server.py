@@ -4,21 +4,31 @@ Run locally::
 
     AUTOBANNER_DATA_DIR=./data uvicorn backend.app.api.server:app --port 8000
 
-Authentication and ownership:
+Authentication and ownership (``AUTOBANNER_AUTH`` = ``local`` | ``api_key`` | ``open``):
 
-- ``AUTOBANNER_API_KEYS="key1:owner-a,key2:owner-b"`` maps API keys to owner
-  ids; every ``/api`` request must send a known key as ``X-API-Key`` and only
-  sees projects and jobs of its owner (others read as 404).
-- ``AUTOBANNER_API_KEY=key`` is the single-owner form (owner ``default``).
-- Without either, the server is open and everything belongs to owner ``local``
-  (development only).
+- ``local`` (the documented deployment mode): users, sessions and personal API
+  tokens live in ``$AUTOBANNER_DATA_DIR/auth/users.json`` (see ``auth.py``). The
+  first workspace administrator is created through ``POST /api/auth/setup`` with
+  the operator's setup token (``AUTOBANNER_SETUP_TOKEN`` or the one logged at
+  startup); the browser UI then uses an HttpOnly session cookie, automation uses
+  ``X-API-Key`` with a personal token. Chosen automatically once a user exists.
+- ``api_key``: ``AUTOBANNER_API_KEYS="key1:owner-a[:role],key2:owner-b[:role]"``
+  maps static keys to owners (workspaces) and roles; ``AUTOBANNER_API_KEY=key`` is
+  the single-owner form (owner ``default``). Static keys also work in ``local`` mode.
+- ``open`` (default when neither users nor keys exist): everything belongs to
+  owner ``local`` with the admin role. Development only; the health endpoint and
+  the UI say so.
+
+Every workspace only sees its own projects and jobs (others read as 404).
 """
 
 from __future__ import annotations
 
+import hmac
 import io
 import logging
 import os
+import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -30,6 +40,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ..config import Config
 from ..logging_config import setup_logging
+from .auth import AuthError, Principal, UserStore
 from .presets import preset_catalog
 from .ratelimit import RateLimiter, parse_rate
 from .service import LOCAL_OWNER, MAX_UPLOAD_BYTES, ProjectService, ServiceError, env_flag
@@ -48,7 +59,18 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
         data_root, max_workers=workers, use_ai=env_flag("AUTOBANNER_USE_AI", False)
     )
     key_principals = _key_owner_map()
-    key_owners = {k: owner for k, (owner, _role) in key_principals.items()}
+    users = UserStore(data_root / "auth" / "users.json")
+    auth_mode = _auth_mode(users, key_principals)
+    setup_token = os.environ.get("AUTOBANNER_SETUP_TOKEN", "").strip()
+    if auth_mode == "local" and not setup_token:
+        setup_token = secrets.token_urlsafe(12)
+        if users.setup_required():
+            logger.warning(
+                "AUTOBANNER_SETUP_TOKEN is not set; use this one-time setup token to create the "
+                "first administrator: %s",
+                setup_token,
+            )
+    cookie_secure = env_flag("AUTOBANNER_COOKIE_SECURE", False)
     limiter = RateLimiter(parse_rate(os.environ.get("AUTOBANNER_RATE_LIMIT")))
     retention_days = _int_env("AUTOBANNER_RETENTION_DAYS")
 
@@ -67,22 +89,59 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
         lifespan=lifespan,
     )
     app.state.service = service
+    app.state.users = users
+    app.state.auth_mode = auth_mode
+    app.state.setup_token = setup_token
 
-    async def current_owner(x_api_key: str | None = Header(default=None)) -> str:
-        if not key_owners:
-            return LOCAL_OWNER
-        owner = key_owners.get(x_api_key or "")
-        if owner is None:
-            raise HTTPException(status_code=401, detail="invalid or missing API key")
-        return owner
+    def resolve_principal(request: Request) -> Principal | None:
+        """Identify the caller: static key, personal token, session cookie, or open mode.
 
-    async def current_role(x_api_key: str | None = Header(default=None)) -> str:
-        if not key_principals:
-            return "admin"
-        principal = key_principals.get(x_api_key or "")
+        Returns ``None`` for an anonymous request in a mode that needs credentials and
+        raises 401 for credentials that are presented but wrong.
+        """
+        cached = getattr(request.state, "principal", None)
+        if cached is not None:
+            return cached
+        principal: Principal | None = None
+        key = request.headers.get("x-api-key") or ""
+        if key:
+            if key in key_principals:
+                owner, role = key_principals[key]
+                principal = Principal(owner, role, via="api_key")
+            else:
+                user = users.resolve_token(key)
+                if user is None:
+                    raise HTTPException(status_code=401, detail="invalid or missing API key")
+                principal = Principal(user["owner"], user["role"], user["username"], "token")
         if principal is None:
-            raise HTTPException(status_code=401, detail="invalid or missing API key")
-        return principal[1]
+            user = users.resolve_session(request.cookies.get(SESSION_COOKIE))
+            if user is not None:
+                principal = Principal(user["owner"], user["role"], user["username"], "session")
+        if principal is None and auth_mode == "open":
+            principal = Principal(LOCAL_OWNER, "admin")
+        request.state.principal = principal
+        return principal
+
+    async def current_principal(request: Request) -> Principal:
+        principal = resolve_principal(request)
+        if principal is None:
+            raise HTTPException(status_code=401, detail="sign in required")
+        if principal.via == "session" and request.method in MUTATING and not request.headers.get(
+            "x-requested-with"
+        ):
+            # Cookie-authenticated writes must come from our own scripts (CSRF).
+            raise HTTPException(
+                status_code=403, detail="missing X-Requested-With header (CSRF protection)"
+            )
+        return principal
+
+    Who = Depends(current_principal)  # noqa: N806
+
+    async def current_owner(principal: Principal = Who) -> str:
+        return principal.owner
+
+    async def current_role(principal: Principal = Who) -> str:
+        return principal.role
 
     def require(*roles: str):
         async def _guard(role: str = Depends(current_role)) -> None:
@@ -97,14 +156,18 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
     dep = [Depends(current_owner)]
     edit = [Depends(current_owner), require("editor")]
     approve = [Depends(current_owner), require("approver")]
+    admin = [Depends(current_owner), require("admin")]
     Owner = Depends(current_owner)  # noqa: N806
     Role = Depends(current_role)  # noqa: N806
 
     @app.middleware("http")
     async def rate_limit(request: Request, call_next):
-        if limiter.enabled and request.method in ("POST", "PATCH", "PUT", "DELETE"):
-            key = request.headers.get("x-api-key") or ""
-            owner = key_owners.get(key, LOCAL_OWNER if not key_owners else "anonymous")
+        if limiter.enabled and request.method in MUTATING:
+            try:
+                principal = resolve_principal(request)
+            except HTTPException:
+                principal = None
+            owner = principal.owner if principal is not None else "anonymous"
             allowed, retry = limiter.allow(owner)
             if not allowed:
                 service.events.record(
@@ -135,6 +198,144 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
     async def _service_error(_request: Request, exc: ServiceError) -> JSONResponse:
         return JSONResponse(status_code=exc.status, content={"detail": str(exc)})
 
+    @app.exception_handler(AuthError)
+    async def _auth_error(_request: Request, exc: AuthError) -> JSONResponse:
+        return JSONResponse(status_code=exc.status, content={"detail": str(exc)})
+
+    # ---- auth --------------------------------------------------------------------------
+    def set_session_cookie(response: Response, token: str) -> None:
+        response.set_cookie(
+            SESSION_COOKIE, token, httponly=True, samesite="lax", secure=cookie_secure,
+            max_age=7 * 24 * 3600, path="/",
+        )
+
+    def auth_status(request: Request) -> dict:
+        try:
+            principal = resolve_principal(request)
+        except HTTPException:
+            principal = None
+        return {
+            "mode": auth_mode,
+            "setup_required": auth_mode == "local" and users.setup_required(),
+            "authenticated": principal is not None,
+            "user": principal.username if principal else None,
+            "role": principal.role if principal else None,
+            "workspace": principal.owner if principal else None,
+            "via": principal.via if principal else None,
+            "roles": list(ROLES),
+        }
+
+    @app.get("/api/auth/status")
+    def get_auth_status(request: Request) -> dict:
+        return auth_status(request)
+
+    @app.post("/api/auth/setup", status_code=201)
+    async def setup(request: Request, response: Response) -> dict:
+        """Create a workspace with its first administrator (operator setup token)."""
+        if auth_mode != "local":
+            raise HTTPException(status_code=409, detail=f"auth mode is '{auth_mode}'")
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="body must be an object")
+        if not hmac.compare_digest(str(body.get("setup_token", "")), setup_token):
+            raise HTTPException(status_code=403, detail="invalid setup token")
+        workspace = str(body.get("workspace") or "default").strip()
+        if workspace in users.workspaces():
+            raise HTTPException(status_code=409, detail="workspace already set up")
+        user = users.create_user(
+            str(body.get("username", "")), str(body.get("password", "")), workspace, "admin",
+            created_by="setup",
+        )
+        set_session_cookie(response, users.create_session(user["username"]))
+        service.events.record(workspace, "workspace_setup", user=user["username"])
+        return {"user": users.public(user)}
+
+    @app.post("/api/auth/login")
+    async def login(request: Request, response: Response) -> dict:
+        if auth_mode != "local":
+            raise HTTPException(status_code=409, detail=f"auth mode is '{auth_mode}'")
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="body must be an object")
+        user = users.authenticate(str(body.get("username", "")), str(body.get("password", "")))
+        set_session_cookie(response, users.create_session(user["username"]))
+        return {"user": users.public(user)}
+
+    @app.post("/api/auth/logout")
+    async def logout(request: Request, response: Response) -> dict:
+        users.revoke_session(request.cookies.get(SESSION_COOKIE))
+        response.delete_cookie(SESSION_COOKIE, path="/")
+        return {"ok": True}
+
+    @app.get("/api/auth/me", dependencies=dep)
+    def me(request: Request, who: Principal = Who) -> dict:
+        data = auth_status(request)
+        if who.username:
+            data["tokens"] = users.list_tokens(who.username)
+        return data
+
+    @app.post("/api/auth/password", dependencies=dep)
+    async def change_password(request: Request, response: Response, who: Principal = Who) -> dict:
+        if not who.username:
+            raise HTTPException(status_code=400, detail="no user account for this credential")
+        body = await request.json()
+        users.authenticate(who.username, str(body.get("current", "")))
+        users.set_password(who.username, str(body.get("new", "")))
+        set_session_cookie(response, users.create_session(who.username))
+        return {"ok": True}
+
+    @app.get("/api/auth/users", dependencies=admin)
+    def list_users(owner: str = Owner) -> dict:
+        return {"users": users.list_users(owner)}
+
+    @app.post("/api/auth/users", dependencies=admin, status_code=201)
+    async def create_user(request: Request, who: Principal = Who) -> dict:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="body must be an object")
+        user = users.create_user(
+            str(body.get("username", "")), str(body.get("password", "")), who.owner,
+            str(body.get("role", "editor")), created_by=who.username or who.via,
+        )
+        return {"user": users.public(user)}
+
+    @app.patch("/api/auth/users/{username}", dependencies=admin)
+    async def update_user(username: str, request: Request, who: Principal = Who) -> dict:
+        body = await request.json()
+        if "role" in body:
+            users.set_role(username, who.owner, str(body["role"]))
+        if body.get("password"):
+            target = users.get(username)
+            if target is None or target["owner"] != who.owner:
+                raise HTTPException(status_code=404, detail="user not found")
+            users.set_password(username, str(body["password"]))
+        target = users.get(username)
+        if target is None:
+            raise HTTPException(status_code=404, detail="user not found")
+        return {"user": users.public(target)}
+
+    @app.delete("/api/auth/users/{username}", dependencies=admin, status_code=204)
+    def delete_user(username: str, who: Principal = Who) -> Response:
+        if who.username and username.lower() == who.username.lower():
+            raise HTTPException(status_code=409, detail="cannot delete yourself")
+        users.delete_user(username, who.owner)
+        return Response(status_code=204)
+
+    @app.post("/api/auth/tokens", dependencies=dep, status_code=201)
+    async def create_token(request: Request, who: Principal = Who) -> dict:
+        if not who.username:
+            raise HTTPException(status_code=400, detail="no user account for this credential")
+        body = await request.json()
+        raw, record = users.create_token(who.username, str(body.get("name", "token")))
+        return {"token": raw, "record": record}
+
+    @app.delete("/api/auth/tokens/{token_id}", dependencies=dep, status_code=204)
+    def revoke_token(token_id: str, who: Principal = Who) -> Response:
+        if not who.username:
+            raise HTTPException(status_code=400, detail="no user account for this credential")
+        users.revoke_token(who.username, token_id)
+        return Response(status_code=204)
+
     # ---- meta --------------------------------------------------------------------------
     @app.get("/api/health")
     def health() -> dict:
@@ -144,7 +345,8 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
             "status": "ok",
             "version": app.version,
             "environment": environment_fingerprint(),
-            "auth": "api_key" if key_owners else "open",
+            "auth": auth_mode,
+            "setup_required": auth_mode == "local" and users.setup_required(),
             "roles": sorted({role for _o, role in key_principals.values()}) or ["admin"],
             "rate_limit": limiter.describe(),
             "retention_days": retention_days,
@@ -419,6 +621,20 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
 
 
 ROLES = ("viewer", "editor", "approver", "admin")
+SESSION_COOKIE = "ab_session"
+MUTATING = ("POST", "PATCH", "PUT", "DELETE")
+
+
+def _auth_mode(users: UserStore, key_principals: dict) -> str:
+    """``AUTOBANNER_AUTH`` wins; otherwise local once a user exists, keys, else open."""
+    raw = os.environ.get("AUTOBANNER_AUTH", "").strip().lower()
+    if raw in ("local", "api_key", "open"):
+        return raw
+    if raw:
+        raise ValueError("AUTOBANNER_AUTH must be local, api_key or open")
+    if users.count():
+        return "local"
+    return "api_key" if key_principals else "open"
 
 
 def _key_owner_map() -> dict[str, tuple[str, str]]:
