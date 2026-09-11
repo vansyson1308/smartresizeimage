@@ -134,18 +134,17 @@ def test_copy_that_no_longer_fits_falls_back_to_a_fresh_plan(tmp_path) -> None:
 def test_longer_cta_on_busy_background_keeps_the_other_plates(tmp_path) -> None:
     """The H3 residual: stack plates used to grow with the CTA; pinned rects keep them."""
     import json
-    from pathlib import Path
 
     from backend.app.design.adapter import document_from_elements
     from backend.app.design.assets import AssetStore
+    from backend.tools.generate_bench_fixtures import generate_fixtures
     from backend.tools.run_ablations import _native_elements
     from backend.tools.run_layout_bench import _elements_from_meta
 
-    case = next(iter(sorted(Path("backend/tests/bench_fixtures").glob("case_04_busy_bg"))), None)
-    if case is None:
-        import pytest
-
-        pytest.skip("bench fixtures not generated")
+    # Self-contained: the busy-background case is generated deterministically here
+    # (seed 42, case 4) rather than read from an untracked fixture directory.
+    generate_fixtures(tmp_path / "fixtures", cases=4, seed=42)
+    case = tmp_path / "fixtures" / "case_04_busy_bg"
     meta = json.loads((case / "metadata.json").read_text())
     source = Image.open(case / "input.png").convert("RGBA")
     bg = case / "background.png"

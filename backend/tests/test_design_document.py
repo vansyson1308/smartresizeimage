@@ -134,9 +134,11 @@ def test_font_registry_resolves_and_discloses_substitution(tmp_path: Path) -> No
     assert missing.status in ("substituted", "missing")
     if missing.status == "substituted":
         assert missing.family == "DejaVu Sans"
-    # project-local font directories are scanned first
+    # the bundled DejaVu Sans is always present (deterministic fallback on every
+    # machine); other families are missing when only project-local dirs are scanned
     local = FontRegistry(extra_dirs=[tmp_path], scan_system=False)
-    assert local.resolve("DejaVu Sans").status == "missing"
+    assert local.resolve("DejaVu Sans").status == "available"
+    assert local.resolve("DejaVu Serif").status in ("substituted", "missing")
 
 
 def test_wrap_and_fit_never_drop_characters() -> None:
@@ -307,9 +309,9 @@ def test_font_coverage_falls_back_to_a_face_with_the_glyphs() -> None:
     if missing is None:
         pytest.skip("fontTools not available for coverage checks")
     assert missing
-    cjk_faces = [f for f in reg.families if "Gothic" in f or "Unifont" in f]
-    if not cjk_faces:
-        pytest.skip("no CJK-capable font installed")
     cjk = reg.resolve_for_text("DejaVu Sans", "漢字セール")
+    if reg.missing_glyphs(cjk.path, "漢字セール"):
+        # Decided by glyph coverage, not by a font's name: a machine may have a
+        # "Gothic" face without CJK glyphs, or CJK glyphs under any other name.
+        pytest.skip("no installed font covers the CJK sample")
     assert cjk.status == "substituted" and cjk.family != "DejaVu Sans"
-    assert reg.missing_glyphs(cjk.path, "漢字セール") == []

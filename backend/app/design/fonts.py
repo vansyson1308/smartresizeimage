@@ -34,6 +34,7 @@ _DEFAULT_DIRS = (
 )
 _EXTENSIONS = {".ttf", ".otf", ".ttc"}
 FALLBACK_FAMILY = "DejaVu Sans"
+BUNDLED_FONT_DIR = Path(__file__).resolve().parents[1] / "fonts"
 
 _BOLD_WORDS = ("bold", "black", "heavy", "extrabold", "semibold", "demibold")
 _ITALIC_WORDS = ("italic", "oblique")
@@ -85,6 +86,9 @@ class FontRegistry:
         dirs: list[str] = []
         if extra_dirs:
             dirs.extend(str(d) for d in extra_dirs)
+        # Bundled, licensed fallback faces (DejaVu Sans) so rendering is deterministic
+        # on machines without system fonts; deployment fonts above take precedence.
+        dirs.append(str(BUNDLED_FONT_DIR))
         if scan_system:
             dirs.extend(_DEFAULT_DIRS)
         for d in dirs:

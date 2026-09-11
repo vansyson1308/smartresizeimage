@@ -20,3 +20,25 @@ jobs:
         run: ruff check backend/app backend/tests backend/tools
       - name: Test
         run: pytest backend/tests/ -v --cov=backend/app --cov-report=term-missing
+
+  browser-journey:
+    # Release gate: the shipped UI with local authentication, driven in Chromium.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          pip install -r backend/requirements-ci.txt "uvicorn[standard]>=0.29" playwright
+          python -m playwright install --with-deps chromium
+      - name: Browser journey (auth enabled)
+        env:
+          AUTOBANNER_E2E_SHOTS: e2e-shots
+        run: pytest backend/tests/e2e -v -rs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-journey
+          path: e2e-shots
