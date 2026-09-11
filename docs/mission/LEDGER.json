@@ -92,20 +92,22 @@
       ]
     },
     "C_owned_intelligence": {
-      "status": "PARTIAL",
+      "status": "IN_PROGRESS",
       "done": [
         "constraint planner + layout families",
         "H1 learning from approved examples",
         "H2 joint family planning",
         "H3 local edits",
         "H5 rules from corrections",
-        "brand rules"
+        "brand rules",
+        "layout grammar (composed families, AUTOBANNER_LAYOUT_GRAMMAR)",
+        "creative directions per run/row (planner inputs, unmet directions reported)",
+        "subject/mascot integrity check with an independent pixel oracle",
+        "counterexample search tool (independent oracles under seeded perturbations)",
+        "incremental refresh: re-render only the variants a document change touched"
       ],
       "next": [
-        "adaptive grammar/compiler",
-        "mascot/subject invariants",
-        "incremental compilation",
-        "counterexample tooling"
+        "grammar ablation reading in EXPERIMENTS.md (results/ablations_grammar_2026-09-11.md)"
       ]
     },
     "D_research": {

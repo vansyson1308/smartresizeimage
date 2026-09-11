@@ -456,7 +456,7 @@ class ProjectService:
         kind: str,
         items: list[tuple[str, str]],
         briefs: dict[str, VariantBrief],
-        families: dict[str, Family],
+        families: dict[str, dict[str, Family]],
         references: dict[str, dict | None] | None = None,
         *,
         owner: str | None,
@@ -959,7 +959,10 @@ class ProjectService:
         job = self._submit_variant_job(
             project_id, project, "variants", items, briefs, families,
             owner=meter_owner, idempotency_key=idempotency_key,
-            meta={"families": {cls: asdict(f) for cls, f in families.items()}},
+            meta={"families": {
+                dkey: {cls: asdict(f) for cls, f in fams.items()}
+                for dkey, fams in families.items()
+            }},
         )
         self.usage.add(meter_owner, "variants", len(items))
         self.usage.add(meter_owner, "jobs")

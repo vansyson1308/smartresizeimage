@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 ### Added
+- Layout grammar (`design/grammar.py`): layout families composed from arrangement × text
+  side/position × text share × logo corner × alignment (12 landscape / 24 portrait / 36
+  square) join the hand-written families as planner candidates (`AUTOBANNER_LAYOUT_GRAMMAR`);
+  every plan records the winning family's traits and how many candidates competed.
+- Creative directions per run and per campaign row (`direction`: copy / subject first, text
+  left / right / top, subject on top, centered, stacked / side, or a pinned family): they
+  narrow the candidates, what a format cannot satisfy is reported in the plan, never
+  silently ignored; selector in the Variants view and a `direction` CSV column.
+- Incremental refresh (`POST /api/projects/{id}/variants/refresh`, "Refresh stale" in the
+  review view): after a design edit only the variants the change touched are re-rendered
+  (keeping their layout); the others are marked current without a render, with a reason per
+  variant.
+- Subject integrity check (`subject_integrity`): subjects and logos must keep their
+  proportions (stretching is a critical failure) and their pixels — the rendered region is
+  correlated with the master asset scaled to the planned box, so occlusion, recolouring or
+  cropping lands the variant in review with the measured correlation.
 - Campaign table: one variants request renders every content row in every size
   (`rows` on `POST /api/projects/{id}/variants`, up to 144 variants per job); rows come
   from a pasted CSV/TSV mapped onto the design's text elements

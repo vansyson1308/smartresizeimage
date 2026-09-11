@@ -33,6 +33,7 @@ auth mode and limits. API docs: `/api/docs`.
 | `AUTOBANNER_DEFAULT_PLAN` | `unlimited` | Plan for workspaces without an assignment (`free`, `team`, `business`, `unlimited` or a plan from `AUTOBANNER_PLANS`). |
 | `AUTOBANNER_PLANS` | unset | JSON that adds or overrides plan definitions, e.g. `{"free": {"variants_per_day": 20}}`; keys `variants_per_day`, `projects`, `members`, `campaign_rows`, `storage_bytes` (null = unlimited). |
 | `AUTOBANNER_WORKSPACE_PLANS` | unset | Fixed assignments `acme:team,globex:free`; they override `data/plans.json`. |
+| `AUTOBANNER_LAYOUT_GRAMMAR` | `1` | Composed layout families (12 landscape / 24 portrait / 36 square) join the three hand-written families per orientation as planner candidates. `0` restores the hand-written set only. |
 | `AUTOBANNER_RESUME_JOBS` | `1` | On start, continue variant jobs a restart cut short: unfinished variants are queued again in a new job that records `resumed_from`; the interrupted job records `resumed_by`. Set `0` to mark them failed instead (`interrupted by restart`). |
 | `AUTOBANNER_QUOTA_VARIANTS_PER_DAY` | unlimited | Per-owner daily variant cap → HTTP 429. |
 | `AUTOBANNER_QUOTA_PROJECTS` | unlimited | Per-owner project cap → HTTP 429. |
@@ -90,6 +91,14 @@ POST /api/projects/{id}/variants
 }
 ```
 
+A `direction` (job-level or per row) narrows the layout families the planner may use:
+tokens `copy` / `subject` / `balanced` (emphasis), `text-left` / `text-right`, `text-top` /
+`subject-top`, `center`, `side` / `stack`, or `family:<name>`; as an object
+`{"emphasis": "copy", "text_side": "left", "mood": "bold"}`. What a format cannot satisfy
+(a landscape asked to stack) is recorded as `direction_unmet:…` in the plan's decisions and
+the plan proceeds with the closest candidates; `mood` is descriptive only. The CSV table
+accepts a `direction` column.
+
 Limits: 144 variants per job (for example 24 rows × 6 formats), 200 rows per table.
 Each variant records its row in `brief.row`; cross-variant consistency checks run within a
 row; the deliverables zip has one folder per row and the manifest lists `row` per file.
@@ -117,6 +126,16 @@ and a message naming the plan (nothing is created). The operator assigns plans w
 (local auth mode), or with `AUTOBANNER_WORKSPACE_PLANS`. Workspace administrators cannot
 change their own plan. Global `AUTOBANNER_QUOTA_*` caps still apply on top (the stricter
 limit wins, reported as 429). No billing provider is contacted: plans are a local record.
+
+## Incremental refresh
+
+After a design edit, `POST /api/projects/{id}/variants/refresh` (`{"keep_layout": true}`)
+brings the variants up to date without re-rendering everything: a variant rendered from an
+older document version is re-rendered (keeping its layout, see local edits) only when the
+change touched an element it shows, a rule, a font or the canvas; otherwise it is marked
+current without a render. The response lists `refreshed`, `up_to_date` and a reason per
+variant; history snapshots that were pruned count as "unknown, re-render". The review view
+shows how many variants are older than the design and a "Refresh stale" button.
 
 ## Brand profiles
 
