@@ -180,6 +180,24 @@ export approved → save/reopen zip → add approver member → personal token �
 as approver (design tools disabled, approve enabled) → approver approves → second workspace
 isolated → token lists projects → 900 px without horizontal scroll.
 
+## Mission V2 phase B progress (2026-09-11)
+
+- **Campaign table** (B1): a variants request takes `rows` (id, label, copy per text element,
+  locale, hidden elements); every row is rendered in every size in one job (≤ 144 variants);
+  rows are read from a pasted CSV/TSV whose header names text elements (name, id or unique
+  role) with optional row/label/locale columns, unknown columns and verbatim copy reported and
+  ignored; consistency checks run within a row; review filters by row; exports keep one folder
+  per row and list the row in the manifest. Measured 12 × 6 = 72 on the synthetic master:
+  72/72 rendered in 88 s (2 workers, 1.23 s per variant), 65 accepted, 5 needs_review (OCR
+  doubt on one Vietnamese headline), 2 failed (long subheadline does not fit 300×250 at the
+  16 px floor). `results/campaign_12x6_2026-09-11.md`.
+- **Restart resume** (B2): job records carry the chosen layout families and every variant its
+  brief, so a restart continues unfinished variants in a new job (`resumed_from` /
+  `resumed_by`, event `job_resumed`) instead of failing them; `AUTOBANNER_RESUME_JOBS=0`
+  restores the old behaviour. Finished variants of the interrupted job are untouched.
+- Browser journey grew to 39 steps (campaign table read from CSV, count, generation, review
+  filtered by row) and stays green.
+
 ## Release-criteria check (2026-09-09, end of this session)
 
 | Criterion (MISSION.md priorities / brief) | Status | Evidence |

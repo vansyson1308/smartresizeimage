@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+### Added
+- Campaign table: one variants request renders every content row in every size
+  (`rows` on `POST /api/projects/{id}/variants`, up to 144 variants per job); rows come
+  from a pasted CSV/TSV mapped onto the design's text elements
+  (`POST /api/projects/{id}/campaign/rows`) or the table in the Variants view; review
+  filters by row, exports keep one folder per row and list the row in the manifest;
+  consistency checks run within a row. `backend/tools/run_campaign.py` measures a 12 × 6 run.
+- Restart resume: variant jobs cut short by a restart continue on the next start from the
+  briefs and layout families stored with the job (`resumed_from` / `resumed_by` on job
+  records; `AUTOBANNER_RESUME_JOBS=0` keeps the old mark-as-failed behaviour).
+
 ### Security
 - Imported project archives are no longer trusted: every archive-controlled path and id is
   validated at import and at use (absolute or traversal paths, symlinks, member floods are

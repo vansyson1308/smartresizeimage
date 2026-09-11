@@ -205,6 +205,20 @@
         <div id="job-progress" class="hidden" style="margin-top:10px"><div class="progress"><div id="job-bar"></div></div><div id="job-text" class="small muted" style="margin-top:6px"></div></div>
       </div>
     </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Campaign table (one row per message)</h2>
+      <p class="small muted">Paste a table (CSV or TSV) whose header names the text elements of this design (by name, id or role) plus optional <span class="kbd">row</span>, <span class="kbd">label</span> and <span class="kbd">locale</span> columns, or add rows by hand. Every row is generated in every selected size; empty cells keep the master copy; verbatim copy is never overridden. The copy fields above stay the defaults for every row.</p>
+      <textarea id="campaign-csv" placeholder="label,Headline,CTA,locale&#10;Week 1,SUMMER SALE,SHOP NOW,en&#10;Tuần 1,GIẢM GIÁ HÈ,MUA NGAY,vi"></textarea>
+      <div class="row" style="margin-top:6px">
+        <button id="campaign-parse" type="button" data-needs="edit">Read table</button>
+        <label class="small" style="margin:0;display:flex;align-items:center;gap:6px">or file <input id="campaign-file" type="file" accept=".csv,.tsv,.txt" style="width:auto"></label>
+        <button id="campaign-add-row" type="button" data-needs="edit">Add row</button>
+        <button id="campaign-clear" type="button">Clear rows</button>
+        <span id="campaign-count" class="small muted grow"></span>
+      </div>
+      <div id="campaign-note" class="small muted" style="margin-top:6px"></div>
+      <div id="campaign-table-wrap" style="margin-top:8px"></div>
+    </div>
   </section>
 
   <!-- Review -->
@@ -219,6 +233,7 @@
           <button data-filter="accepted" type="button">Accepted</button>
           <button data-filter="approved" type="button">Approved</button>
         </div>
+        <select id="review-row" class="hidden" style="width:auto" title="Campaign row"></select>
         <select id="export-format" style="width:auto"><option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WebP</option><option value="pdf">PDF (one page per variant)</option></select>
         <button id="btn-export-approved" type="button">Export approved</button>
         <button id="btn-export-all" type="button">Export all</button>

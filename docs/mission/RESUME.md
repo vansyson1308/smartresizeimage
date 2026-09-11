@@ -47,11 +47,12 @@ Mission V2 phase A (audit closure) is done locally; see `LEDGER.json`. Continue 
 in this order:
 
 1. Brand model + editor: colours, fonts, logo rules, tone; stored per workspace and applied
-   as proposals to every new project (extends `design/brand.py`).
-2. Campaign table: 12 content rows × 6 formats → 72 variants from a CSV/table in the UI
-   (`VariantBrief` per row, jobs per campaign, review grouped by row).
-3. Creative directions per row; durable job queue across restarts; entitlement limits;
-   offline verification after install (no network in the test run).
+   as proposals and checks in every project of the brand (extends `design/brand.py`).
+2. Entitlement limits per workspace (plan record surfaced in `GET /api/usage`).
+3. Offline guard (`AUTOBANNER_OFFLINE=1`) and the browser journey under it; creative
+   directions per campaign row.
+   Done in this phase: campaign table (`rows`, CSV import, per-row review/export,
+   `tools/run_campaign.py`) and restart resume of interrupted jobs.
 4. Then phases C (adaptive grammar/compiler, mascot invariants, incremental compilation,
    counterexample tooling), D (R1–R4 on a designed 12-brand corpus with baselines) and E
    (Docker build on a machine with a daemon, packaging, Vietnamese handoff).

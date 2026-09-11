@@ -49,6 +49,10 @@ class Job:
     idempotency_key: str | None = None
     error: str | None = None
     owner: str | None = None
+    # what a restart needs to continue the job (e.g. the chosen layout families)
+    meta: dict = field(default_factory=dict)
+    resumed_from: str | None = None  # the interrupted job this one continues
+    resumed_by: str | None = None  # the job that continued this interrupted one
 
     def to_dict(self) -> dict:
         return {
@@ -62,6 +66,9 @@ class Job:
             "finished_at": self.finished_at,
             "idempotency_key": self.idempotency_key,
             "error": self.error,
+            "meta": dict(self.meta),
+            "resumed_from": self.resumed_from,
+            "resumed_by": self.resumed_by,
             "progress": (
                 sum(i.progress for i in self.items) / len(self.items) if self.items else 0.0
             ),
@@ -143,6 +150,9 @@ class JobManager:
                 error=d.get("error")
                 or ("interrupted by restart" if status == "interrupted" else None),
                 owner=d.get("owner"),
+                meta=dict(d.get("meta") or {}),
+                resumed_from=d.get("resumed_from"),
+                resumed_by=d.get("resumed_by"),
             )
             self._jobs[job.id] = job
             if job.idempotency_key and status in ("done", "partial"):
@@ -191,6 +201,8 @@ class JobManager:
         idempotency_key: str | None = None,
         on_finish: Callable[[Job], None] | None = None,
         owner: str | None = None,
+        meta: dict | None = None,
+        resumed_from: str | None = None,
     ) -> Job:
         with self._lock:
             if idempotency_key and idempotency_key in self._by_key:
@@ -203,6 +215,8 @@ class JobManager:
                 items=[JobItem(item_id=i, label=label) for i, label in items],
                 idempotency_key=idempotency_key,
                 owner=owner,
+                meta=dict(meta or {}),
+                resumed_from=resumed_from,
             )
             self._jobs[job.id] = job
             if idempotency_key:
@@ -210,6 +224,20 @@ class JobManager:
             self._persist(job, force=True)
             self._futures[job.id] = self._pool.submit(self._run, job, runner, on_finish)
         return job
+
+    def interrupted(self) -> list[Job]:
+        """Jobs cut short by a restart that no later job has continued."""
+        return [
+            j for j in self._jobs.values()
+            if j.status == "interrupted" and not j.resumed_by
+        ]
+
+    def mark_resumed(self, job_id: str, by_job_id: str) -> None:
+        job = self._jobs.get(job_id)
+        if job is None:
+            return
+        job.resumed_by = by_job_id
+        self._persist(job, force=True)
 
     def cancel(self, job_id: str) -> bool:
         job = self._jobs.get(job_id)

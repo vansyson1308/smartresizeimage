@@ -1,0 +1,79 @@
+{
+  "rows": 12,
+  "formats": 6,
+  "variants": 72,
+  "job_status": "done",
+  "wall_seconds": 88.3,
+  "seconds_per_variant": 1.23,
+  "workers": 2,
+  "statuses": {
+    "done": 72
+  },
+  "verdicts": {
+    "accepted": 65,
+    "needs_review": 5,
+    "failed": 2
+  },
+  "family_issue_checks": 0,
+  "text_overflow_blocks": 2,
+  "substituted_font_blocks": 0,
+  "not_accepted": [
+    {
+      "row": "Tuần 5",
+      "format": "Landscape 1200x628",
+      "verdict": "needs_review",
+      "issues": [
+        "text_legible: Headline 'HÀNG MỚI VỀ' may be hard to read (OCR agreement 76%)"
+      ]
+    },
+    {
+      "row": "Tuần 5",
+      "format": "Square 1080",
+      "verdict": "needs_review",
+      "issues": [
+        "text_legible: Headline 'HÀNG MỚI VỀ' may be hard to read (OCR agreement 76%)"
+      ]
+    },
+    {
+      "row": "Tuần 5",
+      "format": "Portrait 4:5",
+      "verdict": "needs_review",
+      "issues": [
+        "text_legible: Headline 'HÀNG MỚI VỀ' may be hard to read (OCR agreement 76%)"
+      ]
+    },
+    {
+      "row": "Tuần 5",
+      "format": "MREC",
+      "verdict": "failed",
+      "issues": [
+        "text_legible: Headline 'HÀNG MỚI VỀ' may be hard to read (OCR agreement 76%)",
+        "text_fits: 'Sub' does not fit at its minimum size (16px)"
+      ]
+    },
+    {
+      "row": "Tuần 5",
+      "format": "Leaderboard",
+      "verdict": "needs_review",
+      "issues": [
+        "text_legible: Headline 'HÀNG MỚI VỀ' may be hard to read (OCR agreement 76%)"
+      ]
+    },
+    {
+      "row": "Tuần 5",
+      "format": "Story 9:16",
+      "verdict": "needs_review",
+      "issues": [
+        "text_legible: Headline 'HÀNG MỚI VỀ' may be hard to read (OCR agreement 76%)"
+      ]
+    },
+    {
+      "row": "Woche 8",
+      "format": "MREC",
+      "verdict": "failed",
+      "issues": [
+        "text_fits: 'Sub' does not fit at its minimum size (16px)"
+      ]
+    }
+  ]
+}

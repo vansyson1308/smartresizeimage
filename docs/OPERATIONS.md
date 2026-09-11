@@ -29,6 +29,7 @@ auth mode and limits. API docs: `/api/docs`.
 | `AUTOBANNER_RETENTION_DAYS` | unset | Delete projects (variants, history, corrections) untouched for longer than this, and trim event-log lines older than this, at startup and once a day. Logged as `project_purged`. No undo: export a project zip first if you want to keep it. |
 | `AUTOBANNER_API_KEY` | unset | Single-key form of `AUTOBANNER_API_KEYS` (owner `default`). |
 | `AUTOBANNER_JOB_WORKERS` | `2` | Concurrent variant jobs. Each variant is CPU-bound (1–4 s on 4 cores). |
+| `AUTOBANNER_RESUME_JOBS` | `1` | On start, continue variant jobs a restart cut short: unfinished variants are queued again in a new job that records `resumed_from`; the interrupted job records `resumed_by`. Set `0` to mark them failed instead (`interrupted by restart`). |
 | `AUTOBANNER_QUOTA_VARIANTS_PER_DAY` | unlimited | Per-owner daily variant cap → HTTP 429. |
 | `AUTOBANNER_QUOTA_PROJECTS` | unlimited | Per-owner project cap → HTTP 429. |
 | `AUTOBANNER_QUOTA_STORAGE_BYTES` | unlimited | Per-owner storage cap (checked on project creation). |
@@ -67,6 +68,33 @@ grants no access by itself.
 OCR: install `tesseract-ocr` (Docker image includes it). Without it, legibility checks
 report `not_checked` and variants land in `needs_review`.
 
+## Campaigns (rows × formats)
+
+One request renders every content row in every size:
+
+```json
+POST /api/projects/{id}/variants
+{
+  "preset_ids": ["ig_square"],
+  "targets": [{"width": 1200, "height": 628, "name": "Wide"}],
+  "text_overrides": {"cta": "SHOP NOW"},            // defaults for every row
+  "rows": [
+    {"id": "w1", "label": "Week 1", "text_overrides": {"headline": "SUMMER SALE"}},
+    {"id": "w2", "label": "Tuần 2", "locale": "vi",
+     "text_overrides": {"headline": "GIẢM GIÁ HÈ", "cta": "MUA NGAY"}}
+  ]
+}
+```
+
+Limits: 144 variants per job (for example 24 rows × 6 formats), 200 rows per table.
+Each variant records its row in `brief.row`; cross-variant consistency checks run within a
+row; the deliverables zip has one folder per row and the manifest lists `row` per file.
+`POST /api/projects/{id}/campaign/rows` with `{"csv": "..."}` turns a pasted CSV/TSV into
+rows: the header names text elements (by name, id or unique role) plus optional
+`row`/`label`/`locale` columns; unknown columns and verbatim (protected) copy are reported
+and ignored. The UI's Variants view has the same table with a file picker.
+`backend/tools/run_campaign.py` measures a 12 × 6 run on the synthetic fixture.
+
 ## Data layout
 
 ```
@@ -89,9 +117,10 @@ Everything is plain files. Backup = copy the directory (or export projects as `.
 
 - Uploads: 64 MB (streamed with an early 413), 40 MP pixel cap, PSD/PNG/JPG/WEBP only,
   archive import checks paths and expanded size.
-- Targets: ≤ 48 per job, side ≤ 4096 px.
-- Jobs are in-process threads; a restart marks running jobs and variants as `interrupted`/
-  `failed` (never silently pending). Re-run them from the UI ("Regenerate").
+- Variants: ≤ 144 per job (rows × sizes), ≤ 200 campaign rows, side ≤ 4096 px.
+- Jobs are in-process threads; a restart records the running job as `interrupted` and, by
+  default, continues its unfinished variants in a new job (`AUTOBANNER_RESUME_JOBS`); the
+  finished variants of the interrupted job are kept as they are.
 - Idempotency: send `Idempotency-Key` on `POST /variants` to make retries safe.
 - Roles limit what a key may do within an owner (403), rate limits bound write traffic per
   owner (429), retention removes untouched projects; all three are off unless configured.

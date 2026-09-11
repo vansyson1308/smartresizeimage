@@ -527,6 +527,16 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
         payload = service.project_payload(service.get_project(project_id, owner))
         return {"job": job.to_dict(), **payload}
 
+    @app.post("/api/projects/{project_id}/campaign/rows", dependencies=edit)
+    async def parse_campaign_rows(project_id: str, request: Request, owner: str = Owner) -> dict:
+        """Read a pasted CSV/TSV table into campaign rows (no side effects)."""
+        body = await request.json()
+        if not isinstance(body, dict) or not isinstance(body.get("csv"), str):
+            raise HTTPException(status_code=400, detail="body needs a csv string")
+        if len(body["csv"]) > 2_000_000:
+            raise HTTPException(status_code=413, detail="table too large")
+        return service.parse_campaign_rows(project_id, body["csv"], owner=owner)
+
     @app.get("/api/projects/{project_id}/variants", dependencies=dep)
     def list_variants(project_id: str, owner: str = Owner) -> dict:
         project = service.get_project(project_id, owner)

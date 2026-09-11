@@ -3,6 +3,7 @@
   "use strict";
 
   const state = {
+    campaignRows: [], rowSeq: 0, rowFilter: "all",
     view: "projects",
     project: null,        // payload from /api/projects/{id}
     selectedId: null,
@@ -514,8 +515,9 @@
   function renderBrief() {
     const grid = $("#preset-grid");
     grid.innerHTML = state.presets.map((p) => `<label><input type="checkbox" data-preset="${p.id}" ${state.selectedPresets.has(p.id) ? "checked" : ""}><span class="grow">${esc(p.name)}<div class="small muted">${esc(p.channel)} · ${p.width}×${p.height}${p.verified ? "" : " · unverified"}</div></span></label>`).join("");
-    grid.querySelectorAll("input").forEach((cb) => cb.addEventListener("change", () => { if (cb.checked) state.selectedPresets.add(cb.dataset.preset); else state.selectedPresets.delete(cb.dataset.preset); }));
+    grid.querySelectorAll("input").forEach((cb) => cb.addEventListener("change", () => { if (cb.checked) state.selectedPresets.add(cb.dataset.preset); else state.selectedPresets.delete(cb.dataset.preset); updateCampaignCount(); }));
     renderCustomTargets();
+    renderCampaign();
     const d = doc();
     const texts = d.elements.filter((e) => e.kind === "text");
     $("#copy-overrides").innerHTML = texts.map((e) => {
@@ -526,6 +528,7 @@
   function renderCustomTargets() {
     $("#custom-list").innerHTML = state.customTargets.map((t, i) => `<li>${esc(t.name)} ${t.width}×${t.height} <button data-rm="${i}" class="small" type="button">remove</button></li>`).join("");
     $("#custom-list").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { state.customTargets.splice(Number(b.dataset.rm), 1); renderCustomTargets(); }));
+    updateCampaignCount();
   }
   $("#custom-add").addEventListener("click", () => {
     const w = Number($("#custom-w").value), h = Number($("#custom-h").value);
@@ -539,6 +542,7 @@
     $$("#copy-overrides input[data-override]").forEach((i) => { if (i.value.trim()) overrides[i.dataset.override] = i.value; });
     const spec = { preset_ids: [...state.selectedPresets], targets: state.customTargets, text_overrides: overrides, locale: $("#brief-locale").value.trim() || null };
     if (!spec.preset_ids.length && !spec.targets.length) { toast("Pick at least one size.", true); return; }
+    if (state.campaignRows.length) spec.rows = state.campaignRows.map((r) => ({ id: r.id, label: r.label, text_overrides: r.text_overrides, locale: r.locale }));
     try {
       const res = await api(`/api/projects/${pid()}/variants`, json(spec));
       state.project = res;
@@ -547,6 +551,57 @@
       toast(`Generating ${res.job.items.length} variants…`);
     } catch (e) { toast(e.message, true); }
   });
+
+  // ---------- campaign table ----------
+  function campaignTexts() { return doc().elements.filter((e) => e.kind === "text" && e.text && !e.text.protected); }
+  function updateCampaignCount() {
+    const sizes = state.selectedPresets.size + state.customTargets.length;
+    const rows = state.campaignRows.length;
+    $("#campaign-count").textContent = rows ? `${rows} row${rows === 1 ? "" : "s"} × ${sizes} size${sizes === 1 ? "" : "s"} = ${rows * sizes} variants` : "";
+  }
+  function renderCampaign() {
+    const wrap = $("#campaign-table-wrap");
+    const texts = campaignTexts();
+    if (!state.campaignRows.length) {
+      wrap.innerHTML = '<div class="small muted">No rows: the sizes above are generated once with the copy fields. Read a table or add a row to generate a campaign.</div>';
+      updateCampaignCount();
+      return;
+    }
+    const head = `<tr><th>Row</th>${texts.map((e) => `<th>${esc(e.name)} <span class="muted">(${esc(e.role)})</span></th>`).join("")}<th>Locale</th><th></th></tr>`;
+    const body = state.campaignRows.map((r, i) => `<tr><td><input data-row="${i}" data-field="label" value="${esc(r.label)}"></td>${texts.map((e) => `<td><input data-row="${i}" data-el="${esc(e.id)}" value="${esc(r.text_overrides[e.id] || "")}" placeholder="${esc(e.text.runs.map((x) => x.text).join(""))}"></td>`).join("")}<td><input class="narrow" data-row="${i}" data-field="locale" value="${esc(r.locale || "")}" placeholder="en"></td><td><button class="small" data-rmrow="${i}" type="button">remove</button></td></tr>`).join("");
+    wrap.innerHTML = `<div class="table-wrap"><table class="campaign">${head}${body}</table></div>`;
+    wrap.querySelectorAll("input").forEach((inp) => inp.addEventListener("input", () => {
+      const r = state.campaignRows[Number(inp.dataset.row)]; if (!r) return;
+      if (inp.dataset.el) { if (inp.value.trim()) r.text_overrides[inp.dataset.el] = inp.value; else delete r.text_overrides[inp.dataset.el]; }
+      else if (inp.dataset.field === "locale") r.locale = inp.value.trim() || null;
+      else r.label = inp.value;
+    }));
+    wrap.querySelectorAll("[data-rmrow]").forEach((b) => b.addEventListener("click", () => { state.campaignRows.splice(Number(b.dataset.rmrow), 1); renderCampaign(); }));
+    updateCampaignCount();
+  }
+  $("#campaign-parse").addEventListener("click", async () => {
+    const csv = $("#campaign-csv").value;
+    if (!csv.trim()) { toast("Paste a table first.", true); return; }
+    try {
+      const res = await api(`/api/projects/${pid()}/campaign/rows`, json({ csv }));
+      state.campaignRows = res.rows; state.rowSeq = res.rows.length;
+      $("#campaign-note").textContent = res.notes.join(" ");
+      renderCampaign();
+      toast(`${res.rows.length} row${res.rows.length === 1 ? "" : "s"} read.`);
+    } catch (e) { toast(e.message, true); }
+  });
+  $("#campaign-file").addEventListener("change", async (ev) => {
+    const f = ev.target.files[0]; if (!f) return;
+    $("#campaign-csv").value = await f.text();
+    ev.target.value = "";
+    $("#campaign-parse").click();
+  });
+  $("#campaign-add-row").addEventListener("click", () => {
+    state.rowSeq += 1;
+    state.campaignRows.push({ id: `row${state.rowSeq}`, label: `Row ${state.rowSeq}`, text_overrides: {}, locale: null });
+    renderCampaign();
+  });
+  $("#campaign-clear").addEventListener("click", () => { state.campaignRows = []; $("#campaign-note").textContent = ""; renderCampaign(); });
   $("#btn-cancel").addEventListener("click", async () => { if (state.job) { try { await api(`/api/jobs/${state.job.id}/cancel`, { method: "POST" }); toast("Cancelling…"); } catch (e) { toast(e.message, true); } } });
   function trackJob(jobId) {
     $("#job-progress").classList.remove("hidden"); $("#btn-cancel").classList.remove("hidden"); $("#btn-generate").disabled = true;
@@ -576,19 +631,29 @@
 
   // ---------- review view ----------
   $$(".filters button").forEach((b) => b.addEventListener("click", () => { state.filter = b.dataset.filter; $$(".filters button").forEach((x) => x.classList.toggle("active", x === b)); renderReview(); }));
+  $("#review-row").addEventListener("change", (e) => { state.rowFilter = e.target.value; renderReview(); });
   function renderReview() {
     if (!state.project) return;
     const variants = state.project.variants || [];
-    const filtered = variants.filter((v) => state.filter === "all" ? true : state.filter === "approved" ? v.approval === "approved" : v.verdict === state.filter);
+    const rowOf = (v) => (v.brief && v.brief.row) || null;
+    const rowIds = [], rowLabels = {};
+    variants.forEach((v) => { const r = rowOf(v); if (r && !rowLabels[r.id]) { rowIds.push(r.id); rowLabels[r.id] = r.label; } });
+    const rowSel = $("#review-row");
+    rowSel.innerHTML = '<option value="all">All rows</option>' + rowIds.map((id) => `<option value="${esc(id)}">${esc(rowLabels[id])}</option>`).join("");
+    state.rowFilter = rowIds.includes(state.rowFilter) ? state.rowFilter : "all";
+    rowSel.value = state.rowFilter;
+    rowSel.classList.toggle("hidden", rowIds.length === 0);
+    const filtered = variants.filter((v) => (state.filter === "all" ? true : state.filter === "approved" ? v.approval === "approved" : v.verdict === state.filter) && (state.rowFilter === "all" || (rowOf(v) || {}).id === state.rowFilter));
     const counts = { accepted: 0, needs_review: 0, failed: 0, approved: 0, pending: 0 };
     variants.forEach((v) => { if (counts[v.verdict] !== undefined) counts[v.verdict]++; if (v.approval === "approved") counts.approved++; if (["pending", "running"].includes(v.status)) counts.pending++; });
-    $("#review-summary").textContent = `${variants.length} variants · ${counts.accepted} accepted · ${counts.needs_review} need review · ${counts.failed} failed · ${counts.approved} approved${counts.pending ? ` · ${counts.pending} in progress` : ""}`;
+    $("#review-summary").textContent = `${variants.length} variants${rowIds.length ? ` in ${rowIds.length} rows` : ""} · ${counts.accepted} accepted · ${counts.needs_review} need review · ${counts.failed} failed · ${counts.approved} approved${counts.pending ? ` · ${counts.pending} in progress` : ""}`;
     $("#review-empty").classList.toggle("hidden", variants.length > 0);
     const grid = $("#variant-grid");
     grid.innerHTML = filtered.map((v) => {
       const thumb = v.image_path ? `<div class="thumb" data-open="${esc(v.id)}"><img src="/api/projects/${pid()}/variants/${v.id}/image.png?n=${esc(v.updated_at)}" alt="${esc(v.name)}"></div>` : `<div class="thumb placeholder">${esc(v.status)}${v.error ? ": " + esc(v.error) : ""}</div>`;
       const ed = state.can.edit ? "" : "disabled", ap = state.can.approve ? "" : "disabled";
-      return `<div class="card variant-card">${thumb}<div class="row"><strong class="grow">${esc(v.name)}</strong><span class="small muted">${v.width}×${v.height}</span></div><div class="row">${verdictBadge(v.verdict)} ${approvalBadge(v.approval)}</div><div class="row"><button data-open="${esc(v.id)}" class="small" type="button">Review</button><button data-approve="${esc(v.id)}" class="small" type="button" ${v.status !== "done" || ap ? "disabled" : ""}>Approve</button><button data-regen="${esc(v.id)}" class="small" type="button" ${ed}>Regenerate</button><button data-del="${esc(v.id)}" class="small danger" type="button" ${ed}>Delete</button></div></div>`;
+      const rowTag = rowOf(v) ? `<span class="row-tag">${esc(rowOf(v).label)}</span>` : "";
+      return `<div class="card variant-card">${thumb}<div class="row"><strong class="grow">${esc(v.name)}</strong>${rowTag}<span class="small muted">${v.width}×${v.height}</span></div><div class="row">${verdictBadge(v.verdict)} ${approvalBadge(v.approval)}</div><div class="row"><button data-open="${esc(v.id)}" class="small" type="button">Review</button><button data-approve="${esc(v.id)}" class="small" type="button" ${v.status !== "done" || ap ? "disabled" : ""}>Approve</button><button data-regen="${esc(v.id)}" class="small" type="button" ${ed}>Regenerate</button><button data-del="${esc(v.id)}" class="small danger" type="button" ${ed}>Delete</button></div></div>`;
     }).join("");
     grid.querySelectorAll("[data-open]").forEach((b) => b.addEventListener("click", () => openDetail(b.dataset.open)));
     grid.querySelectorAll("[data-approve]").forEach((b) => b.addEventListener("click", () => setApproval(b.dataset.approve, "approved", "")));

@@ -6,17 +6,19 @@ the same code path users hit through the web UI.
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import io
 import json
 import logging
 import os
+import re
 import shutil
 import stat
 import tempfile
 import threading
 import zipfile
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -34,14 +36,15 @@ from ..design.document import (
     AllowedTransforms,
     Constraint,
     DesignDocument,
+    Element,
     Geometry,
     Provenance,
     new_id,
 )
 from ..design.examples import example_from_plan, infer_families
 from ..design.fonts import FontRegistry
-from ..design.planner import Family, aspect_class, choose_families
-from ..design.project import Project, VariantRecord, safe_relative_path
+from ..design.planner import Family, Region, aspect_class, choose_families
+from ..design.project import Project, VariantRecord, is_safe_id, safe_relative_path
 from ..design.render import render_master
 from ..design.serialize import document_from_dict, document_to_dict
 from ..design.variant import VariantBrief, generate_variant
@@ -57,7 +60,8 @@ logger = logging.getLogger("autobanner.api.service")
 MAX_UPLOAD_BYTES = 64 * 1024 * 1024
 MAX_ARCHIVE_MEMBERS = 5000
 MAX_PIXELS = 40_000_000
-MAX_VARIANTS_PER_JOB = 48
+MAX_VARIANTS_PER_JOB = 144  # e.g. 24 campaign rows x 6 formats
+MAX_CAMPAIGN_ROWS = 200
 MAX_TARGET_SIDE = Config.MAX_IMAGE_SIZE
 
 
@@ -154,7 +158,7 @@ class ProjectService:
         self.use_ai = use_ai
         self._locks: dict[str, threading.RLock] = {}
         self._cache: dict[str, Project] = {}
-        self._mark_interrupted_variants()
+        self._recover_interrupted()
 
     # ---- ownership -----------------------------------------------------------------------
     @staticmethod
@@ -223,7 +227,18 @@ class ProjectService:
             raise ServiceError("invalid project id", 400)
         return self.projects_dir / project_id
 
-    def _mark_interrupted_variants(self) -> None:
+    def _recover_interrupted(self) -> None:
+        """Continue the variant jobs a restart cut short (durable queue).
+
+        Every variant record carries its brief and every job record what the run
+        needs (the layout families chosen jointly for the size set), so unfinished
+        items are queued again in a new job that points back at the interrupted one.
+        With ``AUTOBANNER_RESUME_JOBS=0`` the previous behaviour applies: unfinished
+        variants are marked failed with "interrupted by restart".
+        """
+        resume = os.environ.get("AUTOBANNER_RESUME_JOBS", "1").strip().lower() not in (
+            "0", "false", "no", "off"
+        )
         for root in self.projects_dir.iterdir() if self.projects_dir.exists() else []:
             if not (root / "project.json").exists():
                 continue
@@ -232,14 +247,124 @@ class ProjectService:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("cannot load project %s: %s", root, exc)
                 continue
-            changed = False
-            for rec in project.variants.values():
-                if rec.status in ("pending", "running"):
+            unfinished = [
+                r for r in project.variants.values() if r.status in ("pending", "running")
+            ]
+            if not unfinished:
+                continue
+            by_job: dict[str | None, list[VariantRecord]] = {}
+            for rec in unfinished:
+                by_job.setdefault(rec.job_id, []).append(rec)
+            project_id = project.meta.get("id") or root.name
+            self._cache[project_id] = project
+            for job_id, recs in by_job.items():
+                old = self.jobs.get(job_id) if job_id else None
+                resumable = old is not None and old.status == "interrupted" and not old.resumed_by
+                if resume and resumable:
+                    try:
+                        new = self._resume_job(project_id, project, old, recs)
+                        logger.warning(
+                            "job %s interrupted by restart: %d variant(s) continue in job %s",
+                            old.id, len(recs), new.id,
+                        )
+                        continue
+                    except Exception as exc:  # noqa: BLE001
+                        logger.error("cannot resume job %s: %s", old.id, exc)
+                for rec in recs:
                     rec.status = "failed"
                     rec.error = "interrupted by restart"
-                    changed = True
-            if changed:
+            project.save()
+
+    def _resume_job(self, project_id: str, project: Project, old: Job,
+                    recs: list[VariantRecord]) -> Job:
+        labels = {i.item_id: i.label for i in old.items}
+        briefs = {rec.id: _brief_from_record(rec) for rec in recs}
+        families = _families_from_meta(old.meta)
+        references: dict[str, dict | None] = {}
+        if old.kind == "regenerate" and old.meta.get("keep_layout"):
+            for rec in recs:
+                references[rec.id] = self._reference_for(project, rec.id)
+        for rec in recs:
+            rec.status = "pending"
+            rec.error = None
+        items = [(rec.id, labels.get(rec.id, rec.name)) for rec in recs]
+        job = self._submit_variant_job(
+            project_id, project, old.kind, items, briefs, families, references,
+            owner=old.owner, meta=old.meta, resumed_from=old.id,
+        )
+        self.jobs.mark_resumed(old.id, job.id)
+        for rec in recs:
+            rec.job_id = job.id
+        self.events.record(
+            old.owner or LOCAL_OWNER, "job_resumed", project_id=project_id,
+            job_id=old.id, resumed_by=job.id, count=len(recs),
+        )
+        return job
+
+    def _submit_variant_job(
+        self,
+        project_id: str,
+        project: Project,
+        kind: str,
+        items: list[tuple[str, str]],
+        briefs: dict[str, VariantBrief],
+        families: dict[str, Family],
+        references: dict[str, dict | None] | None = None,
+        *,
+        owner: str | None,
+        idempotency_key: str | None = None,
+        meta: dict | None = None,
+        resumed_from: str | None = None,
+    ) -> Job:
+        """Queue variant renders; shared by fresh requests, regeneration and resume."""
+        references = references or {}
+
+        def runner(job: Job, item: JobItem, progress) -> dict:
+            brief = briefs[item.item_id]
+            fam = families.get(aspect_class(brief.width / max(1, brief.height))) or None
+            return self._run_variant(
+                project_id, item.item_id, brief, job, progress, family=fam,
+                reference=references.get(item.item_id),
+            )
+
+        def on_finish(job: Job) -> None:
+            with self._lock(project_id):
+                for item in job.items:
+                    rec = project.variants.get(item.item_id)
+                    if rec is None:
+                        continue
+                    if item.status == "cancelled":
+                        rec.status = "cancelled"
+                    elif item.status == "failed":
+                        rec.status = "failed"
+                        rec.error = item.error
+                    rec.job_id = job.id
                 project.save()
+            # Cross-variant consistency is judged within a row: rows carry different copy.
+            groups: dict[str | None, list[str]] = {}
+            for item in job.items:
+                row_ref = briefs[item.item_id].row or {}
+                groups.setdefault(row_ref.get("id"), []).append(item.item_id)
+            for ids in groups.values():
+                self._apply_family_checks(project_id, ids)
+
+        return self.jobs.submit(
+            kind, project_id, items, runner, idempotency_key=idempotency_key,
+            on_finish=on_finish, owner=owner, meta=meta, resumed_from=resumed_from,
+        )
+
+    def _reference_for(self, project: Project, variant_id: str) -> dict | None:
+        """The previous plan of a finished variant, for a layout-keeping regeneration."""
+        detail = project.variant_detail(variant_id) or {}
+        plan = detail.get("plan") or {}
+        if plan.get("placements") and plan.get("planner") == "constraints":
+            return {
+                "placements": plan["placements"],
+                "typography": plan.get("typography") or {},
+                "text_plate_rects": plan.get("text_plate_rects") or [],
+                "variant_id": variant_id,
+            }
+        return None
 
     def get_project(self, project_id: str, owner: str | None = LOCAL_OWNER) -> Project:
         """Load a project; a project that belongs to another owner reads as not found."""
@@ -586,10 +711,14 @@ class ProjectService:
         targets = _normalize_targets(spec)
         if not targets:
             raise ServiceError("no targets requested", 400)
-        if len(targets) > MAX_VARIANTS_PER_JOB:
-            raise ServiceError(f"too many targets (max {MAX_VARIANTS_PER_JOB})", 400)
+        rows = _normalize_rows(spec, project.document)
+        total = len(targets) * max(1, len(rows))
+        if total > MAX_VARIANTS_PER_JOB:
+            raise ServiceError(
+                f"too many variants in one job ({total}; max {MAX_VARIANTS_PER_JOB})", 400
+            )
         meter_owner = owner or project.meta.get("owner") or LOCAL_OWNER
-        self._check_quota_variants(meter_owner, len(targets))
+        self._check_quota_variants(meter_owner, total)
         text_overrides = dict(spec.get("text_overrides") or {})
         for eid in text_overrides:
             if not project.document.has_element(eid):
@@ -638,46 +767,38 @@ class ProjectService:
         with self._lock(project_id):
             items: list[tuple[str, str]] = []
             briefs: dict[str, VariantBrief] = {}
-            for t in targets:
-                brief = VariantBrief(
-                    width=t["width"],
-                    height=t["height"],
-                    name=t["name"],
-                    text_overrides=text_overrides,
-                    locale=locale,
-                    hidden_elements=hidden,
-                    channel_preset=t.get("preset_id"),
-                )
-                rec = project.new_variant(t["name"], t["width"], t["height"], brief.to_dict())
-                items.append((rec.id, t["name"]))
-                briefs[rec.id] = brief
+            # A campaign table generates every row in every size; the job-level copy,
+            # locale and hidden elements are the defaults a row can override.
+            for row in rows or [None]:
+                row_overrides = dict(text_overrides)
+                row_locale, row_hidden = locale, list(hidden)
+                row_ref = None
+                if row is not None:
+                    row_overrides.update(row["text_overrides"])
+                    row_locale = row["locale"] or locale
+                    row_hidden = sorted(set(hidden) | set(row["hidden_elements"]))
+                    row_ref = {"id": row["id"], "label": row["label"]}
+                for t in targets:
+                    brief = VariantBrief(
+                        width=t["width"],
+                        height=t["height"],
+                        name=t["name"],
+                        text_overrides=row_overrides,
+                        locale=row_locale,
+                        hidden_elements=row_hidden,
+                        channel_preset=t.get("preset_id"),
+                        row=row_ref,
+                    )
+                    rec = project.new_variant(t["name"], t["width"], t["height"], brief.to_dict())
+                    label = f"{row['label']} · {t['name']}" if row is not None else t["name"]
+                    items.append((rec.id, label))
+                    briefs[rec.id] = brief
             project.save()
 
-        def runner(job: Job, item: JobItem, progress) -> dict:
-            brief = briefs[item.item_id]
-            fam = families.get(aspect_class(brief.width / max(1, brief.height))) or None
-            return self._run_variant(
-                project_id, item.item_id, brief, job, progress, family=fam
-            )
-
-        def on_finish(job: Job) -> None:
-            with self._lock(project_id):
-                for item in job.items:
-                    rec = project.variants.get(item.item_id)
-                    if rec is None:
-                        continue
-                    if item.status == "cancelled":
-                        rec.status = "cancelled"
-                    elif item.status == "failed":
-                        rec.status = "failed"
-                        rec.error = item.error
-                    rec.job_id = job.id
-                project.save()
-            self._apply_family_checks(project_id, [i.item_id for i in job.items])
-
-        job = self.jobs.submit(
-            "variants", project_id, items, runner, idempotency_key=idempotency_key,
-            on_finish=on_finish, owner=meter_owner,
+        job = self._submit_variant_job(
+            project_id, project, "variants", items, briefs, families,
+            owner=meter_owner, idempotency_key=idempotency_key,
+            meta={"families": {cls: asdict(f) for cls, f in families.items()}},
         )
         self.usage.add(meter_owner, "variants", len(items))
         self.usage.add(meter_owner, "jobs")
@@ -858,15 +979,7 @@ class ProjectService:
         keep_layout = bool((spec or {}).get("keep_layout", True))
         reference: dict | None = None
         if keep_layout and rec.status == "done":
-            detail = project.variant_detail(variant_id) or {}
-            plan = detail.get("plan") or {}
-            if plan.get("placements") and plan.get("planner") == "constraints":
-                reference = {
-                    "placements": plan["placements"],
-                    "typography": plan.get("typography") or {},
-                    "text_plate_rects": plan.get("text_plate_rects") or [],
-                    "variant_id": variant_id,
-                }
+            reference = self._reference_for(project, variant_id)
         brief = VariantBrief(
             width=rec.width,
             height=rec.height,
@@ -875,6 +988,7 @@ class ProjectService:
             locale=brief_dict.get("locale"),
             hidden_elements=list(brief_dict.get("hidden_elements") or []),
             channel_preset=brief_dict.get("channel_preset"),
+            row=brief_dict.get("row") or None,
         )
         with self._lock(project_id):
             rec.brief = brief.to_dict()
@@ -885,13 +999,10 @@ class ProjectService:
             rec.document_version = project.document_version
             project.save()
 
-        def runner(job: Job, item: JobItem, progress) -> dict:
-            return self._run_variant(
-                project_id, item.item_id, brief, job, progress, reference=reference
-            )
-
-        job = self.jobs.submit(
-            "regenerate", project_id, [(variant_id, rec.name)], runner, owner=meter_owner
+        job = self._submit_variant_job(
+            project_id, project, "regenerate", [(variant_id, rec.name)], {variant_id: brief},
+            {}, {variant_id: reference}, owner=meter_owner,
+            meta={"keep_layout": bool(reference)},
         )
         self.usage.add(meter_owner, "variants")
         self.usage.add(meter_owner, "jobs")
@@ -1044,6 +1155,12 @@ class ProjectService:
         return path
 
     # ---- export / import ------------------------------------------------------------------
+    def parse_campaign_rows(self, project_id: str, text: str,
+                            owner: str | None = LOCAL_OWNER) -> dict:
+        """Map a pasted CSV/TSV table onto this project's text elements (no side effects)."""
+        project = self.get_project(project_id, owner)
+        return parse_campaign_table(project.document, text)
+
     def export_deliverables(self, project_id: str, *, fmt: str = "png", only: str = "all",
                             quality: int = 90, owner: str | None = LOCAL_OWNER) -> bytes:
         project = self.get_project(project_id, owner)
@@ -1077,6 +1194,12 @@ class ProjectService:
                 if img is None:
                     continue
                 safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in rec.name)
+                row_ref = (rec.brief or {}).get("row") or None
+                if row_ref:
+                    folder = "".join(
+                        ch if ch.isalnum() or ch in "-_" else "_" for ch in str(row_ref["label"])
+                    ) or str(row_ref["id"])
+                    safe = f"{folder}/{safe}"
                 out = io.BytesIO()
                 if pil_fmt == "PDF":
                     # one page per variant at pixel size; the PDF is written once at the end
@@ -1102,6 +1225,8 @@ class ProjectService:
                 )
                 entry = {
                     "id": rec.id,
+                    "name": rec.name,
+                    "row": row_ref,
                     "file": fname,
                     "width": rec.width,
                     "height": rec.height,
@@ -1517,6 +1642,186 @@ def _import_notes(doc: DesignDocument, ext: str, decomposition=None) -> list[str
             "colour); they are fitted and rendered per run."
         )
     return notes
+
+
+def _brief_from_record(rec: VariantRecord) -> VariantBrief:
+    d = dict(rec.brief or {})
+    return VariantBrief(
+        width=int(d.get("width") or rec.width),
+        height=int(d.get("height") or rec.height),
+        name=str(d.get("name") or rec.name),
+        text_overrides=dict(d.get("text_overrides") or {}),
+        locale=d.get("locale"),
+        hidden_elements=list(d.get("hidden_elements") or []),
+        channel_preset=d.get("channel_preset"),
+        row=d.get("row") or None,
+    )
+
+
+def _families_from_meta(meta: dict) -> dict[str, Family]:
+    out: dict[str, Family] = {}
+    for cls, d in (meta.get("families") or {}).items():
+        try:
+            out[cls] = Family(
+                name=str(d["name"]),
+                text=Region(**d["text"]),
+                subject=Region(**d["subject"]),
+                logo=Region(**d["logo"]),
+                text_align=str(d.get("text_align", "left")),
+                subject_first=bool(d.get("subject_first", False)),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            logger.warning("ignoring stored family for %s: %s", cls, exc)
+    return out
+
+
+def _normalize_rows(spec: dict, doc: DesignDocument) -> list[dict]:
+    """Validate the campaign rows of a variants request (``[]`` when none were given)."""
+    raw = spec.get("rows")
+    if not raw:
+        return []
+    if not isinstance(raw, list):
+        raise ServiceError("rows must be a list of {id, label, text_overrides, locale}", 400)
+    if len(raw) > MAX_CAMPAIGN_ROWS:
+        raise ServiceError(f"too many rows (max {MAX_CAMPAIGN_ROWS})", 400)
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for idx, r in enumerate(raw, 1):
+        if not isinstance(r, dict):
+            raise ServiceError("each row must be an object", 400)
+        rid = str(r.get("id") or f"row{idx}")[:64]
+        if not is_safe_id(rid):
+            raise ServiceError(f"row id {rid!r}: use letters, digits, _ and - only", 400)
+        if rid in seen:
+            raise ServiceError(f"duplicate row id {rid!r}", 400)
+        seen.add(rid)
+        label = str(r.get("label") or rid).strip()[:120] or rid
+        overrides = r.get("text_overrides") or {}
+        if not isinstance(overrides, dict):
+            raise ServiceError(f"row {rid!r}: text_overrides must be an object", 400)
+        clean: dict[str, str] = {}
+        for eid, text in overrides.items():
+            if not doc.has_element(str(eid)):
+                raise ServiceError(f"row {rid!r}: unknown element '{eid}' in text_overrides", 400)
+            if text is None or str(text) == "":
+                continue
+            clean[str(eid)] = str(text)
+        hidden = [str(h) for h in (r.get("hidden_elements") or [])]
+        for h in hidden:
+            if not doc.has_element(h):
+                raise ServiceError(f"row {rid!r}: unknown element '{h}' in hidden_elements", 400)
+        locale = str(r["locale"]).strip()[:16] if r.get("locale") else None
+        rows.append({
+            "id": rid, "label": label, "text_overrides": clean,
+            "hidden_elements": hidden, "locale": locale,
+        })
+    return rows
+
+
+_ROW_ID_COLUMNS = ("row", "id", "row_id")
+_LABEL_COLUMNS = ("label", "name", "title", "message")
+_LOCALE_COLUMNS = ("locale", "language", "lang")
+
+
+def parse_campaign_table(doc: DesignDocument, text: str) -> dict:
+    """Read a CSV/TSV table into campaign rows.
+
+    The header names the text elements of the design (by element name, id or, when
+    unique, role) plus optional ``row``/``id``, ``label`` and ``locale`` columns. Cells
+    left empty keep the master copy. Columns that match nothing are reported and
+    ignored; verbatim (protected) copy is never overridden and is reported too.
+    """
+    text = (text or "").lstrip("\ufeff")
+    if not text.strip():
+        raise ServiceError("the table is empty", 400)
+    try:
+        dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t")
+    except csv.Error:
+        dialect = csv.excel
+    raw_rows = [r for r in csv.reader(io.StringIO(text), dialect) if any(c.strip() for c in r)]
+    if len(raw_rows) < 2:
+        raise ServiceError("the table needs a header row and at least one data row", 400)
+    header = [h.strip() for h in raw_rows[0]]
+    texts = [e for e in doc.elements if e.kind == "text" and e.text is not None]
+    by_key: dict[str, Element] = {}
+    for e in texts:
+        by_key.setdefault(e.id.lower(), e)
+        by_key.setdefault(e.name.strip().lower(), e)
+    roles: dict[str, list[Element]] = {}
+    for e in texts:
+        roles.setdefault(e.role.lower(), []).append(e)
+    for role, elems in roles.items():
+        if len(elems) == 1:
+            by_key.setdefault(role, elems[0])
+    columns: list[tuple[str, str | None]] = []
+    ignored: list[str] = []
+    protected_cols: list[str] = []
+    for h in header:
+        key = h.lower()
+        if key in _ROW_ID_COLUMNS:
+            columns.append(("id", None))
+        elif key in _LABEL_COLUMNS:
+            columns.append(("label", None))
+        elif key in _LOCALE_COLUMNS:
+            columns.append(("locale", None))
+        elif key in by_key:
+            e = by_key[key]
+            if e.text is not None and e.text.protected:
+                columns.append(("protected", e.id))
+                protected_cols.append(e.name)
+            else:
+                columns.append(("text", e.id))
+        else:
+            columns.append(("ignore", None))
+            if h:
+                ignored.append(h)
+    if len(raw_rows) - 1 > MAX_CAMPAIGN_ROWS:
+        raise ServiceError(f"too many rows (max {MAX_CAMPAIGN_ROWS})", 400)
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for idx, cells in enumerate(raw_rows[1:], 1):
+        row = {"id": f"row{idx}", "label": "", "text_overrides": {}, "locale": None}
+        for (kind, eid), cell in zip(columns, cells, strict=False):
+            cell = cell.strip()
+            if not cell:
+                continue
+            if kind == "id":
+                row["id"] = re.sub(r"[^A-Za-z0-9_-]", "_", cell)[:64] or row["id"]
+            elif kind == "label":
+                row["label"] = cell[:120]
+            elif kind == "locale":
+                row["locale"] = cell[:16]
+            elif kind == "text":
+                row["text_overrides"][eid] = cell
+        if row["id"] in seen:
+            base = row["id"][:56]
+            n = 2
+            while f"{base}_{n}" in seen:
+                n += 1
+            row["id"] = f"{base}_{n}"
+        seen.add(row["id"])
+        row["label"] = row["label"] or row["id"]
+        rows.append(row)
+    notes: list[str] = []
+    if ignored:
+        notes.append("Ignored columns (no text element with that name, id or role): "
+                     + ", ".join(ignored) + ".")
+    if protected_cols:
+        notes.append("Verbatim copy is never overridden by a table; column(s) ignored: "
+                     + ", ".join(sorted(set(protected_cols))) + ".")
+    used = sorted({eid for _, eid in columns if eid} - {eid for k, eid in columns
+                                                        if k == "protected"})
+    if not used:
+        notes.append("No column matched a text element; every row would repeat the master copy.")
+    return {
+        "rows": rows,
+        "columns": [{"header": h, "kind": k, "element_id": eid}
+                    for h, (k, eid) in zip(header, columns, strict=False)],
+        "ignored_columns": ignored,
+        "notes": notes,
+        "elements": [{"id": e.id, "name": e.name, "role": e.role,
+                      "protected": bool(e.text is not None and e.text.protected)} for e in texts],
+    }
 
 
 def _normalize_targets(spec: dict) -> list[dict]:

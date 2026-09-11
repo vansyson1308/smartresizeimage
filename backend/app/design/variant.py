@@ -54,6 +54,8 @@ class VariantBrief:
     locale: str | None = None
     hidden_elements: list[str] = field(default_factory=list)
     channel_preset: str | None = None
+    # campaign row this variant belongs to ({"id", "label"}), None for a plain run
+    row: dict | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -64,6 +66,7 @@ class VariantBrief:
             "locale": self.locale,
             "hidden_elements": list(self.hidden_elements),
             "channel_preset": self.channel_preset,
+            "row": dict(self.row) if self.row else None,
         }
 
 

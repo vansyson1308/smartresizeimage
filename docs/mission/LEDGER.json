@@ -80,13 +80,15 @@
     },
     "B_commercial_spine": {
       "status": "IN_PROGRESS",
+      "done": [
+        "campaign table: rows x formats in one job (12 x 6 = 72 measured: results/campaign_12x6_2026-09-11.md), CSV import, per-row checks, row-grouped review and export",
+        "restart resume of interrupted variant jobs (durable job records + stored briefs)"
+      ],
       "next": [
-        "brand model + editor (colours, fonts, logo rules, tone)",
-        "campaign table: 12 content rows x 6 formats = 72 variants from CSV",
-        "creative directions per row",
-        "durable job queue across restarts",
-        "entitlement/plan limits",
-        "offline verification after install"
+        "brand model + editor (colours, fonts, logo rules, tone) applied as proposals and checks",
+        "entitlement/plan limits per workspace",
+        "offline guard proving the installed product works without network",
+        "creative directions per row"
       ]
     },
     "C_owned_intelligence": {
@@ -154,7 +156,8 @@
       "date": "2026-09-11",
       "unit": "303 passed",
       "browser": "34 steps, 0 errors"
-    }
+    },
+    "campaign": "python backend/tools/run_campaign.py --rows 12 --formats 6"
   },
   "constraints": [
     "Do not infer permission to buy services, increase cloud spending, upload private designs to providers, contact customers, change live billing, merge protected branches, or publicly launch.",

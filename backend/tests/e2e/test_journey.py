@@ -482,6 +482,55 @@ def _run(j: Journey, page, base: str, logo: Path, hero: Path) -> None:
     j.step("personal token lists the workspace's projects",
            r.ok and len(r.json()["projects"]) == n_before + 1)
 
+    # 9b) campaign table: two rows generated in one size, reviewed per row
+    page.reload()
+    page.wait_for_selector("#auth-login:not(.hidden)")
+    j.sign_in("ada", "correct horse")
+    page.click(f"#project-list .project-tile[data-id='{pid}']")
+    page.wait_for_selector("#view-design:not(.hidden)")
+    page.click("header nav button[data-view='brief']")
+    page.wait_for_selector("#view-brief:not(.hidden)")
+    page.fill("#campaign-csv", "label,headline,CTA,locale,Price\n"
+                               "Week 1,SPRING SALE,SHOP NOW,en,$1\n"
+                               "Tuần 2,GIẢM GIÁ XUÂN,MUA NGAY,vi,\n")
+    page.click("#campaign-parse")
+    page.wait_for_selector("table.campaign")
+    j.step("campaign table read from CSV",
+           len(page.query_selector_all("table.campaign tr")) == 3
+           and "Verbatim" in page.inner_text("#campaign-note"))
+    for cb in page.query_selector_all("#preset-grid input:checked"):  # only the custom size
+        cb.uncheck()
+    page.fill("#custom-w", "300")
+    page.fill("#custom-h", "250")
+    page.fill("#custom-name", "MREC")
+    page.click("#custom-add")
+    count = page.inner_text("#campaign-count")
+    j.step("campaign count shown", "2 rows × 1 size = 2 variants" in count, text=count)
+    n_variants = len(j.get(f"/api/projects/{pid}/variants")["variants"])
+    page.click("#btn-generate")
+    page.wait_for_selector("#view-review:not(.hidden)", timeout=240000)
+    variants = j.wait_jobs(pid)
+    rows = {v["brief"]["row"]["id"]: v for v in variants if v["brief"].get("row")}
+    doc = j.get(f"/api/projects/{pid}")["document"]
+    cta_id = next(e["id"] for e in doc["elements"] if e["name"] == "CTA")
+    j.step("campaign rows generated in the chosen size",
+           len(variants) == n_variants + 2 and len(rows) == 2
+           and all(v["status"] == "done" and v["name"] == "MREC" for v in rows.values())
+           and any(v["brief"]["text_overrides"].get(cta_id) == "MUA NGAY"
+                   for v in rows.values()),
+           before=n_variants, after=len(variants),
+           rows=[(k, v["name"], v["status"], v["error"], v["brief"]["text_overrides"])
+                 for k, v in rows.items()])
+    page.wait_for_selector("#review-row:not(.hidden)")
+    page.select_option("#review-row", "row2")
+    page.wait_for_timeout(300)
+    j.step("review filters by campaign row",
+           len(page.query_selector_all(".variant-card")) == 1
+           and "Tuần 2" in page.inner_text(".variant-card .row-tag"))
+    page.select_option("#review-row", "all")
+    j.shot("09_campaign_review", full=True)
+    j.sign_out()
+
     # 10) sign in again as the administrator, small screen, no errors
     page.reload()
     page.wait_for_selector("#auth-login:not(.hidden)")
