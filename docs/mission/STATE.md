@@ -1,6 +1,6 @@
 # Current state
 
-Updated: 2026-09-09. Branch `claude/blissful-archimedes-5n2dvd` (from `main` @ 9d913a0).
+Updated: 2026-09-11. Branch `claude/blissful-archimedes-5n2dvd` (from `main` @ 9d913a0).
 This file is a checkpoint, not a completion claim.
 
 ## What exists and is verified locally
@@ -36,7 +36,7 @@ This file is a checkpoint, not a completion claim.
 Environment: Python 3.11.15, Pillow 10.4.0, NumPy 1.26.4, SciPy 1.17.1, opencv-headless
 4.11.0.86, psd-tools 1.19.0, tesseract 5.3.4, FastAPI 0.141.1. 4 CPUs, no GPU.
 
-- `ruff check backend` clean; `pytest backend/tests` → **271 passed** (API round trips, roles,
+- `ruff check backend` clean; `pytest backend/tests` → **303 passed** (unit) + 1 browser journey (API round trips, roles,
   rate limit, retention, planner, examples, local edits, corrections, decomposition).
 - Measurement tools (all synthetic, seed 42): `run_layout_bench.py` (modes), `run_ablations.py`
   (planner/repair/plates, joint, H1 protocol), `run_local_edits.py` (H3), `run_corrections.py`
@@ -69,8 +69,8 @@ inputs only. Numbers are synthetic-fixture engineering results, not customer val
   project, families learned from approved variants (H1). Learning is validated on synthetic
   examples only (same assets and copy as the master); real designer examples with manual
   edits are untested, and one example per orientation stays at confidence 0.5.
-- No multi-tenant auth, metering, billing, or durable job queue across restarts (jobs are
-  in-process; interrupted variants are marked failed on restart).
+- Local auth (users, sessions, tokens, roles) exists; no SSO, billing, or multi-node job
+  queue (jobs are in-process; interrupted variants are marked failed on restart).
 - Human calibration of the verdict and operator-time measurements not performed.
 - Legacy documents in repo root (`AUDIT_REPORT.md`, `BENCH_DELTA_*.md`, `RELEASE_READINESS.md`)
   describe the pre-v2 evaluator; treat their numbers as historical.
@@ -160,6 +160,25 @@ inputs only. Numbers are synthetic-fixture engineering results, not customer val
 - PDF export (`format=pdf`, one page per variant at 150 dpi inside the deliverables zip,
   page numbers in the manifest). Docker CLI exists here but no daemon: image build stays
   BLOCKED_EXTERNAL.
+
+## Independent audit closure (2026-09-11, Mission V2 phase A)
+
+Machine-readable ledger: `docs/mission/LEDGER.json`.
+
+| Finding | Status | Fix | Proving tests |
+|---|---|---|---|
+| F1 archive paths/metadata trusted on import | FIXED (24be1f8) | every archive-controlled path and id validated at import and at use (`safe_relative_path`, `is_safe_id`, `Project.variant_file`); member cap, symlink refusal; owner/id overwritten; claimed approvals reset unless the importer may approve | `test_archive_safety.py` (8) |
+| F2 hard rule violated after kept-reference regeneration but accepted | FIXED (18f848f) | `constraint_checks` after all transformations; hard rule FAIL/NOT_CHECKED is CRITICAL and blocks acceptance; violating reference plans re-planned; all seven constraint types covered | `test_hard_rules.py` (5) |
+| F3 multi-run text rendered with the first run's style | FIXED | per-run shaping and rendering on one baseline (size ratio, face, colour, tracking); PSD style runs extracted; runs kept through editing (`edit_text`, explicit `runs` op), serialization, typography and font disclosure; unsupported attributes disclosed | `test_text_runs.py` (12) |
+| F4 no UI auth journey | FIXED | local users, sessions (HttpOnly cookie, CSRF header), setup token, roles, members, personal tokens; images/downloads authenticated by the session; `AUTOBANNER_AUTH=local` in compose | `test_auth_journey.py` (7), `tests/e2e/test_journey.py` |
+| F5 unportable tests | FIXED | committed Playwright journey + CI job, bundled DejaVu fonts, coverage-based CJK skip, generated H3 fixture | `tests/e2e`, `test_design_document.py`, `test_local_edits.py` |
+
+Browser journey (committed, 34 steps, 0 console/HTTP errors): setup with wrong then right
+token → blank canvas → add text/logo → verbatim price → drag/nudge/undo → rule → brief →
+generate → approve / reject with reason → per-variant override regenerate → learned rules →
+export approved → save/reopen zip → add approver member → personal token → sign out → sign in
+as approver (design tools disabled, approve enabled) → approver approves → second workspace
+isolated → token lists projects → 900 px without horizontal scroll.
 
 ## Release-criteria check (2026-09-09, end of this session)
 

@@ -3,6 +3,29 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+### Security
+- Imported project archives are no longer trusted: every archive-controlled path and id is
+  validated at import and at use (absolute or traversal paths, symlinks, member floods are
+  refused with 400), the importer becomes the owner, and claimed approvals are reset unless
+  the importer may approve (`test_archive_safety.py`).
+- Local authentication for the UI (`AUTOBANNER_AUTH=local`): first-run setup token creates a
+  workspace administrator; PBKDF2 passwords; HttpOnly session cookie that also authenticates
+  images and downloads; `X-Requested-With` required on cookie-authenticated writes; login
+  throttling; member management with roles; personal API tokens (`abt_…`) for automation.
+  Open mode is explicit and switches to local once a user exists.
+
+### Fixed
+- Hard constraints are evaluated after every transformation, including kept reference plans
+  and repairs; a violated or unevaluable hard rule blocks automatic acceptance and violating
+  reference plans are re-planned (`test_hard_rules.py`).
+- Text with several styled runs keeps each run's face, weight, size ratio, colour and
+  tracking through PSD import (all style runs extracted), editing (`edit_text`, explicit
+  `runs` op), wrapping, rendering on one baseline, serialization, typography and export
+  disclosure; underline/strikethrough/baseline shift are disclosed as not reproduced.
+- Tests are self-contained: DejaVu Sans/Bold bundled (Bitstream Vera licence), the CJK
+  fallback test skips on measured glyph coverage, the H3 busy-background fixture is generated,
+  and the Playwright browser journey is committed and run in CI.
+
 ### Added
 - PDF export (`format=pdf`): one page per variant at pixel size (150 dpi) inside the
   deliverables zip, with page numbers in the manifest.

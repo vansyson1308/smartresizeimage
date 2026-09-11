@@ -29,27 +29,32 @@ AUTOBANNER_DATA_DIR=./data .venv/bin/uvicorn backend.app.api.server:app --port 8
 
 ## Browser journey check
 
-The Playwright script used for verification lives outside the repo during the session
-(`scratchpad/ui_journey.py`); its steps: create blank canvas → add text (prompt) → add logo
-(file input) → add elements via API → mark price verbatim → drag/nudge/undo → add rule →
-brief with custom size + copy override → generate → review → approve / reject with reason →
-per-variant override regenerate → export approved zip → save project zip → reopen via import
-→ learned-rules panel shows the approved variant → 900px viewport without horizontal scroll
-→ no console errors. Re-create it from this list if
-needed; launch Chromium with `executable_path="/opt/pw-browsers/chromium"` in this environment.
+Committed at `backend/tests/e2e/test_journey.py` (Playwright + Chromium against a real
+uvicorn server with `AUTOBANNER_AUTH=local`; CI job `browser-journey`):
+
+```bash
+.venv/bin/python -m playwright install --with-deps chromium   # once (CI does the same)
+AUTOBANNER_E2E_SHOTS=/tmp/shots .venv/bin/python -m pytest backend/tests/e2e -rs
+```
+
+Screenshots and `journey_report.json` (every step with its result) land in
+`AUTOBANNER_E2E_SHOTS`. In this environment Chromium is at `/opt/pw-browsers/chromium`
+(the test finds it through `PLAYWRIGHT_BROWSERS_PATH`).
 
 ## Next executable task
 
-The research track (H1–H5) and the local commercial layer are in place; what remains needs
-things this environment does not have (real designs, human reviewers, provider credentials,
-a Docker daemon). Next executable items, in order:
+Mission V2 phase A (audit closure) is done locally; see `LEDGER.json`. Continue with phase B,
+in this order:
 
-1. Docker build verification: on a machine with a daemon run `docker compose build && docker
-   compose up`, hit `/api/health`, run the browser journey against port 8000, and record the
-   image size and cold-start time in `docs/OPERATIONS.md`.
-2. When real designs or reviewers become available: run the pilot instruments
-   (`/api/pilot/summary`) on a real campaign, calibrate the verdict against reviewer decisions,
-   and replace the synthetic numbers in `EVALUATION.md` with measured ones.
+1. Brand model + editor: colours, fonts, logo rules, tone; stored per workspace and applied
+   as proposals to every new project (extends `design/brand.py`).
+2. Campaign table: 12 content rows × 6 formats → 72 variants from a CSV/table in the UI
+   (`VariantBrief` per row, jobs per campaign, review grouped by row).
+3. Creative directions per row; durable job queue across restarts; entitlement limits;
+   offline verification after install (no network in the test run).
+4. Then phases C (adaptive grammar/compiler, mascot invariants, incremental compilation,
+   counterexample tooling), D (R1–R4 on a designed 12-brand corpus with baselines) and E
+   (Docker build on a machine with a daemon, packaging, Vietnamese handoff).
 
 ## Files to know
 
@@ -58,6 +63,7 @@ a Docker daemon). Next executable items, in order:
   render, variant (incl. H3 reference plans), planner, examples (H1), corrections (H5),
   decompose
 - `backend/app/api/` — service (domain ops, retention), server (FastAPI, roles, rate limit),
+  auth (local users, sessions, personal tokens),
   jobs, presets, events, ratelimit
 - `backend/app/web/` — index.html, app.js, styles.css
 - `backend/tools/run_layout_bench.py` — modes baseline/phase21/phase3/design
