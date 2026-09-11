@@ -553,6 +553,13 @@ def _run(j: Journey, page, base: str, logo: Path, hero: Path) -> None:
     j.step("review filters by campaign row",
            len(page.query_selector_all(".variant-card")) == 1
            and "Tuần 2" in page.inner_text(".variant-card .row-tag"))
+    page.click(".variant-card [data-open]")
+    page.wait_for_selector("#detail-plan:has-text('Direction asked')")
+    plan_line = page.inner_text("#detail-plan")
+    j.step("detail view shows the layout family and the honoured direction",
+           "Layout " in plan_line and "text side left" in plan_line and "honoured" in plan_line
+           and "not met" not in plan_line, text=plan_line)
+    page.click("#detail-close")
     page.select_option("#review-row", "all")
     j.shot("09_campaign_review", full=True)
     j.sign_out()

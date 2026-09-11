@@ -36,7 +36,7 @@ This file is a checkpoint, not a completion claim.
 Environment: Python 3.11.15, Pillow 10.4.0, NumPy 1.26.4, SciPy 1.17.1, opencv-headless
 4.11.0.86, psd-tools 1.19.0, tesseract 5.3.4, FastAPI 0.141.1. 4 CPUs, no GPU.
 
-- `ruff check backend` clean; `pytest backend/tests` → **343 passed** (unit) + 1 browser journey (41 steps) (API round trips, roles,
+- `ruff check backend` clean; `pytest backend/tests` → **343 passed** (unit) + 1 browser journey (42 steps) (API round trips, roles,
   rate limit, retention, planner, examples, local edits, corrections, decomposition).
 - Measurement tools (all synthetic, seed 42): `run_layout_bench.py` (modes), `run_ablations.py`
   (planner/repair/plates, joint, H1 protocol), `run_local_edits.py` (H3), `run_corrections.py`
@@ -252,7 +252,7 @@ isolated → token lists projects → 900 px without horizontal scroll.
 | Criterion (MISSION.md priorities / brief) | Status | Evidence |
 |---|---|---|
 | Truthful evaluation: score describes what the customer sees | VERIFIED_LOCAL | Contract v2 on rendered pixels; preserved false positive rejected for the right reason; skipped checks never pass. Calibration vs humans BLOCKED_EXTERNAL. |
-| One complete, reopenable end-to-end journey | VERIFIED_LOCAL | Committed 41-step browser journey against the real server with local auth and the offline guard (setup → design → brief with a creative direction → campaign table → generate → review per row → approve/reject → regenerate → export → save/reopen → members, tokens, second workspace, approver account); green on CI. |
+| One complete, reopenable end-to-end journey | VERIFIED_LOCAL | Committed 42-step browser journey against the real server with local auth and the offline guard (setup → design → brief with a creative direction → campaign table → generate → review per row → approve/reject → regenerate → export → save/reopen → members, tokens, second workspace, approver account); green on CI. |
 | Native text and asset fidelity | VERIFIED_LOCAL | Native text fitting/rendering with font disclosure and glyph coverage; assets by content hash; recovered elements never silently converted. |
 | Measured differentiation before claims | VERIFIED_LOCAL (synthetic) | Frozen holdout, Wilson intervals, ablations for planner/repair/plates/joint/H1/H3/H5 with verbatim reports; no customer numbers claimed. |
 | Operability | VERIFIED_LOCAL | Local users/sessions/tokens with roles, workspace isolation, plans and quotas, rate limiting, retention, durable jobs with restart resume, incremental refresh, offline guard, pilot instruments, Docker/compose, operations doc. Multi-node, billing, SSO not provided; Docker image build unverified here. |
@@ -269,5 +269,4 @@ isolated → token lists projects → 900 px without horizontal scroll.
    `/api/health`, browser journey against port 8000, record image size and cold start);
    packaging notes; keep the Vietnamese handoff (`docs/mission/HANDOFF_VI.md`) current.
 3. Product follow-ups with evidence value: grammar families for extreme strips (728×90),
-   directions in the per-variant detail view, run-level text editing in the UI, multi-node
-   job records and sessions.
+   run-level text editing in the UI, multi-node job records and sessions.

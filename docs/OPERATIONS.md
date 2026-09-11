@@ -97,7 +97,8 @@ tokens `copy` / `subject` / `balanced` (emphasis), `text-left` / `text-right`, `
 `{"emphasis": "copy", "text_side": "left", "mood": "bold"}`. What a format cannot satisfy
 (a landscape asked to stack) is recorded as `direction_unmet:…` in the plan's decisions and
 the plan proceeds with the closest candidates; `mood` is descriptive only. The CSV table
-accepts a `direction` column.
+accepts a `direction` column. The variant detail view shows the winning family and its
+traits, the direction asked and whether it was honoured, and any copy left out.
 
 Limits: 144 variants per job (for example 24 rows × 6 formats), 200 rows per table.
 Each variant records its row in `brief.row`; cross-variant consistency checks run within a

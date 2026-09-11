@@ -686,6 +686,7 @@
       $("#detail-img").src = src; $("#compare-variant").src = src;
       $("#compare-master").src = `/api/projects/${pid()}/preview.png?max_side=900&n=${state.previewNonce}`;
       $("#detail-verdict").innerHTML = `${verdictBadge(v.verdict)} ${approvalBadge(v.approval)}${v.approval_reason ? ` <span class="small muted">${esc(v.approval_reason)}</span>` : ""}`;
+      $("#detail-plan").innerHTML = planSummary((data.plan && data.plan.planner_meta) || {});
       const q = data.quality || {};
       const issues = (q.checks || []).filter((c) => c.status !== "pass").sort((a, b) => (a.status === "fail" ? 0 : a.status === "needs_review" ? 1 : 2) - (b.status === "fail" ? 0 : b.status === "needs_review" ? 1 : 2));
       $("#detail-issues").innerHTML = issues.length ? issues.map((c) => `<li class="${c.status}">${esc(c.message)}</li>`).join("") : '<li class="muted">No issues found by the automatic checks.</li>';
@@ -696,6 +697,29 @@
       $("#detail-json").textContent = JSON.stringify({ plan, quality_summary: q.summary, fonts: plan.fonts, warnings: plan.warnings, repair_steps: plan.repair_steps, config: q.config }, null, 2);
       $("#variant-detail").scrollIntoView({ behavior: "smooth", block: "start" });
     } catch (e) { toast(e.message, true); }
+  }
+  // One line on how the variant was laid out: the winning family and its traits, the
+  // creative direction that was asked for and whether the format could honour it, and
+  // any copy the planner left out (only elements the design allows to be hidden).
+  function planSummary(pm) {
+    if (!pm.family) return "";
+    const label = (k) => String(k).replace(/_/g, " ");
+    const traits = pm.traits || {};
+    const parts = [`Layout <b>${esc(pm.family)}</b>`];
+    const tr = ["arrangement", "text_side", "text_position", "text_align"].filter((k) => traits[k]).map((k) => `${label(k)} ${traits[k]}`);
+    if (tr.length) parts.push(esc(tr.join(", ")));
+    if (pm.candidates) parts.push(`${pm.candidates} candidate${pm.candidates === 1 ? "" : "s"}`);
+    const decisions = pm.decisions || [];
+    let html = parts.join(" · ");
+    const dir = pm.direction || {};
+    const asked = Object.entries(dir).filter(([, val]) => val).map(([k, val]) => `${label(k)} ${val}`);
+    if (asked.length) {
+      const unmet = decisions.filter((d) => d.startsWith("direction_unmet:")).map((d) => { const [, k, val] = d.split(":"); return `${label(k)} ${val}`; });
+      html += `<br>Direction asked: ${esc(asked.join(", "))} · ${unmet.length ? `<span class="badge warn">not met: ${esc(unmet.join(", "))}</span>` : '<span class="badge ok">honoured</span>'}`;
+    }
+    const dropped = decisions.filter((d) => d.startsWith("dropped:")).map((d) => { const id = d.split(":")[1]; const el = doc().elements.find((e) => e.id === id); return el ? el.name : id; });
+    if (dropped.length) html += `<br><span class="badge warn">left out on this size: ${esc(dropped.join(", "))}</span>`;
+    return html;
   }
   function closeDetail() { state.detailId = null; $("#variant-detail").classList.add("hidden"); }
   $("#detail-close").addEventListener("click", closeDetail);

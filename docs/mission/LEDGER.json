@@ -108,10 +108,10 @@
         "repair moves that would break a hard order rule are reverted (found by the counterexample search)",
         "planner penalises boxes by how far they leave the canvas (counterexample re-run: 145 -> 153 accepted, bounds firings 15 -> 10)",
         "subject-integrity tolerance made rounding-aware for tiny boxes (728x90 acceptance 3/15 -> 12/15)",
-        "hideable copy on small sizes (explicit allowed.hide, recorded drops; 728x90 long-copy cases failed -> accepted with the permission)"
+        "hideable copy on small sizes (explicit allowed.hide, recorded drops; 728x90 long-copy cases failed -> accepted with the permission)",
+        "detail view shows the layout family, traits, the direction asked and whether it was honoured, and copy left out"
       ],
       "next": [
-        "directions shown in the per-variant detail view",
         "run-level text editing in the UI"
       ]
     },
@@ -162,7 +162,7 @@
     "last_run": {
       "date": "2026-09-11",
       "unit": "343 passed",
-      "browser": "41 steps, 0 errors, offline"
+      "browser": "42 steps, 0 errors, offline"
     },
     "campaign": "python backend/tools/run_campaign.py --rows 12 --formats 6",
     "counterexamples": "python backend/tools/find_counterexamples.py --cases 15 --ocr (0 counterexamples on 420 renders, 2026-09-11)"

@@ -11,7 +11,9 @@ All notable changes to this project will be documented in this file.
 - Creative directions per run and per campaign row (`direction`: copy / subject first, text
   left / right / top, subject on top, centered, stacked / side, or a pinned family): they
   narrow the candidates, what a format cannot satisfy is reported in the plan, never
-  silently ignored; selector in the Variants view and a `direction` CSV column.
+  silently ignored; selector in the Variants view and a `direction` CSV column. The variant
+  detail view summarises the layout: family, traits, direction asked and whether it was
+  honoured, and copy left out on that size.
 - Hideable copy on small sizes: an element the design marks "May be left out on small
   sizes" is dropped by the planner only when the stack cannot fit at the minimum text sizes
   (least important first; never headline, CTA, logo or keep_visible elements), recorded as a
