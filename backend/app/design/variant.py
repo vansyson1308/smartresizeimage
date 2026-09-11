@@ -162,8 +162,12 @@ def generate_variant(
     kept: list[str] = []
     replanned: list[str] = []
     ref_px: dict[str, int] = {}
+    ref_notes: list[str] = []
     if reference and planner_name == "constraints":
-        layout, kept, replanned, ref_px = _apply_reference(elements, layout, reference, by_id)
+        layout, kept, replanned, ref_px, ref_notes = _apply_reference(
+            elements, layout, reference, by_id, doc, target
+        )
+        plan_meta["reference"] = {"kept": kept, "replanned": replanned}
 
     # 3) Fit + rasterize native text at the planned boxes.
     typography: dict[str, dict] = {}
@@ -178,6 +182,7 @@ def generate_variant(
         canvas=(doc.canvas_width, doc.canvas_height),
         px_caps=ref_px,
     )
+    warnings = ref_notes + warnings
     if kept:
         # A text whose new copy no longer fits the reference box gets its fresh box.
         layout_map = {r.element_id: r for r in layout}
@@ -341,12 +346,17 @@ def _apply_reference(
     layout: list[LayoutResult],
     reference: dict,
     by_id: dict[str, DesignElement],
-) -> tuple[list[LayoutResult], list[str], list[str], dict[str, int]]:
+    doc: DesignDocument,
+    target: tuple[int, int],
+) -> tuple[list[LayoutResult], list[str], list[str], dict[str, int], list[str]]:
     """Replace planned boxes with the reference variant's boxes where it placed the element.
 
     Backgrounds always fill the canvas; images whose asset aspect changed are refitted
-    uniformly inside the reference box (never distorted). Returns the new layout, the
-    ids kept from the reference, the ids planned fresh, and the reference font sizes.
+    uniformly inside the reference box (never distorted). A kept box that violates a
+    hard rule in force *now* (a rule added after the reference was made) is not
+    copied: every element of that rule falls back to the fresh plan and the change is
+    reported. Returns the new layout, the ids kept from the reference, the ids planned
+    fresh, the reference font sizes, and layout-change notes.
     """
     ref_boxes = {p["element_id"]: p for p in reference.get("placements", [])}
     ref_typo = reference.get("typography", {}) or {}
@@ -381,7 +391,29 @@ def _apply_reference(
         kept.append(r.element_id)
         if r.element_id in ref_typo and ref_typo[r.element_id].get("font_px"):
             px[r.element_id] = int(ref_typo[r.element_id]["font_px"])
-    return out, kept, replanned, px
+
+    # Hard rules are evaluated on the kept layout before it is trusted (finding 2).
+    notes: list[str] = []
+    fresh = {r.element_id: r for r in layout}
+    by_cid = {c.id: c for c in doc.constraints}
+    for chk in constraint_checks(doc, out, target, {}, set()):
+        if chk.status != CheckStatus.FAIL or chk.severity != Severity.CRITICAL:
+            continue
+        rule = by_cid.get(str(chk.details.get("constraint_id")))
+        if rule is None:
+            continue
+        for eid in rule.elements:
+            if eid not in kept or eid not in fresh:
+                continue
+            kept.remove(eid)
+            replanned.append(eid)
+            px.pop(eid, None)
+            out = [fresh[eid] if r.element_id == eid else r for r in out]
+            notes.append(
+                f"layout_change:{eid}: hard rule '{rule.type}' is not satisfied by the "
+                "previous layout"
+            )
+    return out, kept, replanned, px, notes
 
 
 def _typeset_one(
@@ -596,71 +628,95 @@ def constraint_checks(
     typography: dict[str, dict],
     required_roles: set[ElementRole],
 ) -> list[CheckResult]:
+    """Evaluate every enabled document constraint against the final layout.
+
+    Policy (independent audit, finding 2): a *hard* rule is evaluated after all
+    transformations with CRITICAL severity; a violation FAILs and a rule that cannot
+    be evaluated (its element was dropped, its font size is unknown) is NOT_CHECKED,
+    which the verdict treats as "no evidence", never as a pass. A *soft* rule is
+    advisory: a violation is NEEDS_REVIEW and an unevaluable one is skipped.
+    """
     layout_map = {r.element_id: r for r in layout}
+    tw, th = target
     out: list[CheckResult] = []
+
+    def visible(eid: str) -> LayoutResult | None:
+        lr = layout_map.get(eid)
+        return lr if lr is not None and lr.visible else None
+
     for c in doc.constraints:
         if not c.enabled:
             continue
-        sev = Severity.CRITICAL if c.hard else Severity.MAJOR
-        if c.type == "keep_visible":
-            for eid in c.elements:
-                lr = layout_map.get(eid)
-                ok = lr is not None and lr.visible
-                out.append(
-                    CheckResult(
-                        "constraint_keep_visible",
-                        CheckStatus.PASS if ok else CheckStatus.FAIL,
-                        sev,
-                        (
-                            f"'{_name(doc, eid)}' stays visible"
-                            if ok
-                            else f"'{_name(doc, eid)}' was dropped"
-                        ),
-                        subject_id=eid,
-                        details={"constraint_id": c.id},
-                    )
+        hard = bool(c.hard)
+        check_id = f"constraint_{_CHECK_SUFFIX.get(c.type, c.type)}"
+
+        def emit(ok: bool, subject: str, ok_msg: str, bad_msg: str, details: dict,
+                 *, soft_severity: Severity = Severity.MINOR, _c=c, _hard=hard,
+                 _id=check_id) -> None:
+            if ok:
+                status, severity = CheckStatus.PASS, (
+                    Severity.CRITICAL if _hard else soft_severity
                 )
-        elif c.type == "order_below" and len(c.elements) == 2:
-            a, b = layout_map.get(c.elements[0]), layout_map.get(c.elements[1])
-            if a is None or b is None:
-                continue
-            ok = a.new_bbox.y >= b.new_bbox.y
+            elif _hard:
+                status, severity = CheckStatus.FAIL, Severity.CRITICAL
+            else:
+                status, severity = CheckStatus.NEEDS_REVIEW, soft_severity
             out.append(
                 CheckResult(
-                    "constraint_order",
-                    CheckStatus.PASS if ok else CheckStatus.NEEDS_REVIEW,
-                    Severity.MINOR,
-                    (
-                        f"'{_name(doc, c.elements[0])}' follows '{_name(doc, c.elements[1])}'"
-                        if ok
-                        else f"'{_name(doc, c.elements[0])}' is placed above "
-                        f"'{_name(doc, c.elements[1])}'"
-                    ),
-                    subject_id=c.elements[0],
-                    details={"constraint_id": c.id},
+                    _id, status, severity, ok_msg if ok else bad_msg,
+                    subject_id=subject, details={"constraint_id": _c.id, **details},
                 )
+            )
+
+        def unchecked(subject: str, why: str, _c=c, _hard=hard, _id=check_id) -> None:
+            if not _hard:
+                return
+            out.append(
+                CheckResult(
+                    _id, CheckStatus.NOT_CHECKED, Severity.CRITICAL,
+                    f"hard rule '{_c.type}' could not be evaluated: {why}",
+                    subject_id=subject, details={"constraint_id": _c.id, "reason": why},
+                )
+            )
+
+        if c.type == "keep_visible":
+            for eid in c.elements:
+                emit(
+                    visible(eid) is not None, eid,
+                    f"'{_name(doc, eid)}' stays visible", f"'{_name(doc, eid)}' was dropped",
+                    {}, soft_severity=Severity.MAJOR,
+                )
+        elif c.type == "order_below" and len(c.elements) == 2:
+            a, b = visible(c.elements[0]), visible(c.elements[1])
+            if a is None or b is None:
+                gone = c.elements[0] if a is None else c.elements[1]
+                unchecked(c.elements[0], f"'{_name(doc, gone)}' is not placed")
+                continue
+            emit(
+                a.new_bbox.y >= b.new_bbox.y, c.elements[0],
+                f"'{_name(doc, c.elements[0])}' follows '{_name(doc, c.elements[1])}'",
+                f"'{_name(doc, c.elements[0])}' is placed above '{_name(doc, c.elements[1])}'",
+                {"y": a.new_bbox.y, "other_y": b.new_bbox.y},
             )
         elif c.type == "min_text_size" and c.elements:
             eid = c.elements[0]
             px = typography.get(eid, {}).get("font_px")
             floor = int(c.params.get("px", 10))
             if px is None:
+                why = "not placed" if visible(eid) is None else "rendered size unknown"
+                unchecked(eid, f"'{_name(doc, eid)}' {why}")
                 continue
-            ok = px >= floor
-            out.append(
-                CheckResult(
-                    "constraint_min_text_size",
-                    CheckStatus.PASS if ok else CheckStatus.FAIL,
-                    sev,
-                    f"'{_name(doc, eid)}' is {px}px (minimum {floor}px)",
-                    subject_id=eid,
-                    details={"constraint_id": c.id, "font_px": px, "min_px": floor},
-                )
+            emit(
+                px >= floor, eid,
+                f"'{_name(doc, eid)}' is {px}px (minimum {floor}px)",
+                f"'{_name(doc, eid)}' is {px}px, below the minimum {floor}px",
+                {"font_px": px, "min_px": floor}, soft_severity=Severity.MAJOR,
             )
         elif c.type == "clear_space" and c.elements:
             eid = c.elements[0]
-            lr = layout_map.get(eid)
-            if lr is None or not lr.visible:
+            lr = visible(eid)
+            if lr is None:
+                unchecked(eid, f"'{_name(doc, eid)}' is not placed")
                 continue
             ratio = float(c.params.get("ratio", 0.5))
             pad = int(lr.new_bbox.height * ratio)
@@ -679,25 +735,17 @@ def constraint_checks(
                     continue
                 if _overlap(zone, other.new_bbox) > 0:
                     intruders.append(other.element_id)
-            ok = not intruders
-            out.append(
-                CheckResult(
-                    "constraint_clear_space",
-                    CheckStatus.PASS if ok else CheckStatus.NEEDS_REVIEW,
-                    Severity.MAJOR if c.hard else Severity.MINOR,
-                    (
-                        f"'{_name(doc, eid)}' has its clear space"
-                        if ok
-                        else f"'{_name(doc, eid)}' clear space is crowded by "
-                        + ", ".join(_name(doc, i) for i in intruders[:3])
-                    ),
-                    subject_id=eid,
-                    details={"constraint_id": c.id, "intruders": intruders},
-                )
+            emit(
+                not intruders, eid,
+                f"'{_name(doc, eid)}' has its clear space",
+                f"'{_name(doc, eid)}' clear space is crowded by "
+                + ", ".join(_name(doc, i) for i in intruders[:3]),
+                {"intruders": intruders},
             )
         elif c.type == "keep_group" and len(c.elements) >= 2:
-            boxes = [layout_map[e].new_bbox for e in c.elements if e in layout_map]
+            boxes = [visible(e).new_bbox for e in c.elements if visible(e) is not None]
             if len(boxes) < 2:
+                unchecked(c.elements[0], "fewer than two members are placed")
                 continue
             # Members should be near each other: gap smaller than the taller member.
             boxes_sorted = sorted(boxes, key=lambda b: b.y)
@@ -705,18 +753,63 @@ def constraint_checks(
             for prev, cur in zip(boxes_sorted, boxes_sorted[1:], strict=False):
                 max_gap = max(max_gap, cur.y - prev.y2)
             limit = max(b.height for b in boxes) * 1.5
-            ok = max_gap <= limit
-            out.append(
-                CheckResult(
-                    "constraint_keep_group",
-                    CheckStatus.PASS if ok else CheckStatus.NEEDS_REVIEW,
-                    Severity.MINOR,
-                    "Grouped elements stay together" if ok else "Grouped elements drifted apart",
-                    subject_id=c.elements[0],
-                    details={"constraint_id": c.id, "max_gap": max_gap},
-                )
+            emit(
+                max_gap <= limit, c.elements[0],
+                "Grouped elements stay together", "Grouped elements drifted apart",
+                {"max_gap": max_gap, "limit": limit},
             )
+        elif c.type == "anchor_edge" and c.elements:
+            eid = c.elements[0]
+            lr = visible(eid)
+            edge = str(c.params.get("edge", "")).lower()
+            if lr is None:
+                unchecked(eid, f"'{_name(doc, eid)}' is not placed")
+                continue
+            if edge not in ("top", "bottom", "left", "right"):
+                unchecked(eid, f"unknown edge '{edge}'")
+                continue
+            b = lr.new_bbox
+            tol = 2 * int(0.04 * min(tw, th))
+            dist = {
+                "top": b.y, "bottom": th - b.y2, "left": b.x, "right": tw - b.x2,
+            }[edge]
+            emit(
+                0 <= dist <= tol, eid,
+                f"'{_name(doc, eid)}' sits on the {edge} edge",
+                f"'{_name(doc, eid)}' is {dist}px from the {edge} edge (allowed {tol}px)",
+                {"edge": edge, "distance": dist, "tolerance": tol},
+            )
+        elif c.type == "scale_range" and c.elements:
+            eid = c.elements[0]
+            lr = visible(eid)
+            if lr is None:
+                unchecked(eid, f"'{_name(doc, eid)}' is not placed")
+                continue
+            lo = float(c.params.get("min", 0.0))
+            hi = float(c.params.get("max", 1.0))
+            rel = lr.new_bbox.height / max(1, th)
+            emit(
+                lo - 0.01 <= rel <= hi + 0.01, eid,
+                f"'{_name(doc, eid)}' is {rel:.2f} of the canvas height (allowed {lo}-{hi})",
+                f"'{_name(doc, eid)}' is {rel:.2f} of the canvas height, outside {lo}-{hi}",
+                {"relative_height": round(rel, 4), "min": lo, "max": hi},
+            )
+        elif c.type == "allowed_overlap":
+            continue  # a permission consumed by the overlap check, not a rule to verify
+        elif hard:
+            unchecked(c.elements[0] if c.elements else "", f"unsupported rule type '{c.type}'")
     return out
+
+
+_CHECK_SUFFIX = {
+    "order_below": "order",
+    "keep_visible": "keep_visible",
+    "min_text_size": "min_text_size",
+    "clear_space": "clear_space",
+    "keep_group": "keep_group",
+    "anchor_edge": "anchor_edge",
+    "scale_range": "scale_range",
+}
 
 
 def _repair(
