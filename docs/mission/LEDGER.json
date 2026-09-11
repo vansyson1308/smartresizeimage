@@ -108,7 +108,7 @@
         "repair moves that would break a hard order rule are reverted (found by the counterexample search)"
       ],
       "next": [
-        "planner follow-up: re-plan when the subject is hidden (bounds firings in the counterexample sweep)",
+        "planner follow-up: clip or shrink the text stack when it cannot fit small formats (bounds firings in the counterexample sweep)",
         "grammar families for extreme strips (728x90)"
       ]
     },

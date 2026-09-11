@@ -236,9 +236,9 @@ isolated → token lists projects → 900 px without horizontal scroll.
   on; 0 accepted renders rejected by an independent oracle, 0 unexplained failures; the 20
   oracle firings all had non-accepted verdicts. It surfaced that overlap repair could undo a
   hard order rule the planner had honoured (fixed: such moves are reverted; the hard-order
-  perturbation re-run with the guard has 0 order firings instead of 9) and that hiding the
-  subject can leave boxes past the canvas on some sizes (reported by the contract; planner
-  follow-up).
+  perturbation re-run with the guard has 0 order firings instead of 9) and that long copy or
+  hard rules on small formats can push the text stack past the canvas (reported by the
+  contract; planner follow-up).
 
 ## Release-criteria check (updated 2026-09-11)
 

@@ -29,11 +29,12 @@ Runs where an oracle fired, by perturbation:
 
 ## Reading
 
-- The 15 `bounds` firings are all the hidden-subject perturbation: with the hero hidden,
-  planned boxes of the remaining elements can extend past the canvas on some sizes; the
-  contract reports them (canvas clipping check) and never accepts them. A planner
-  improvement (re-plan when the subject is hidden) would remove the cause; recorded as a
-  follow-up, not fixed here.
+- The 15 `bounds` firings come from long copy, hard order rules and one direction on small
+  formats (mostly 300×250): when the text stack cannot fit its column even at the planner's
+  smallest scale factor, the last elements extend past the canvas; the contract reports
+  them (`inside_canvas` / `element_visible` fail) and never accepts them. A planner
+  improvement (clip the stack to the canvas and report the overflow, or drop to the copy's
+  minimum size earlier) would remove the cause; recorded as a follow-up, not fixed here.
 - The 9 `order` firings are hard `order_below` rules the final boxes break: the planner
   reordered the elements to honour the rule and the overlap repair then moved one of them
   back. The contract failed every one of them (finding F2 holds). Because a repair should not

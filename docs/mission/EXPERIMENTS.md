@@ -20,8 +20,9 @@ lands behind flags with a rollback path.
   (rendered-mask overlap, bounds, hard rules on final boxes, subject correlation) and 0
   unexplained failures; the 20 oracle firings all coincided with non-accepted verdicts. Two
   findings turned into fixes/follow-ups: repair moves could undo a hard order rule the
-  planner had honoured (now reverted, `acfeebd`), and hiding the subject can leave planned
-  boxes past the canvas on some sizes (reported by the contract; planner follow-up).
+  planner had honoured (now reverted, `acfeebd`), and long copy or hard rules on small
+  formats can push the text stack past the canvas (reported by the contract; planner
+  follow-up).
 - 2026-09-11 — H6 layout grammar (`results/ablations_grammar_2026-09-11.md`, 15 cases × 4
   sizes, holdout from case 10, joint planning in both arms): acceptance identical with and
   without the grammar (0.89 tuning, 0.92 holdout), same six honest non-accepted 300×250
