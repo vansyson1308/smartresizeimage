@@ -41,6 +41,7 @@ from fastapi.staticfiles import StaticFiles
 from ..config import Config
 from ..logging_config import setup_logging
 from .auth import AuthError, Principal, UserStore
+from .offline import install_offline_guard
 from .presets import preset_catalog
 from .ratelimit import RateLimiter, parse_rate
 from .service import LOCAL_OWNER, MAX_UPLOAD_BYTES, ProjectService, ServiceError, env_flag
@@ -53,6 +54,9 @@ _UPLOAD = File(...)
 
 def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = None) -> FastAPI:
     setup_logging(os.environ.get("AUTOBANNER_LOG_LEVEL", "INFO"))
+    offline = env_flag("AUTOBANNER_OFFLINE", False)
+    if offline:
+        install_offline_guard()
     data_root = Path(data_dir or os.environ.get("AUTOBANNER_DATA_DIR", "data"))
     workers = int(max_workers or os.environ.get("AUTOBANNER_JOB_WORKERS", "2"))
     service = ProjectService(
@@ -346,7 +350,7 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
             "status": "ok",
             "version": app.version,
             "environment": environment_fingerprint(),
-            "auth": auth_mode,
+            "auth": auth_mode, "offline": offline,
             "setup_required": auth_mode == "local" and users.setup_required(),
             "roles": sorted({role for _o, role in key_principals.values()}) or ["admin"],
             "rate_limit": limiter.describe(),

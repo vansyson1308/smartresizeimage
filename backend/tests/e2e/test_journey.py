@@ -63,6 +63,7 @@ def server(tmp_path_factory):
         "AUTOBANNER_DATA_DIR": str(data),
         "AUTOBANNER_JOB_WORKERS": "1",
         "AUTOBANNER_LOG_LEVEL": "WARNING",
+        "AUTOBANNER_OFFLINE": "1",  # the whole journey runs with outbound network refused
         "OMP_THREAD_LIMIT": "1",
     }
     env.pop("AUTOBANNER_API_KEYS", None)
