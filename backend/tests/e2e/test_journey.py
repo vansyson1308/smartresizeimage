@@ -526,10 +526,17 @@ def _run(j: Journey, page, base: str, logo: Path, hero: Path) -> None:
     count = page.inner_text("#campaign-count")
     j.step("campaign count shown", "2 rows × 1 size = 2 variants" in count, text=count)
     n_variants = len(j.get(f"/api/projects/{pid}/variants")["variants"])
+    page.select_option("#brief-direction", "text-left")  # creative direction for the run
     page.click("#btn-generate")
     page.wait_for_selector("#view-review:not(.hidden)", timeout=240000)
     variants = j.wait_jobs(pid)
     rows = {v["brief"]["row"]["id"]: v for v in variants if v["brief"].get("row")}
+    plans = {k: j.get(f"/api/projects/{pid}/variants/{v['id']}")["plan"] for k, v in rows.items()}
+    j.step("creative direction applied to the campaign",
+           all(v["brief"].get("direction") == {"text_side": "left"} for v in rows.values())
+           and all(p["planner_meta"].get("traits", {}).get("text_side") == "left"
+                   for p in plans.values()),
+           traits=[p["planner_meta"].get("traits") for p in plans.values()])
     doc = j.get(f"/api/projects/{pid}")["document"]
     cta_id = next(e["id"] for e in doc["elements"] if e["name"] == "CTA")
     j.step("campaign rows generated in the chosen size",

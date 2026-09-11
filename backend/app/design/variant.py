@@ -56,6 +56,8 @@ class VariantBrief:
     channel_preset: str | None = None
     # campaign row this variant belongs to ({"id", "label"}), None for a plain run
     row: dict | None = None
+    # creative direction (see grammar.parse_direction), None to let the planner choose
+    direction: dict | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -67,6 +69,7 @@ class VariantBrief:
             "hidden_elements": list(self.hidden_elements),
             "channel_preset": self.channel_preset,
             "row": dict(self.row) if self.row else None,
+            "direction": dict(self.direction) if self.direction else None,
         }
 
 
@@ -142,7 +145,8 @@ def generate_variant(
     plan_meta: dict = {}
     if planner_name == "constraints":
         plan_result = plan_layout(
-            doc, elements, target, registry=reg, families=[family] if family else None
+            doc, elements, target, registry=reg, families=[family] if family else None,
+            direction=brief.direction,
         )
         layout = plan_result.layout
         layout_debug = {"profile_name": plan_result.family, "fallback_reason": ""}
@@ -150,6 +154,7 @@ def generate_variant(
             **plan_result.to_dict(),
             "joint_family": family is not None,
             "from_examples": family is not None and family.name.startswith("learned_"),
+            "direction": dict(brief.direction) if brief.direction else None,
         }
     else:
         layout_engine = LayoutEngine()

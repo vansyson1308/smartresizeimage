@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from PIL import Image
 
 
@@ -70,3 +72,7 @@ class Config:
     # Design pipeline planner: "constraints" (families + document constraints) or
     # "zones" (legacy template/zone engine through the adapter).
     DESIGN_PLANNER = "constraints"
+    # Layout grammar: composed families join the hand-written ones as planner candidates.
+    DESIGN_GRAMMAR = os.environ.get("AUTOBANNER_LAYOUT_GRAMMAR", "1").strip().lower() not in (
+        "0", "false", "no", "off"
+    )

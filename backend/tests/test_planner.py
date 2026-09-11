@@ -222,8 +222,8 @@ def test_choose_families_picks_one_family_per_orientation(tmp_path) -> None:
     targets = [(1200, 628), (1500, 500), (1080, 1080), (1080, 1920), (1080, 1350)]
     chosen = choose_families(doc, elements, targets)
     assert set(chosen) == {"landscape", "square", "portrait"}
-    assert chosen["landscape"].name.startswith("landscape")
-    assert chosen["portrait"].name.startswith("portrait")
+    assert "landscape" in chosen["landscape"].name
+    assert "portrait" in chosen["portrait"].name
     # every target of a class plans with the chosen family
     for t in targets:
         fam = chosen[aspect_class(t[0] / t[1])]

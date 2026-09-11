@@ -541,9 +541,9 @@
   $("#btn-generate").addEventListener("click", async () => {
     const overrides = {};
     $$("#copy-overrides input[data-override]").forEach((i) => { if (i.value.trim()) overrides[i.dataset.override] = i.value; });
-    const spec = { preset_ids: [...state.selectedPresets], targets: state.customTargets, text_overrides: overrides, locale: $("#brief-locale").value.trim() || null };
+    const spec = { preset_ids: [...state.selectedPresets], targets: state.customTargets, text_overrides: overrides, locale: $("#brief-locale").value.trim() || null, direction: $("#brief-direction").value || null };
     if (!spec.preset_ids.length && !spec.targets.length) { toast("Pick at least one size.", true); return; }
-    if (state.campaignRows.length) spec.rows = state.campaignRows.map((r) => ({ id: r.id, label: r.label, text_overrides: r.text_overrides, locale: r.locale }));
+    if (state.campaignRows.length) spec.rows = state.campaignRows.map((r) => ({ id: r.id, label: r.label, text_overrides: r.text_overrides, locale: r.locale, direction: r.direction || null }));
     try {
       const res = await api(`/api/projects/${pid()}/variants`, json(spec));
       state.project = res;
@@ -568,13 +568,15 @@
       updateCampaignCount();
       return;
     }
-    const head = `<tr><th>Row</th>${texts.map((e) => `<th>${esc(e.name)} <span class="muted">(${esc(e.role)})</span></th>`).join("")}<th>Locale</th><th></th></tr>`;
-    const body = state.campaignRows.map((r, i) => `<tr><td><input data-row="${i}" data-field="label" value="${esc(r.label)}"></td>${texts.map((e) => `<td><input data-row="${i}" data-el="${esc(e.id)}" value="${esc(r.text_overrides[e.id] || "")}" placeholder="${esc(e.text.runs.map((x) => x.text).join(""))}"></td>`).join("")}<td><input class="narrow" data-row="${i}" data-field="locale" value="${esc(r.locale || "")}" placeholder="en"></td><td><button class="small" data-rmrow="${i}" type="button">remove</button></td></tr>`).join("");
+    const dirText = (d) => !d ? "" : typeof d === "string" ? d : Object.entries(d).filter(([k]) => k !== "mood").map(([k, v]) => k === "family" ? `family:${v}` : k === "emphasis" ? v : k === "text_side" ? `text-${v}` : k === "text_position" ? (v === "top" ? "text-top" : "subject-top") : k === "text_align" ? v : v).join(" ");
+    const head = `<tr><th>Row</th>${texts.map((e) => `<th>${esc(e.name)} <span class="muted">(${esc(e.role)})</span></th>`).join("")}<th>Locale</th><th>Direction</th><th></th></tr>`;
+    const body = state.campaignRows.map((r, i) => `<tr><td><input data-row="${i}" data-field="label" value="${esc(r.label)}"></td>${texts.map((e) => `<td><input data-row="${i}" data-el="${esc(e.id)}" value="${esc(r.text_overrides[e.id] || "")}" placeholder="${esc(e.text.runs.map((x) => x.text).join(""))}"></td>`).join("")}<td><input class="narrow" data-row="${i}" data-field="locale" value="${esc(r.locale || "")}" placeholder="en"></td><td><input data-row="${i}" data-field="direction" value="${esc(dirText(r.direction))}" placeholder="copy · text-left · center"></td><td><button class="small" data-rmrow="${i}" type="button">remove</button></td></tr>`).join("");
     wrap.innerHTML = `<div class="table-wrap"><table class="campaign">${head}${body}</table></div>`;
     wrap.querySelectorAll("input").forEach((inp) => inp.addEventListener("input", () => {
       const r = state.campaignRows[Number(inp.dataset.row)]; if (!r) return;
       if (inp.dataset.el) { if (inp.value.trim()) r.text_overrides[inp.dataset.el] = inp.value; else delete r.text_overrides[inp.dataset.el]; }
       else if (inp.dataset.field === "locale") r.locale = inp.value.trim() || null;
+      else if (inp.dataset.field === "direction") r.direction = inp.value.trim() || null;
       else r.label = inp.value;
     }));
     wrap.querySelectorAll("[data-rmrow]").forEach((b) => b.addEventListener("click", () => { state.campaignRows.splice(Number(b.dataset.rmrow), 1); renderCampaign(); }));

@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from ..config import Config
 from ..enums import ElementRole
 from ..models import BoundingBox, DesignElement, LayoutResult
 from .document import Constraint, DesignDocument, Element
@@ -61,6 +62,7 @@ class Family:
     logo: Region
     text_align: str = "left"
     subject_first: bool = False  # reading order: subject before text (stacked families)
+    traits: dict = field(default_factory=dict)  # grammar traits (arrangement, share, ...)
 
 
 def aspect_class(aspect: float) -> str:
@@ -71,7 +73,18 @@ def aspect_class(aspect: float) -> str:
     return "square"
 
 
-def families_for(aspect: float) -> list[Family]:
+def families_for(aspect: float, *, grammar: bool | None = None) -> list[Family]:
+    """Planner candidates for ``aspect``: hand-written families plus the grammar's."""
+    base = _handwritten_families(aspect)
+    use_grammar = Config.DESIGN_GRAMMAR if grammar is None else grammar
+    if not use_grammar:
+        return base
+    from .grammar import grammar_families
+
+    return base + grammar_families(aspect)
+
+
+def _handwritten_families(aspect: float) -> list[Family]:
     if aspect >= 1.25:  # landscape
         return [
             Family(
@@ -148,6 +161,8 @@ class Plan:
     conflicts: list[str] = field(default_factory=list)
     decisions: list[str] = field(default_factory=list)
     text_px: dict[str, int] = field(default_factory=dict)
+    candidates: int = 0  # how many families competed
+    traits: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -156,6 +171,8 @@ class Plan:
             "conflicts": list(self.conflicts),
             "decisions": list(self.decisions),
             "text_px": dict(self.text_px),
+            "candidates": self.candidates,
+            "traits": dict(self.traits),
         }
 
 
@@ -166,12 +183,19 @@ def plan_layout(
     *,
     registry: FontRegistry | None = None,
     families: list[Family] | None = None,
+    direction: dict | None = None,
 ) -> Plan:
-    """Return the best-scoring plan across layout families for ``target``."""
+    """Return the best-scoring plan across layout families for ``target``.
+
+    ``direction`` (a creative direction, see ``grammar.parse_direction``) narrows the
+    candidates; what it could not satisfy is recorded in the plan's decisions.
+    """
+    from .grammar import apply_direction
+
     reg = registry or default_registry()
     tw, th = target
     aspect = tw / max(1, th)
-    candidates = families or families_for(aspect)
+    candidates, notes = apply_direction(families or families_for(aspect), direction)
     best: Plan | None = None
     for fam in candidates:
         plan = _plan_family(doc, elements, target, fam, reg)
@@ -179,6 +203,8 @@ def plan_layout(
         if best is None or plan.score > best.score:
             best = plan
     assert best is not None
+    best.decisions.extend(notes)
+    best.candidates = len(candidates)
     return best
 
 
@@ -190,6 +216,7 @@ def choose_families(
     registry: FontRegistry | None = None,
     learned: dict[str, Family] | None = None,
     learned_bonus: float = 5.0,
+    direction: dict | None = None,
 ) -> dict[str, Family]:
     """Joint choice: one layout family per aspect class for a whole size set.
 
@@ -201,6 +228,8 @@ def choose_families(
     hand-written ones and receive ``learned_bonus`` per target, so a designer's
     demonstrated composition wins unless it scores clearly worse.
     """
+    from .grammar import apply_direction
+
     reg = registry or default_registry()
     by_class: dict[str, list[tuple[int, int]]] = {}
     for t in targets:
@@ -210,6 +239,7 @@ def choose_families(
         candidates = list(families_for(sizes[0][0] / max(1, sizes[0][1])))
         if learned and cls in learned:
             candidates.append(learned[cls])
+        candidates, _notes = apply_direction(candidates, direction)
         best_fam, best_total = None, float("-inf")
         for fam in candidates:
             total = 0.0
@@ -357,7 +387,9 @@ def _plan_family(
     _apply_constraint_adjustments(doc, layout, target, conflicts, decisions)
 
     score = _score(doc, layout, target, by_id, text_px, conflicts, fam)
-    return Plan(fam.name, layout, score, conflicts, decisions, text_px)
+    from .grammar import family_traits
+
+    return Plan(fam.name, layout, score, conflicts, decisions, text_px, traits=family_traits(fam))
 
 
 def _plan_text_stack(

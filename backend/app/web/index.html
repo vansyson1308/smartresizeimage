@@ -231,13 +231,24 @@
         <p class="small muted">Leave a field empty to keep the approved master copy. Verbatim (price/legal) fields are shown read-only.</p>
         <div id="copy-overrides"></div>
         <label>Locale (uses each element's approved translation when one exists; recorded with the variants)</label><input id="brief-locale" type="text" placeholder="en, vi, de-DE…">
+        <label>Creative direction (narrows the layout families the planner may use; what cannot be met on a size is reported in the plan)</label>
+        <select id="brief-direction">
+          <option value="">Let the planner choose</option>
+          <option value="copy">Copy first (more room for text)</option>
+          <option value="subject">Subject first (bigger hero)</option>
+          <option value="text-left">Text on the left</option>
+          <option value="text-right">Text on the right</option>
+          <option value="text-top">Text on top (stacked)</option>
+          <option value="subject-top">Subject on top (stacked)</option>
+          <option value="center">Centered copy</option>
+        </select>
         <div class="row" style="margin-top:14px"><button id="btn-generate" class="primary" type="button" data-needs="edit">Generate variants</button><button id="btn-cancel" type="button" class="hidden">Cancel</button></div>
         <div id="job-progress" class="hidden" style="margin-top:10px"><div class="progress"><div id="job-bar"></div></div><div id="job-text" class="small muted" style="margin-top:6px"></div></div>
       </div>
     </div>
     <div class="card" style="margin-top:16px">
       <h2>Campaign table (one row per message)</h2>
-      <p class="small muted">Paste a table (CSV or TSV) whose header names the text elements of this design (by name, id or role) plus optional <span class="kbd">row</span>, <span class="kbd">label</span> and <span class="kbd">locale</span> columns, or add rows by hand. Every row is generated in every selected size; empty cells keep the master copy; verbatim copy is never overridden. The copy fields above stay the defaults for every row.</p>
+      <p class="small muted">Paste a table (CSV or TSV) whose header names the text elements of this design (by name, id or role) plus optional <span class="kbd">row</span>, <span class="kbd">label</span>, <span class="kbd">locale</span> and <span class="kbd">direction</span> (copy, subject, text-left, text-right, text-top, subject-top, center) columns, or add rows by hand. Every row is generated in every selected size; empty cells keep the master copy; verbatim copy is never overridden. The copy fields above stay the defaults for every row.</p>
       <textarea id="campaign-csv" placeholder="label,Headline,CTA,locale&#10;Week 1,SUMMER SALE,SHOP NOW,en&#10;Tuần 1,GIẢM GIÁ HÈ,MUA NGAY,vi"></textarea>
       <div class="row" style="margin-top:6px">
         <button id="campaign-parse" type="button" data-needs="edit">Read table</button>

@@ -48,6 +48,7 @@ from ..design.document import (
 )
 from ..design.examples import example_from_plan, infer_families
 from ..design.fonts import FontRegistry
+from ..design.grammar import direction_key, parse_direction
 from ..design.planner import Family, Region, aspect_class, choose_families
 from ..design.project import Project, VariantRecord, is_safe_id, safe_relative_path
 from ..design.render import render_master
@@ -468,7 +469,8 @@ class ProjectService:
 
         def runner(job: Job, item: JobItem, progress) -> dict:
             brief = briefs[item.item_id]
-            fam = families.get(aspect_class(brief.width / max(1, brief.height))) or None
+            fams = families.get(direction_key(brief.direction)) or {}
+            fam = fams.get(aspect_class(brief.width / max(1, brief.height))) or None
             return self._run_variant(
                 project_id, item.item_id, brief, job, progress, family=fam,
                 reference=references.get(item.item_id),
@@ -873,6 +875,7 @@ class ProjectService:
                 raise ServiceError(f"unknown element '{eid}' in text_overrides", 400)
         hidden = list(spec.get("hidden_elements") or [])
         locale = spec.get("locale")
+        direction = _normalize_direction(spec.get("direction"), "direction")
 
         # Brand rules (H5 follow-up): rules confirmed in the owner's other projects of the
         # same brand are proposed into this document before planning (reviewable, soft).
@@ -884,7 +887,12 @@ class ProjectService:
         # Joint planning (H2): one layout family per orientation for the whole job.
         # Approved variants of this project act as examples (H1): their inferred
         # families compete with the hand-written ones for every orientation.
-        families: dict[str, Family] = {}
+        # One joint family choice per distinct creative direction (rows may differ).
+        directions: dict[str, dict | None] = {direction_key(direction): direction}
+        for row in rows:
+            row_dir = row["direction"] if row.get("direction") is not None else direction
+            directions.setdefault(direction_key(row_dir), row_dir)
+        families: dict[str, dict[str, Family]] = {}
         learned: dict[str, Family] = {}
         if Config.DESIGN_PLANNER == "constraints":
             try:
@@ -903,11 +911,12 @@ class ProjectService:
                 engine_elements = [
                     e for e in engine_elements if e.id not in set(hidden)
                 ]
-                families = choose_families(
-                    project.document, engine_elements,
-                    [(t["width"], t["height"]) for t in targets], registry=self.registry,
-                    learned=learned or None,
-                )
+                for dkey, dirn in directions.items():
+                    families[dkey] = choose_families(
+                        project.document, engine_elements,
+                        [(t["width"], t["height"]) for t in targets], registry=self.registry,
+                        learned=learned or None, direction=dirn,
+                    )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("joint family choice failed; planning per variant: %s", exc)
                 families = {}
@@ -921,11 +930,14 @@ class ProjectService:
                 row_overrides = dict(text_overrides)
                 row_locale, row_hidden = locale, list(hidden)
                 row_ref = None
+                row_direction = direction
                 if row is not None:
                     row_overrides.update(row["text_overrides"])
                     row_locale = row["locale"] or locale
                     row_hidden = sorted(set(hidden) | set(row["hidden_elements"]))
                     row_ref = {"id": row["id"], "label": row["label"]}
+                    if row.get("direction") is not None:
+                        row_direction = row["direction"]
                 for t in targets:
                     brief = VariantBrief(
                         width=t["width"],
@@ -936,6 +948,7 @@ class ProjectService:
                         hidden_elements=row_hidden,
                         channel_preset=t.get("preset_id"),
                         row=row_ref,
+                        direction=row_direction,
                     )
                     rec = project.new_variant(t["name"], t["width"], t["height"], brief.to_dict())
                     label = f"{row['label']} · {t['name']}" if row is not None else t["name"]
@@ -1130,6 +1143,8 @@ class ProjectService:
             for key in ("text_overrides", "hidden_elements", "locale"):
                 if key in spec:
                     brief_dict[key] = spec[key]
+            if "direction" in spec:
+                brief_dict["direction"] = _normalize_direction(spec["direction"], "direction")
         # Local edits (H3): keep the previous layout of this variant unless asked to re-plan.
         keep_layout = bool((spec or {}).get("keep_layout", True))
         reference: dict | None = None
@@ -1144,6 +1159,7 @@ class ProjectService:
             hidden_elements=list(brief_dict.get("hidden_elements") or []),
             channel_preset=brief_dict.get("channel_preset"),
             row=brief_dict.get("row") or None,
+            direction=brief_dict.get("direction") or None,
         )
         with self._lock(project_id):
             rec.brief = brief.to_dict()
@@ -1873,24 +1889,43 @@ def _brief_from_record(rec: VariantRecord) -> VariantBrief:
         hidden_elements=list(d.get("hidden_elements") or []),
         channel_preset=d.get("channel_preset"),
         row=d.get("row") or None,
+        direction=d.get("direction") or None,
     )
 
 
-def _families_from_meta(meta: dict) -> dict[str, Family]:
-    out: dict[str, Family] = {}
-    for cls, d in (meta.get("families") or {}).items():
-        try:
-            out[cls] = Family(
-                name=str(d["name"]),
-                text=Region(**d["text"]),
-                subject=Region(**d["subject"]),
-                logo=Region(**d["logo"]),
-                text_align=str(d.get("text_align", "left")),
-                subject_first=bool(d.get("subject_first", False)),
-            )
-        except (KeyError, TypeError, ValueError) as exc:
-            logger.warning("ignoring stored family for %s: %s", cls, exc)
+def _family_from_dict(d: dict) -> Family:
+    return Family(
+        name=str(d["name"]),
+        text=Region(**d["text"]),
+        subject=Region(**d["subject"]),
+        logo=Region(**d["logo"]),
+        text_align=str(d.get("text_align", "left")),
+        subject_first=bool(d.get("subject_first", False)),
+        traits=dict(d.get("traits") or {}),
+    )
+
+
+def _families_from_meta(meta: dict) -> dict[str, dict[str, Family]]:
+    """Stored families keyed by direction key, then aspect class (legacy: flat by class)."""
+    raw = meta.get("families") or {}
+    nested = raw if all(
+        isinstance(v, dict) and "name" not in v for v in raw.values()
+    ) else {"": raw}
+    out: dict[str, dict[str, Family]] = {}
+    for dkey, fams in nested.items():
+        for cls, d in (fams or {}).items():
+            try:
+                out.setdefault(dkey, {})[cls] = _family_from_dict(d)
+            except (KeyError, TypeError, ValueError) as exc:
+                logger.warning("ignoring stored family for %s: %s", cls, exc)
     return out
+
+
+def _normalize_direction(raw: object, where: str) -> dict | None:
+    try:
+        return parse_direction(raw)
+    except ValueError as exc:
+        raise ServiceError(f"{where}: {exc}", 400) from exc
 
 
 def _normalize_rows(spec: dict, doc: DesignDocument) -> list[dict]:
@@ -1932,6 +1967,7 @@ def _normalize_rows(spec: dict, doc: DesignDocument) -> list[dict]:
         rows.append({
             "id": rid, "label": label, "text_overrides": clean,
             "hidden_elements": hidden, "locale": locale,
+            "direction": _normalize_direction(r.get("direction"), f"row {rid!r} direction"),
         })
     return rows
 
@@ -1939,6 +1975,7 @@ def _normalize_rows(spec: dict, doc: DesignDocument) -> list[dict]:
 _ROW_ID_COLUMNS = ("row", "id", "row_id")
 _LABEL_COLUMNS = ("label", "name", "title", "message")
 _LOCALE_COLUMNS = ("locale", "language", "lang")
+_DIRECTION_COLUMNS = ("direction", "creative", "style")
 
 
 def parse_campaign_table(doc: DesignDocument, text: str) -> dict:
@@ -1982,6 +2019,8 @@ def parse_campaign_table(doc: DesignDocument, text: str) -> dict:
             columns.append(("label", None))
         elif key in _LOCALE_COLUMNS:
             columns.append(("locale", None))
+        elif key in _DIRECTION_COLUMNS:
+            columns.append(("direction", None))
         elif key in by_key:
             e = by_key[key]
             if e.text is not None and e.text.protected:
@@ -1997,8 +2036,10 @@ def parse_campaign_table(doc: DesignDocument, text: str) -> dict:
         raise ServiceError(f"too many rows (max {MAX_CAMPAIGN_ROWS})", 400)
     rows: list[dict] = []
     seen: set[str] = set()
+    bad_directions: list[str] = []
     for idx, cells in enumerate(raw_rows[1:], 1):
-        row = {"id": f"row{idx}", "label": "", "text_overrides": {}, "locale": None}
+        row = {"id": f"row{idx}", "label": "", "text_overrides": {}, "locale": None,
+               "direction": None}
         for (kind, eid), cell in zip(columns, cells, strict=False):
             cell = cell.strip()
             if not cell:
@@ -2009,6 +2050,11 @@ def parse_campaign_table(doc: DesignDocument, text: str) -> dict:
                 row["label"] = cell[:120]
             elif kind == "locale":
                 row["locale"] = cell[:16]
+            elif kind == "direction":
+                try:
+                    row["direction"] = parse_direction(cell)
+                except ValueError as exc:
+                    bad_directions.append(f"row {idx}: {exc}")
             elif kind == "text":
                 row["text_overrides"][eid] = cell
         if row["id"] in seen:
@@ -2031,6 +2077,10 @@ def parse_campaign_table(doc: DesignDocument, text: str) -> dict:
                                                         if k == "protected"})
     if not used:
         notes.append("No column matched a text element; every row would repeat the master copy.")
+    if bad_directions:
+        notes.append("Directions not understood (left empty): " + "; ".join(bad_directions[:5])
+                     + ". Use tokens such as copy, subject, text-left, text-right, text-top, "
+                       "subject-top, center, stack, side.")
     return {
         "rows": rows,
         "columns": [{"header": h, "kind": k, "element_id": eid}

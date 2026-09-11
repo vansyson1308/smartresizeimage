@@ -57,6 +57,7 @@ class AblationConfig:
     ocr: bool = True
     joint: bool = False  # choose one family per orientation for the whole size set
     learned: bool = False  # infer families from one "approved" example per orientation (H1)
+    grammar: bool = True  # composed layout families join the hand-written ones (phase C)
     notes: str = ""
 
     def to_dict(self) -> dict:
@@ -68,6 +69,7 @@ class AblationConfig:
             "ocr": self.ocr,
             "joint": self.joint,
             "learned": self.learned,
+            "grammar": self.grammar,
             "notes": self.notes,
         }
 
@@ -97,6 +99,19 @@ CONFIGS: dict[str, AblationConfig] = {
         "designer_ref",
         joint=True,
         notes="reference: the designer's (second-best) family applied directly to all sizes",
+    ),
+    "no_grammar": AblationConfig(
+        "no_grammar",
+        joint=True,
+        grammar=False,
+        notes="joint planning over the three hand-written families per orientation only",
+    ),
+    "grammar": AblationConfig(
+        "grammar",
+        joint=True,
+        grammar=True,
+        notes="joint planning over hand-written + grammar-composed families "
+        "(12 landscape / 24 portrait / 36 square candidates)",
     ),
 }
 
@@ -162,9 +177,13 @@ def run_config(
     sizes: list[tuple[int, int]],
     holdout_from: int,
 ) -> list[RunRecord]:
-    prev = (Config.TEXT_SAFE_PLATE_ENABLED, Config.LAYOUT_PROFILE_SCORING_ENABLED)
+    prev = (
+        Config.TEXT_SAFE_PLATE_ENABLED, Config.LAYOUT_PROFILE_SCORING_ENABLED,
+        Config.DESIGN_GRAMMAR,
+    )
     Config.TEXT_SAFE_PLATE_ENABLED = cfg.plates
     Config.LAYOUT_PROFILE_SCORING_ENABLED = True
+    Config.DESIGN_GRAMMAR = cfg.grammar
     records: list[RunRecord] = []
     try:
         for case_dir in cases:
@@ -268,7 +287,10 @@ def run_config(
                     rec.family_issues = sum(1 for c in checks if c.status.value != "pass")
                 records.extend(case_records)
     finally:
-        Config.TEXT_SAFE_PLATE_ENABLED, Config.LAYOUT_PROFILE_SCORING_ENABLED = prev
+        (
+            Config.TEXT_SAFE_PLATE_ENABLED, Config.LAYOUT_PROFILE_SCORING_ENABLED,
+            Config.DESIGN_GRAMMAR,
+        ) = prev
     return records
 
 
@@ -292,7 +314,7 @@ def _designer_families(doc, elements, sizes) -> dict[str, Family]:
     reg = default_registry()
     chosen: dict[str, Family] = {}
     for cls, ts in _sizes_by_class(sizes).items():
-        candidates = families_for(ts[0][0] / max(1, ts[0][1]))
+        candidates = families_for(ts[0][0] / max(1, ts[0][1]), grammar=False)  # H1 protocol
         scored = sorted(
             candidates,
             key=lambda fam: -sum(_plan_family(doc, elements, t, fam, reg).score for t in ts),
@@ -410,7 +432,8 @@ def build_report(results: dict[str, list[RunRecord]], run_meta: dict) -> str:
         cfg = CONFIGS[name]
         lines.append(
             f"- `{name}`: planner={cfg.planner}, repair={cfg.repair}, plates={cfg.plates}, "
-            f"ocr={cfg.ocr}, joint={cfg.joint}, learned={cfg.learned} — {cfg.notes}"
+            f"ocr={cfg.ocr}, joint={cfg.joint}, learned={cfg.learned}, "
+            f"grammar={cfg.grammar} — {cfg.notes}"
         )
     lines += [
         "",
