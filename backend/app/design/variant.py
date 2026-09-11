@@ -590,6 +590,7 @@ def _verify(
         from .brand import brand_profile_checks
 
         extra.extend(brand_profile_checks(doc, layout, typography, profile))
+    extra.extend(subject_integrity_checks(doc, elements, layout, image))
     if extra:
         checks = report.checks + extra
         report = QualityReport(
@@ -600,6 +601,127 @@ def _verify(
             summary=summarize(checks),
         )
     return report
+
+
+SUBJECT_INTEGRITY_ROLES = {"hero_image", "photo", "illustration", "icon", "logo"}
+DISTORTION_TOLERANCE = 0.02  # |sx - sy| / max(sx, sy)
+CORRELATION_PASS = 0.90
+CORRELATION_MAJOR = 0.60
+
+
+def subject_integrity_checks(
+    doc: DesignDocument,
+    elements: list[DesignElement],
+    layout: list[LayoutResult],
+    image: Image.Image,
+) -> list[CheckResult]:
+    """Mascot/subject/logo invariants, judged on the rendered pixels.
+
+    Two facts a customer would notice before any score: the subject must keep its
+    proportions (uniform scale, no stretching) and the pixels on the canvas must be
+    the master asset's pixels (not occluded, recoloured or cropped away). The second
+    is an *independent oracle*: the rendered region is correlated with the master
+    asset scaled to the planned box, so a mistake anywhere in the pipeline shows up
+    here even when every planning step believed it was right.
+    """
+    out: list[CheckResult] = []
+    by_id = {e.id: e for e in elements}
+    canvas_w, canvas_h = image.size
+    for r in layout:
+        e = by_id.get(r.element_id)
+        de = next((d for d in doc.elements if d.id == r.element_id), None)
+        if e is None or de is None or not r.visible or e.image is None:
+            continue
+        if de.role not in SUBJECT_INTEGRITY_ROLES or de.kind != "image":
+            continue
+        src_w, src_h = max(1.0, float(de.geometry.width)), max(1.0, float(de.geometry.height))
+        box = r.new_bbox
+        sx, sy = box.width / src_w, box.height / src_h
+        distortion = abs(sx - sy) / max(sx, sy, 1e-6)
+        if distortion > DISTORTION_TOLERANCE:
+            out.append(CheckResult(
+                "subject_integrity", CheckStatus.FAIL, Severity.CRITICAL,
+                f"{de.name} is stretched (scale x{sx:.2f} by y{sy:.2f})",
+                subject_id=de.id, details={"scale_x": round(sx, 3), "scale_y": round(sy, 3)},
+            ))
+            continue
+        # pixel oracle on the part of the box that lies on the canvas
+        x1, y1 = max(0, box.x), max(0, box.y)
+        x2, y2 = min(canvas_w, box.x2), min(canvas_h, box.y2)
+        if x2 - x1 < 4 or y2 - y1 < 4 or box.width < 4 or box.height < 4:
+            out.append(CheckResult(
+                "subject_integrity", CheckStatus.NOT_CHECKED, Severity.MAJOR,
+                f"{de.name}: too little of it lies on the canvas to compare",
+                subject_id=de.id,
+            ))
+            continue
+        try:
+            expected = e.image.convert("RGBA").resize((box.width, box.height), Image.LANCZOS)
+            expected = expected.crop((x1 - box.x, y1 - box.y, x2 - box.x, y2 - box.y))
+            actual = image.convert("RGBA").crop((x1, y1, x2, y2))
+            corr = _masked_correlation(expected, actual)
+        except Exception as exc:  # noqa: BLE001 - never let the oracle crash a render
+            out.append(CheckResult(
+                "subject_integrity", CheckStatus.NOT_CHECKED, Severity.MAJOR,
+                f"{de.name}: pixel comparison failed ({exc})", subject_id=de.id,
+            ))
+            continue
+        on_canvas = (x2 - x1) * (y2 - y1) / max(1, box.width * box.height)
+        details = {"correlation": round(corr, 3), "on_canvas": round(on_canvas, 3),
+                   "scale": round(sx, 3)}
+        if corr is None:
+            out.append(CheckResult(
+                "subject_integrity", CheckStatus.NOT_CHECKED, Severity.MAJOR,
+                f"{de.name}: master asset has no opaque pixels to compare", subject_id=de.id,
+            ))
+        elif corr >= CORRELATION_PASS:
+            out.append(CheckResult(
+                "subject_integrity", CheckStatus.PASS, Severity.CRITICAL,
+                f"{de.name} keeps its proportions and pixels (r={corr:.2f})",
+                subject_id=de.id, details=details,
+            ))
+        else:
+            severity = Severity.MAJOR if corr < CORRELATION_MAJOR else Severity.MINOR
+            out.append(CheckResult(
+                "subject_integrity", CheckStatus.NEEDS_REVIEW, severity,
+                f"{de.name}: rendered pixels differ from the master asset (r={corr:.2f}); "
+                "it may be occluded, recoloured or cropped",
+                subject_id=de.id, details=details,
+            ))
+    return out
+
+
+def _masked_correlation(expected: Image.Image, actual: Image.Image) -> float | None:
+    """Similarity (0..1) of the rendered pixels to the asset where the asset is solid.
+
+    Two views are combined: the mean absolute colour difference (catches occlusion,
+    recolouring and cropping of flat and textured assets alike) and, for textured
+    assets, the Pearson correlation of grayscale structure. Only solid pixels count,
+    so anti-aliased edges of a flat shape cannot dominate the measure.
+    """
+    import numpy as np
+
+    exp = np.asarray(expected, dtype=np.float32)
+    act = np.asarray(actual, dtype=np.float32)
+    if exp.shape != act.shape:
+        return None
+    mask = exp[..., 3] > 200
+    if int(mask.sum()) < 16:
+        mask = exp[..., 3] > 32
+        if int(mask.sum()) < 16:
+            return None
+    exp_rgb, act_rgb = exp[..., :3][mask], act[..., :3][mask]
+    mad = float(np.abs(exp_rgb - act_rgb).mean())
+    similarity = max(0.0, 1.0 - mad / 96.0)  # 96 levels of average difference -> 0
+    exp_gray = exp_rgb @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
+    if float(exp_gray.std()) < 8.0:
+        return similarity  # a flat asset has no structure to correlate
+    act_gray = act_rgb @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
+    exp_gray = exp_gray - exp_gray.mean()
+    act_gray = act_gray - act_gray.mean()
+    denom = float(np.sqrt((exp_gray ** 2).sum() * (act_gray ** 2).sum()))
+    pearson = float((exp_gray * act_gray).sum() / denom) if denom > 1e-6 else 0.0
+    return round(0.5 * max(0.0, pearson) + 0.5 * similarity, 4)
 
 
 def _provenance_checks(doc: DesignDocument, layout: list[LayoutResult]) -> list[CheckResult]:
