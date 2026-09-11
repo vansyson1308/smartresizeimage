@@ -130,3 +130,39 @@ def test_unfinished_variants_without_a_job_record_are_failed(tmp_path: Path, mon
         assert {project.variants[v].status for v in ids[1:]} == {"failed"}
     finally:
         service.shutdown()
+
+
+def test_recovery_saves_the_project_under_its_lock(tmp_path: Path, monkeypatch) -> None:
+    """The recovery pass shares the project with the resumed worker thread.
+
+    Every save during recovery must hold the project lock, otherwise it races
+    the worker's save of the same variant index.
+    """
+    monkeypatch.delenv("AUTOBANNER_RESUME_JOBS", raising=False)
+    data, pid, ids, job_id = _crashed_state(tmp_path)
+    unlocked: list[str] = []
+    original_save = Project.save
+    original_recover = ProjectService._recover_interrupted
+
+    def recover(self: ProjectService) -> None:
+        def save(project: Project, *args, **kwargs):
+            lock = self._locks.get(project.id)
+            if lock is None or not lock._is_owned():  # noqa: SLF001
+                unlocked.append(project.id)
+            return original_save(project, *args, **kwargs)
+
+        monkeypatch.setattr(Project, "save", save)
+        try:
+            original_recover(self)
+        finally:
+            monkeypatch.setattr(Project, "save", original_save)
+
+    monkeypatch.setattr(ProjectService, "_recover_interrupted", recover)
+    service = ProjectService(data, max_workers=1)
+    try:
+        assert unlocked == []
+        new = service.jobs.get(service.jobs.get(job_id).resumed_by)
+        done = service.jobs.wait(new.id, timeout=300)
+        assert done.status == "done", done.to_dict()
+    finally:
+        service.shutdown()

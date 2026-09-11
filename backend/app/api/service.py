@@ -29,6 +29,7 @@ from ..config import Config
 from ..constants import SUPPORTED_EXTENSIONS
 from ..design.adapter import document_from_elements, elements_from_document
 from ..design.assets import AssetStore
+from ..design.atomic import atomic_write_json as _atomic_write_json
 from ..design.brand import (
     collect_brand_rules,
     normalize_profile,
@@ -177,9 +178,7 @@ class Entitlements:
         with self._lock:
             self._assigned[owner] = name
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps({"workspaces": self._assigned}, indent=2), encoding="utf-8")
-            tmp.replace(self.path)
+            _atomic_write_json(self.path, {"workspaces": self._assigned})
         logger.info("workspace %s set to plan %s", owner, name)
         return name
 
@@ -223,9 +222,7 @@ class UsageMeter:
             data["totals"][metric] = int(data["totals"].get(metric, 0)) + amount
             data["owner"] = owner
             data["updated_at"] = _now()
-            tmp = self._path(owner).with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
-            tmp.replace(self._path(owner))
+            _atomic_write_json(self._path(owner), data, indent=1)
             return data
 
     def today(self, owner: str, metric: str) -> int:
@@ -405,23 +402,29 @@ class ProjectService:
                 by_job.setdefault(rec.job_id, []).append(rec)
             project_id = project.meta.get("id") or root.name
             self._cache[project_id] = project
-            for job_id, recs in by_job.items():
-                old = self.jobs.get(job_id) if job_id else None
-                resumable = old is not None and old.status == "interrupted" and not old.resumed_by
-                if resume and resumable:
-                    try:
-                        new = self._resume_job(project_id, project, old, recs)
-                        logger.warning(
-                            "job %s interrupted by restart: %d variant(s) continue in job %s",
-                            old.id, len(recs), new.id,
-                        )
-                        continue
-                    except Exception as exc:  # noqa: BLE001
-                        logger.error("cannot resume job %s: %s", old.id, exc)
-                for rec in recs:
-                    rec.status = "failed"
-                    rec.error = "interrupted by restart"
-            project.save()
+            # A resumed job starts rendering on a worker thread as soon as it is
+            # queued and saves the same project; the recovery pass therefore mutates
+            # and saves under the project lock like every other writer.
+            with self._lock(project_id):
+                for job_id, recs in by_job.items():
+                    old = self.jobs.get(job_id) if job_id else None
+                    resumable = (
+                        old is not None and old.status == "interrupted" and not old.resumed_by
+                    )
+                    if resume and resumable:
+                        try:
+                            new = self._resume_job(project_id, project, old, recs)
+                            logger.warning(
+                                "job %s interrupted by restart: %d variant(s) continue in job %s",
+                                old.id, len(recs), new.id,
+                            )
+                            continue
+                        except Exception as exc:  # noqa: BLE001
+                            logger.error("cannot resume job %s: %s", old.id, exc)
+                    for rec in recs:
+                        rec.status = "failed"
+                        rec.error = "interrupted by restart"
+                project.save()
 
     def _resume_job(self, project_id: str, project: Project, old: Job,
                     recs: list[VariantRecord]) -> Job:
@@ -1410,9 +1413,7 @@ class ProjectService:
         profile["updated_by"] = by
         path = self._brand_profile_path(owner, brand)
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(profile, indent=2, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(path)
+        _atomic_write_json(path, profile)
         self.events.record(owner or LOCAL_OWNER, "brand_profile_saved", brand=brand, by=by)
         return profile
 
@@ -1783,12 +1784,6 @@ class ProjectService:
 
 
 # ---- helpers -----------------------------------------------------------------------------
-
-
-def _atomic_write_json(path: Path, payload: Any) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
 
 
 def _normalize_hex(color: str) -> str:

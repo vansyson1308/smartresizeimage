@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..design.atomic import atomic_write_json
 from ..design.document import new_id, utc_now
 
 logger = logging.getLogger("autobanner.api.jobs")
@@ -168,10 +169,8 @@ class JobManager:
             return
         self._last_persist[job.id] = now
         path = self._persist_dir / f"{job.id}.json"
-        tmp = path.with_suffix(".json.tmp")
         try:
-            tmp.write_text(json.dumps(job.to_dict(), indent=1), encoding="utf-8")
-            tmp.replace(path)
+            atomic_write_json(path, job.to_dict(), indent=1)
         except Exception as exc:  # noqa: BLE001
             logger.warning("could not persist job %s: %s", job.id, exc)
 

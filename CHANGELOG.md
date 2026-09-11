@@ -60,6 +60,11 @@ All notable changes to this project will be documented in this file.
   Open mode is explicit and switches to local once a user exists.
 
 ### Fixed
+- Restart resume no longer races the resumed worker: the recovery pass mutates and saves
+  the project under its lock, and every store (projects, variant index, history, jobs,
+  auth, usage, plans, brand profiles) writes through a uniquely named temp file
+  (`design/atomic.py`), so two savers of one file never rename each other's temp away
+  (`test_atomic_writes.py`, `test_resume_jobs.py`).
 - Hard constraints are evaluated after every transformation, including kept reference plans
   and repairs; a violated or unevaluable hard rule blocks automatic acceptance and violating
   reference plans are re-planned (`test_hard_rules.py`).

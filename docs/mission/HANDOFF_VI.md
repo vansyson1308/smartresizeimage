@@ -57,7 +57,8 @@ Chi tiết vận hành: `docs/OPERATIONS.md`.
   cứng, palette/font thương hiệu, giữ nguyên chủ thể), sửa cục bộ, học từ biến thể đã duyệt và
   lịch sử từ chối, rule thương hiệu, bảng chiến dịch (12 × 6 = 72 đo được), làm mới tăng dần,
   export PNG/JPEG/WebP/PDF + manifest, lưu/mở lại project, auth cục bộ + workspace, gói dịch vụ,
-  chạy tiếp job sau restart, chế độ offline (browser journey chạy dưới chặn mạng).
+  chạy tiếp job sau restart (đã sửa race giữa bước khôi phục và worker khi cùng ghi index biến
+  thể: ghi qua file tạm duy nhất + khóa project), chế độ offline (browser journey chạy dưới chặn mạng).
 - **Tùy chọn bên ngoài**: phân loại vai trò bằng CLIP (cần torch, chưa chạy ở đây), OCR bằng
   tesseract (không có → `not_checked`, không bao giờ tính là pass), generative fill (adapter mock,
   không có provider).

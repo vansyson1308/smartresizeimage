@@ -25,6 +25,7 @@ from typing import Any
 from PIL import Image
 
 from .assets import AssetStore
+from .atomic import atomic_write_json as _atomic_write_json
 from .document import DesignDocument, new_id, utc_now
 from .serialize import document_from_dict, document_to_dict
 
@@ -415,9 +416,3 @@ class Project:
             "variant_count": len(self.variants),
             "fonts": [asdict(f) for f in self.document.fonts],
         }
-
-
-def _atomic_write_json(path: Path, payload: Any) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)

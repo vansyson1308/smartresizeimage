@@ -34,6 +34,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from ..design.atomic import atomic_write_json
+
 logger = logging.getLogger("autobanner.api.auth")
 
 ROLES = ("viewer", "editor", "approver", "admin")
@@ -114,9 +116,7 @@ class UserStore:
 
     # ---- persistence -------------------------------------------------------------------
     def _save(self) -> None:
-        tmp = self.path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
-        tmp.replace(self.path)
+        atomic_write_json(self.path, self._data, ensure_ascii=True)
         with contextlib.suppress(OSError):
             os.chmod(self.path, 0o600)
 

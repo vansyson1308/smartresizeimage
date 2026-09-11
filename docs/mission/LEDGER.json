@@ -82,7 +82,7 @@
       "status": "DONE_LOCAL",
       "done": [
         "campaign table: rows x formats in one job (12 x 6 = 72 measured: results/campaign_12x6_2026-09-11.md), CSV import, per-row checks, row-grouped review and export",
-        "restart resume of interrupted variant jobs (durable job records + stored briefs)",
+        "restart resume of interrupted variant jobs (durable job records + stored briefs); recovery saves under the project lock and every store writes through unique temp files (race found by the full suite on 2026-09-11, fixed with regression tests)",
         "brand profile per workspace: proposals into projects of the brand and palette/font checks on every variant",
         "plan entitlements per workspace (usage shows used/remaining, 402 beyond the plan, operator assignment)",
         "offline guard: browser journey runs with outbound network refused"
