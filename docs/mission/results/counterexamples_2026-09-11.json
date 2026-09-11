@@ -1,0 +1,27 @@
+{
+  "runs": 420,
+  "elapsed_s": 825.7,
+  "git_commit": "acfeebd3ef02c15076fc48c2b4ed95a751c2eab5",
+  "verdicts": {
+    "accepted": 355,
+    "needs_review": 23,
+    "failed": 42
+  },
+  "oracle_fired_runs": 20,
+  "counterexamples": 0,
+  "possible_false_failures": 0,
+  "by_oracle": {
+    "bounds": {
+      "fired": 15,
+      "accepted": 0
+    },
+    "order": {
+      "fired": 9,
+      "accepted": 0
+    },
+    "clear": {
+      "fired": 3,
+      "accepted": 0
+    }
+  }
+}

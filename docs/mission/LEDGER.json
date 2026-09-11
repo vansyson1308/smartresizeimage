@@ -92,7 +92,7 @@
       ]
     },
     "C_owned_intelligence": {
-      "status": "IN_PROGRESS",
+      "status": "DONE_LOCAL",
       "done": [
         "constraint planner + layout families",
         "H1 learning from approved examples",
@@ -104,10 +104,12 @@
         "creative directions per run/row (planner inputs, unmet directions reported)",
         "subject/mascot integrity check with an independent pixel oracle",
         "counterexample search tool (independent oracles under seeded perturbations)",
-        "incremental refresh: re-render only the variants a document change touched"
+        "incremental refresh: re-render only the variants a document change touched",
+        "repair moves that would break a hard order rule are reverted (found by the counterexample search)"
       ],
       "next": [
-        "grammar ablation reading in EXPERIMENTS.md (results/ablations_grammar_2026-09-11.md)"
+        "planner follow-up: re-plan when the subject is hidden (bounds firings in the counterexample sweep)",
+        "grammar families for extreme strips (728x90)"
       ]
     },
     "D_research": {
@@ -159,7 +161,8 @@
       "unit": "see STATE.md",
       "browser": "40 steps, 0 errors, offline"
     },
-    "campaign": "python backend/tools/run_campaign.py --rows 12 --formats 6"
+    "campaign": "python backend/tools/run_campaign.py --rows 12 --formats 6",
+    "counterexamples": "python backend/tools/find_counterexamples.py --cases 15 --ocr (0 counterexamples on 420 renders, 2026-09-11)"
   },
   "constraints": [
     "Do not infer permission to buy services, increase cloud spending, upload private designs to providers, contact customers, change live billing, merge protected branches, or publicly launch.",

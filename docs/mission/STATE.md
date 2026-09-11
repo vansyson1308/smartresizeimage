@@ -231,9 +231,13 @@ isolated → token lists projects → 900 px without horizontal scroll.
   documented.
 - **Incremental refresh**: after an edit, only variants whose shown elements, rules, fonts or
   canvas changed are re-rendered (layout kept); the rest are marked current with a reason.
-- **Counterexample search** (`tools/find_counterexamples.py`): independent oracles (rendered
-  mask overlap, bounds, hard rules on final boxes, subject correlation) re-judge renders
-  under seeded perturbations; result recorded below once run.
+- **Counterexample search** (`tools/find_counterexamples.py`,
+  `results/counterexamples_2026-09-11.md`): 420 renders under seeded perturbations with OCR
+  on; 0 accepted renders rejected by an independent oracle, 0 unexplained failures; the 20
+  oracle firings all had non-accepted verdicts. It surfaced that overlap repair could undo a
+  hard order rule the planner had honoured (fixed: such moves are reverted) and that hiding
+  the subject can leave boxes past the canvas on some sizes (reported by the contract;
+  planner follow-up).
 
 ## Release-criteria check (updated 2026-09-11)
 
