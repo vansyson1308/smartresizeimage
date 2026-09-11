@@ -211,7 +211,9 @@ isolated → token lists projects → 900 px without horizontal scroll.
 - **Extreme strips**: measuring 728×90 exposed a false positive of the subject-integrity
   check on tiny boxes (integer rounding), fixed with a rounding-aware tolerance; 728×90
   acceptance 3/15 → 12/15, 970×250 15/15 (`results/strips_2026-09-11.md`). The remaining
-  three 728×90 failures are long-copy stacks that cannot fit 90 px and fail honestly.
+  three 728×90 failures are long-copy stacks that cannot fit 90 px and fail honestly;
+  with the subheadline explicitly allowed to be left out (`allowed.hide`, element panel)
+  the planner drops it as a recorded decision and those three render `accepted`.
 - Browser journey grew to 40 steps (campaign table read from CSV, count, generation, review
   filtered by row) and stays green.
 

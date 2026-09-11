@@ -12,6 +12,12 @@ All notable changes to this project will be documented in this file.
   left / right / top, subject on top, centered, stacked / side, or a pinned family): they
   narrow the candidates, what a format cannot satisfy is reported in the plan, never
   silently ignored; selector in the Variants view and a `direction` CSV column.
+- Hideable copy on small sizes: an element the design marks "May be left out on small
+  sizes" is dropped by the planner only when the stack cannot fit at the minimum text sizes
+  (least important first; never headline, CTA, logo or keep_visible elements), recorded as a
+  decision and flagged by the family consistency check. Subject-integrity tolerance is
+  rounding-aware for tiny boxes (728×90 logos); the planner penalises boxes by how far they
+  leave the canvas; repair moves never break a hard order rule.
 - Incremental refresh (`POST /api/projects/{id}/variants/refresh`, "Refresh stale" in the
   review view): after a design edit only the variants the change touched are re-rendered
   (keeping their layout); the others are marked current without a render, with a reason per

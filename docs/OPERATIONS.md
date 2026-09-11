@@ -127,6 +127,15 @@ and a message naming the plan (nothing is created). The operator assigns plans w
 change their own plan. Global `AUTOBANNER_QUOTA_*` caps still apply on top (the stricter
 limit wins, reported as 429). No billing provider is contacted: plans are a local record.
 
+## Hideable copy on small sizes
+
+An element whose `allowed.hide` is true ("May be left out on small sizes" in the element
+panel) may be dropped by the planner when the text stack cannot fit a size even at the
+minimum text sizes; the least important text goes first, the headline, CTA and logo never,
+nor an element under a `keep_visible` rule. Every drop is recorded in the plan's decisions
+(`dropped:<id>:no_room`) and the cross-variant consistency check flags the missing element
+for review. Nothing is hidden without that permission.
+
 ## Incremental refresh
 
 After a design edit, `POST /api/projects/{id}/variants/refresh` (`{"keep_layout": true}`)
