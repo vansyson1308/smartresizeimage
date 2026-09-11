@@ -67,8 +67,10 @@ def test_refresh_re_renders_only_touched_variants(client: TestClient, tmp_path: 
     after = _variants(client, pid)
     assert after["Full"]["document_version"] == version
     assert after["NoCTA"]["document_version"] == version
-    assert after["NoCTA"]["updated_at"] == before["NoCTA"]["updated_at"]  # not re-rendered
-    assert after["Full"]["updated_at"] != before["Full"]["updated_at"]
+    # not re-rendered: still the job that first rendered it; the touched one has the new job
+    assert after["NoCTA"]["job_id"] == before["NoCTA"]["job_id"]
+    assert after["NoCTA"]["updated_at"] == before["NoCTA"]["updated_at"]
+    assert after["Full"]["job_id"] == body["job"]["id"] != before["Full"]["job_id"]
     detail = client.get(f"/api/projects/{pid}/variants/{after['Full']['id']}").json()
     assert detail["plan"]["planner_meta"]["reference"]["kept"], "layout kept while the copy changed"
     # a rule change touches every variant
