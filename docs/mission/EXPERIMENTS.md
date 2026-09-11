@@ -10,9 +10,19 @@ lands behind flags with a rollback path.
 | H2 | Joint planning across a variant family improves consistency and reduces corrections vs independent resizing. | DesignAsCode retargeting, iPoster constraints | ABLATED, ADOPTED: joint family choice cuts family-consistency issues 9 → 3 runs at equal acceptance and compute (below); correction-time effect unmeasured (no humans) | CPU only | Adopt if family-consistency errors drop without lowering acceptance; equal compute/review budget. |
 | H3 | A local-edit representation reduces unintended changes on campaign revision. | Layered editing (Qwen-Image-Layered) | ABLATED, ADOPTED: regenerating with the previous plan and pinned text-plate rectangles as reference gives zero out-of-scope pixel change on the 5-edit regression set and on 180/180 corpus revisions (156/180 when re-planning; 174/180 before plate pinning) | CPU only | Adopt if pixel diff outside edited scope is zero on the regression set. |
 | H4 | Calibrated verification + targeted repair improves throughput vs missed critical errors. | Verification-driven repair | ABLATED (below): repair helps a weak planner, adds nothing to the constraint planner on this corpus; calibration vs humans still unmeasured | CPU only | Measure missed-error rate on held-out set before/after repair; report sample size. |
+| H6 | A compositional layout grammar (search over composed families) beats a few hand-written families on acceptance and lets creative directions be honoured. | Grammar-based layout generation (PosterO SVG trees, DesignAsCode) | ABLATED: no acceptance gain on the synthetic corpus (tuning 32/36, holdout 22/24 with and without; grammar families win 6/60); ADOPTED for direction coverage only (below) | CPU only | Adopt for acceptance only if held-out acceptance rises without more family issues; otherwise keep for coverage and say so. |
 | H5 | Retrieval from approved correction history reduces recurring mistakes per brand without training. | RAG-style retrieval | ABLATED (rule-based reviewer), ADOPTED as a reviewable mechanism: rules derived from rejection + approved fix cut repeat rejections 28 → 0 over 14 later campaigns (below); effect with human reviewers unmeasured | CPU only | Adopt if repeat-correction rate drops on the same brand's held-out campaigns. |
 
 ## Results log
+
+- 2026-09-11 — H6 layout grammar (`results/ablations_grammar_2026-09-11.md`, 15 cases × 4
+  sizes, holdout from case 10, joint planning in both arms): acceptance identical with and
+  without the grammar (0.89 tuning, 0.92 holdout), same six honest non-accepted 300×250
+  runs, same family issues, ≈1.4 s per variant in both arms; grammar families won 6/60
+  runs. Kept on by default for creative-direction coverage (text right, centred, subject on
+  top, text share), not claimed as a quality gain. Same session: the subject-integrity
+  oracle was recalibrated after a first run mis-flagged flat assets (documented in the
+  results file).
 
 - 2026-09-09 — H4 (verification): contract v2 rejects the preserved false positive for the
   right reason (`element_visible:headline` 99% covered, OCR agreement 0%). Calibration of the

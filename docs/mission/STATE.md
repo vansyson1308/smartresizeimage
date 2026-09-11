@@ -211,6 +211,30 @@ isolated → token lists projects → 900 px without horizontal scroll.
 - Browser journey grew to 40 steps (campaign table read from CSV, count, generation, review
   filtered by row) and stays green.
 
+## Mission V2 phase C progress (2026-09-11)
+
+- **Layout grammar** (`design/grammar.py`): families composed from arrangement × text
+  side/position × text share × logo corner × alignment (12 / 24 / 36 per orientation) join
+  the hand-written families as planner candidates; plans record the winner's traits and the
+  candidate count. Ablation (`results/ablations_grammar_2026-09-11.md`): no acceptance change
+  on the synthetic corpus (0.89 tuning / 0.92 holdout either way, same six honest 300×250
+  non-acceptances), grammar families win 6/60 runs; kept on for direction coverage, not
+  claimed as a quality gain.
+- **Creative directions** per run and per campaign row (emphasis, text side/position,
+  alignment, arrangement, pinned family, mood) narrow the candidates; what a format cannot
+  satisfy is recorded as `direction_unmet` in the plan; CSV `direction` column; selector in
+  the Variants view; joint family choice per distinct direction.
+- **Subject/mascot integrity**: uniform scale enforced (stretching is critical) and an
+  independent pixel oracle (mean colour difference on solid pixels, plus grayscale
+  correlation for textured assets) sends occluded, recoloured or cropped subjects to review
+  with the measured similarity. A first version mis-flagged flat assets; recalibrated and
+  documented.
+- **Incremental refresh**: after an edit, only variants whose shown elements, rules, fonts or
+  canvas changed are re-rendered (layout kept); the rest are marked current with a reason.
+- **Counterexample search** (`tools/find_counterexamples.py`): independent oracles (rendered
+  mask overlap, bounds, hard rules on final boxes, subject correlation) re-judge renders
+  under seeded perturbations; result recorded below once run.
+
 ## Release-criteria check (2026-09-09, end of this session)
 
 | Criterion (MISSION.md priorities / brief) | Status | Evidence |
