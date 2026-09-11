@@ -815,6 +815,12 @@
     if (!a || a.mode !== "local" || !a.authenticated) { card.classList.add("hidden"); return; }
     card.classList.remove("hidden");
     $("#workspace-name").textContent = a.workspace || "";
+    try {
+      const u = await api("/api/usage");
+      const pl = u.plan || {}, used = pl.used || {}, lim = pl.limits || {};
+      const part = (key, label) => lim[key] == null ? `${label} ${used[key] == null ? "–" : used[key]}` : `${label} ${used[key] || 0}/${lim[key]}`;
+      $("#plan-line").textContent = `Plan ${pl.name || "?"} · ${part("variants_per_day", "variants today")} · ${part("projects", "projects")}${used.members != null ? " · " + part("members", "members") : ""}${lim.campaign_rows != null ? ` · ${lim.campaign_rows} campaign rows per job` : ""}`;
+    } catch (e) { $("#plan-line").textContent = ""; }
     $("#members-wrap").classList.toggle("hidden", !state.can.admin);
     $("#tokens-wrap").classList.toggle("hidden", !a.user);
     if (state.can.admin) {

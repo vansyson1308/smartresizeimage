@@ -100,6 +100,97 @@ class Quota:
         )
 
 
+PLAN_LIMIT_KEYS = ("variants_per_day", "projects", "members", "campaign_rows", "storage_bytes")
+DEFAULT_PLANS: dict[str, dict[str, int | None]] = {
+    "free": {"variants_per_day": 50, "projects": 3, "members": 2, "campaign_rows": 3,
+             "storage_bytes": 512 * 1024 * 1024},
+    "team": {"variants_per_day": 1000, "projects": 100, "members": 10, "campaign_rows": 50,
+             "storage_bytes": 20 * 1024 ** 3},
+    "business": {"variants_per_day": 10000, "projects": 1000, "members": 100,
+                 "campaign_rows": 200, "storage_bytes": 200 * 1024 ** 3},
+    "unlimited": dict.fromkeys(PLAN_LIMIT_KEYS, None),
+}
+
+
+class Entitlements:
+    """Which plan a workspace is on and what that plan allows.
+
+    Plan definitions come from ``DEFAULT_PLANS`` merged with ``AUTOBANNER_PLANS`` (JSON);
+    assignments from ``data/plans.json`` (set by the operator through the API with the
+    setup token) overridden by ``AUTOBANNER_WORKSPACE_PLANS`` (``acme:team,globex:free``).
+    Unassigned workspaces get ``AUTOBANNER_DEFAULT_PLAN`` (default ``unlimited`` so an
+    existing deployment gains no new limits by surprise). Global ``AUTOBANNER_QUOTA_*``
+    caps still apply on top: the stricter limit wins.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.plans: dict[str, dict[str, int | None]] = {
+            k: dict(v) for k, v in DEFAULT_PLANS.items()
+        }
+        raw = os.environ.get("AUTOBANNER_PLANS", "").strip()
+        if raw:
+            try:
+                for name, limits in json.loads(raw).items():
+                    plan = dict(self.plans.get(name, dict.fromkeys(PLAN_LIMIT_KEYS, None)))
+                    for key in PLAN_LIMIT_KEYS:
+                        if key in limits:
+                            plan[key] = None if limits[key] is None else int(limits[key])
+                    self.plans[str(name)] = plan
+            except (ValueError, TypeError, AttributeError) as exc:
+                logger.warning("AUTOBANNER_PLANS ignored: %s", exc)
+        self.default = os.environ.get("AUTOBANNER_DEFAULT_PLAN", "unlimited").strip() or "unlimited"
+        if self.default not in self.plans:
+            logger.warning("AUTOBANNER_DEFAULT_PLAN %r unknown; using unlimited", self.default)
+            self.default = "unlimited"
+        self._assigned: dict[str, str] = {}
+        if self.path.exists():
+            try:
+                self._assigned = {
+                    str(k): str(v)
+                    for k, v in (json.loads(self.path.read_text(encoding="utf-8"))
+                                 .get("workspaces") or {}).items()
+                }
+            except ValueError as exc:
+                logger.warning("unreadable %s: %s", self.path, exc)
+        self._env_assigned: dict[str, str] = {}
+        for pair in os.environ.get("AUTOBANNER_WORKSPACE_PLANS", "").split(","):
+            if ":" in pair:
+                ws, plan = pair.split(":", 1)
+                if plan.strip() in self.plans:
+                    self._env_assigned[ws.strip()] = plan.strip()
+                else:
+                    logger.warning("AUTOBANNER_WORKSPACE_PLANS: unknown plan %r", plan)
+        self._lock = threading.Lock()
+
+    def plan_name(self, owner: str | None) -> str:
+        owner = owner or LOCAL_OWNER
+        return self._env_assigned.get(owner) or self._assigned.get(owner) or self.default
+
+    def limits(self, owner: str | None) -> dict[str, int | None]:
+        return dict(self.plans[self.plan_name(owner)])
+
+    def set_plan(self, owner: str, name: str) -> str:
+        if name not in self.plans:
+            raise ServiceError(f"unknown plan {name!r}; known: {', '.join(self.plans)}", 400)
+        with self._lock:
+            self._assigned[owner] = name
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps({"workspaces": self._assigned}, indent=2), encoding="utf-8")
+            tmp.replace(self.path)
+        logger.info("workspace %s set to plan %s", owner, name)
+        return name
+
+
+def _stricter(a: int | None, b: int | None) -> int | None:
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return min(a, b)
+
+
 class UsageMeter:
     """Per-owner usage counters persisted as JSON (one file per owner)."""
 
@@ -191,40 +282,88 @@ class ProjectService:
             total += sum(p.stat().st_size for p in root.rglob("*") if p.is_file())
         return total
 
-    def usage_summary(self, owner: str) -> dict:
+    def usage_summary(self, owner: str, *, members: int | None = None) -> dict:
         data = self.usage.read(owner)
+        plan = self.entitlements.limits(owner)
+        used = {
+            "variants_per_day": self.usage.today(owner, "variants"),
+            "projects": len(self.list_projects(owner)),
+            "storage_bytes": self.storage_bytes(owner),
+        }
+        if members is not None:
+            used["members"] = members
+        remaining = {
+            key: (None if plan.get(key) is None else max(0, int(plan[key]) - used[key]))
+            for key in used
+        }
         return {
             "owner": owner,
             "today": data.get("days", {}).get(_now()[:10], {}),
             "totals": data.get("totals", {}),
-            "storage_bytes": self.storage_bytes(owner),
+            "storage_bytes": used["storage_bytes"],
             "quota": {
                 "variants_per_day": self.quota.variants_per_day,
                 "projects": self.quota.projects,
                 "storage_bytes": self.quota.storage_bytes,
             },
+            "plan": {
+                "name": self.entitlements.plan_name(owner),
+                "limits": plan,
+                "used": used,
+                "remaining": remaining,
+            },
         }
 
+    def plan_limit(self, owner: str, key: str) -> int | None:
+        """The plan's limit for ``key`` (None when unlimited)."""
+        return self.entitlements.limits(owner).get(key)
+
+    def _plan_error(self, owner: str, what: str) -> ServiceError:
+        name = self.entitlements.plan_name(owner)
+        return ServiceError(f"plan '{name}' {what}", 402)
+
     def _check_quota_variants(self, owner: str, requested: int) -> None:
+        used = self.usage.today(owner, "variants")
+        plan_limit = self.plan_limit(owner, "variants_per_day")
+        if plan_limit is not None and used + requested > plan_limit:
+            raise self._plan_error(
+                owner, f"allows {plan_limit} variants per day ({used} used, {requested} requested)"
+            )
         limit = self.quota.variants_per_day
         if limit is None:
             return
-        used = self.usage.today(owner, "variants")
         if used + requested > limit:
             raise ServiceError(
                 f"daily variant quota exceeded ({used}/{limit} used, {requested} requested)", 429
             )
 
     def _check_quota_projects(self, owner: str) -> None:
-        limit = self.quota.projects
-        if limit is None:
-            return
         count = len(self.list_projects(owner))
-        if count >= limit:
+        plan_limit = self.plan_limit(owner, "projects")
+        if plan_limit is not None and count >= plan_limit:
+            raise self._plan_error(owner, f"allows {plan_limit} projects ({count} in use)")
+        plan_storage = self.plan_limit(owner, "storage_bytes")
+        if plan_storage is not None and self.storage_bytes(owner) >= plan_storage:
+            raise self._plan_error(owner, f"allows {plan_storage} bytes of storage")
+        limit = self.quota.projects
+        if limit is not None and count >= limit:
             raise ServiceError(f"project quota reached ({count}/{limit})", 429)
         cap = self.quota.storage_bytes
         if cap is not None and self.storage_bytes(owner) >= cap:
             raise ServiceError("storage quota reached", 429)
+
+    def check_members(self, owner: str, current: int) -> None:
+        """Refuse a new member when the workspace's plan is full."""
+        plan_limit = self.plan_limit(owner, "members")
+        if plan_limit is not None and current >= plan_limit:
+            raise self._plan_error(owner, f"allows {plan_limit} members ({current} in use)")
+
+    def check_campaign_rows(self, owner: str, rows: int) -> None:
+        plan_limit = self.plan_limit(owner, "campaign_rows")
+        if plan_limit is not None and rows > plan_limit:
+            raise self._plan_error(
+                owner, f"allows {plan_limit} campaign rows per job ({rows} requested)"
+            )
 
     # ---- helpers ----------------------------------------------------------------------
     def _lock(self, project_id: str) -> threading.RLock:

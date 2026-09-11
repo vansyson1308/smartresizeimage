@@ -293,6 +293,7 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
         body = await request.json()
         if not isinstance(body, dict):
             raise HTTPException(status_code=400, detail="body must be an object")
+        service.check_members(who.owner, len(users.list_users(who.owner)))
         user = users.create_user(
             str(body.get("username", "")), str(body.get("password", "")), who.owner,
             str(body.get("role", "editor")), created_by=who.username or who.via,
@@ -358,7 +359,31 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
 
     @app.get("/api/usage", dependencies=dep)
     def usage(owner: str = Owner) -> dict:
-        return service.usage_summary(owner)
+        members = len(users.list_users(owner)) if auth_mode == "local" else None
+        return service.usage_summary(owner, members=members)
+
+    @app.get("/api/plans", dependencies=dep)
+    def plans(owner: str = Owner) -> dict:
+        ent = service.entitlements
+        return {"plans": ent.plans, "default": ent.default, "workspace": owner,
+                "current": ent.plan_name(owner)}
+
+    @app.put("/api/plans/{workspace}")
+    async def set_plan(workspace: str, request: Request) -> dict:
+        """Operator action: assign a plan to a workspace (needs the setup token)."""
+        if auth_mode != "local":
+            raise HTTPException(status_code=409, detail="plans are assigned in local auth mode "
+                                "(or with AUTOBANNER_WORKSPACE_PLANS)")
+        given = request.headers.get("X-Setup-Token", "")
+        if not given or not hmac.compare_digest(given, setup_token):
+            raise HTTPException(status_code=403, detail="setup token required")
+        body = await request.json()
+        if not isinstance(body, dict) or not isinstance(body.get("plan"), str):
+            raise HTTPException(status_code=400, detail="body needs a plan name")
+        name = service.entitlements.set_plan(workspace, body["plan"])
+        service.events.record(workspace, "plan_set", plan=name)
+        return {"workspace": workspace, "plan": name,
+                "limits": service.entitlements.limits(workspace)}
 
     @app.get("/api/pilot/summary", dependencies=dep)
     def pilot_summary(owner: str = Owner) -> dict:
