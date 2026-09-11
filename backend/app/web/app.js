@@ -255,6 +255,7 @@
     $("#el-visible").checked = !!e.visible;
     $("#el-scale-free").checked = !!(e.allowed && e.allowed.scale_free);
     $("#el-crop").checked = !!(e.allowed && e.allowed.crop);
+    $("#el-hide").checked = !!(e.allowed && e.allowed.hide);
     $("#el-priority").value = e.priority;
     const p = e.provenance || {};
     $("#el-provenance").textContent = `Source: ${p.origin || "?"}${p.source_ref ? " · " + p.source_ref : ""} · ${p.notes || ""}`;
@@ -266,7 +267,7 @@
     const ops = [];
     ops.push({ op: "set_flags", element_id: e.id, name: $("#el-name").value, locked: $("#el-locked").checked, visible: $("#el-visible").checked, priority: Number($("#el-priority").value) });
     if ($("#el-role").value !== e.role) ops.push({ op: "set_role", element_id: e.id, role: $("#el-role").value });
-    ops.push({ op: "set_allowed", element_id: e.id, allowed: { scale_free: $("#el-scale-free").checked, crop: $("#el-crop").checked } });
+    ops.push({ op: "set_allowed", element_id: e.id, allowed: { scale_free: $("#el-scale-free").checked, crop: $("#el-crop").checked, hide: $("#el-hide").checked } });
     if (e.kind === "text") {
       const translations = {};
       $("#el-translations").value.split("\n").forEach((line) => { const m = /^\s*([A-Za-z0-9-]+)\s*=\s*(.+)$/.exec(line); if (m) translations[m[1]] = m[2].trim(); });

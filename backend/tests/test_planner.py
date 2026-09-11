@@ -308,3 +308,29 @@ def test_long_copy_on_a_small_format_prefers_a_wide_text_column(tmp_path) -> Non
     boxes = {r.element_id: r.new_bbox for r in plan.layout if r.visible}
     # the stack is not three canvases tall any more
     assert max(b.y2 for b in boxes.values()) < 2 * 250
+
+
+def test_hideable_copy_is_dropped_only_when_nothing_fits(tmp_path) -> None:
+    """A leaderboard strip cannot hold headline + subheadline + CTA at their minimum sizes.
+    Only text the design allows to hide is dropped (least important first), never the
+    headline, CTA or logo; the drop is a recorded decision and the element is invisible."""
+    doc, store = _doc(tmp_path, long_copy=True)
+    elements = elements_from_document(doc, store)
+    before = plan_layout(doc, elements, (728, 90))
+    assert not [d for d in before.decisions if d.startswith("dropped:")]
+    doc.element("sub").allowed.hide = True
+    after = plan_layout(doc, elements, (728, 90))
+    assert "dropped:sub:no_room" in after.decisions
+    vis = {r.element_id: r for r in after.layout}
+    assert vis["sub"].visible is False
+    assert vis["headline"].visible and vis["cta"].visible
+    assert all(vis[e].new_bbox.y2 <= 90 and vis[e].new_bbox.x2 <= 728 for e in ("headline", "cta"))
+    # a keep_visible rule protects it even when hiding is allowed; big sizes drop nothing
+    from backend.app.design.document import Constraint
+
+    doc.add_constraint(Constraint(id="c_kv", type="keep_visible", elements=["sub"], hard=True))
+    protected = plan_layout(doc, elements, (728, 90))
+    assert not [d for d in protected.decisions if d.startswith("dropped:")]
+    doc.constraints = [c for c in doc.constraints if c.id != "c_kv"]
+    wide = plan_layout(doc, elements, (1200, 628))
+    assert not [d for d in wide.decisions if d.startswith("dropped:")]

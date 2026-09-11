@@ -332,6 +332,7 @@ def _plan_family(
     # keep the text column clear of the logo slot when they overlap vertically
     logo_ids = {lg.id for lg in logos}
     text_box = _avoid(text_box, [r.new_bbox for r in layout if r.element_id in logo_ids], th)
+    column = text_box
     stack = _plan_text_stack(texts, doc_by_id, text_box, scale, reg, th, fam.text_align)
 
     # Content pressure: when the copy cannot fit its column even after shrinking,
@@ -366,7 +367,29 @@ def _plan_family(
                 box = _apply_scale_range(doc_by_id.get(e.id), doc, box, e.bbox, th)
                 layout.append(LayoutResult(e.id, box, box.width / max(1, e.bbox.width)))
             stack = _plan_text_stack(texts, doc_by_id, new_text, scale, reg, th, fam.text_align)
+            column = new_text
             decisions.append(f"content_pressure:text+{extra}px")
+
+    # No room even at the smallest sizes (a leaderboard strip with three lines of copy):
+    # drop the text the design explicitly allows to hide, least important first. Required
+    # roles and elements under a keep_visible rule are never dropped; every drop is a
+    # recorded decision and the family consistency check surfaces it for review.
+    hidden: list[DesignElement] = []
+    if stack and _stack_height(stack) > column.height:
+        droppable = sorted(
+            (e for e in texts if _may_hide(doc, doc_by_id.get(e.id), e)),
+            key=lambda e: -e.priority,
+        )
+        remaining = list(texts)
+        for e in droppable:
+            remaining = [t for t in remaining if t.id != e.id]
+            hidden.append(e)
+            decisions.append(f"dropped:{e.id}:no_room")
+            stack = _plan_text_stack(remaining, doc_by_id, column, scale, reg, th, fam.text_align)
+            if not stack or _stack_height(stack) <= column.height:
+                break
+    for e in hidden:
+        layout.append(LayoutResult(e.id, BoundingBox(column.x, column.y, 1, 1), 0.0, visible=False))
     for e, box, px, overflow in stack:
         layout.append(LayoutResult(e.id, box, px / max(1.0, _master_px(doc_by_id.get(e.id), e))))
         text_px[e.id] = px
@@ -459,6 +482,18 @@ def _plan_text_stack(
             return placed
         factor *= max(0.5, column.height / max(1, total)) * 0.98
     return placed
+
+
+_NEVER_DROPPED = {"headline", "cta", "logo"}
+
+
+def _may_hide(doc: DesignDocument, de: Element | None, e: DesignElement) -> bool:
+    """The design allows this text to be dropped in small sizes and no rule forbids it."""
+    if de is None or not de.allowed.hide or e.role.value in _NEVER_DROPPED:
+        return False
+    return not any(
+        c.enabled and c.type == "keep_visible" and e.id in c.elements for c in doc.constraints
+    )
 
 
 def _stack_height(stack: list[tuple[DesignElement, BoundingBox, int, bool]]) -> int:
