@@ -1179,6 +1179,120 @@ class ProjectService:
         self.usage.add(meter_owner, "jobs")
         return job
 
+    # ---- incremental refresh (phase C: recompile only what a change touched) ----------
+    def _changed_since(self, project: Project, version: int) -> dict | None:
+        """What changed between document ``version`` and now; None when unknown."""
+        path = project.root / "history" / f"{int(version):05d}.json"
+        if not path.exists():
+            return None
+        try:
+            old = json.loads(path.read_text(encoding="utf-8")).get("document") or {}
+        except ValueError:
+            return None
+        cur = document_to_dict(project.document)
+        old_elems = {e["id"]: e for e in old.get("elements", [])}
+        cur_elems = {e["id"]: e for e in cur.get("elements", [])}
+        changed = {
+            eid for eid in set(old_elems) | set(cur_elems)
+            if old_elems.get(eid) != cur_elems.get(eid)
+        }
+        strip = ("id", "provenance")
+        old_cons = sorted(json.dumps({k: v for k, v in c.items() if k not in strip},
+                                     sort_keys=True) for c in old.get("constraints", []))
+        cur_cons = sorted(json.dumps({k: v for k, v in c.items() if k not in strip},
+                                     sort_keys=True) for c in cur.get("constraints", []))
+        canvas_changed = (old.get("canvas_width"), old.get("canvas_height")) != (
+            cur.get("canvas_width"), cur.get("canvas_height"))
+        return {
+            "elements": changed,
+            "constraints": old_cons != cur_cons,
+            "fonts": old.get("fonts") != cur.get("fonts"),
+            "canvas": canvas_changed,
+        }
+
+    def refresh_variants(self, project_id: str, *, keep_layout: bool = True,
+                         owner: str | None = LOCAL_OWNER) -> dict:
+        """Bring variants up to date with the document, re-rendering only the affected ones.
+
+        A variant is *stale* when the document changed after it was rendered. It is
+        re-rendered (keeping its layout by default, H3) only when the change touched
+        an element it shows, a constraint, a font or the canvas; otherwise it is marked
+        current without a render. Unknown history (pruned snapshots) counts as affected.
+        """
+        project = self.get_project(project_id, owner)
+        meter_owner = owner or project.meta.get("owner") or LOCAL_OWNER
+        current = project.document_version
+        stale = [r for r in project.variants.values()
+                 if r.status == "done" and r.document_version < current]
+        affected: list[VariantRecord] = []
+        up_to_date: list[str] = []
+        reasons: dict[str, str] = {}
+        diff_cache: dict[int, dict | None] = {}
+        for rec in stale:
+            if rec.document_version not in diff_cache:
+                diff_cache[rec.document_version] = self._changed_since(
+                    project, rec.document_version)
+            diff = diff_cache[rec.document_version]
+            if diff is None:
+                affected.append(rec)
+                reasons[rec.id] = "history unavailable"
+                continue
+            if diff["constraints"] or diff["fonts"] or diff["canvas"]:
+                affected.append(rec)
+                reasons[rec.id] = "rules, fonts or canvas changed"
+                continue
+            detail = project.variant_detail(rec.id) or {}
+            placements = (detail.get("plan") or {}).get("placements") or []
+            shown = {pl["element_id"] for pl in placements if pl.get("visible", True)}
+            hidden = set((rec.brief or {}).get("hidden_elements") or [])
+            touched = (diff["elements"] - hidden) & (shown or diff["elements"])
+            if touched or not placements:
+                affected.append(rec)
+                reasons[rec.id] = "edited element(s): " + ", ".join(sorted(touched))[:200]
+            else:
+                up_to_date.append(rec.id)
+                reasons[rec.id] = "change did not touch this variant"
+        if affected:
+            self._check_quota_variants(meter_owner, len(affected))
+        job = None
+        with self._lock(project_id):
+            for vid in up_to_date:
+                project.variants[vid].document_version = current
+            briefs: dict[str, VariantBrief] = {}
+            references: dict[str, dict | None] = {}
+            items: list[tuple[str, str]] = []
+            for rec in affected:
+                briefs[rec.id] = _brief_from_record(rec)
+                references[rec.id] = self._reference_for(project, rec.id) if keep_layout else None
+                rec.status = "pending"
+                rec.approval = "none"
+                rec.approval_reason = ""
+                rec.error = None
+                rec.document_version = current
+                items.append((rec.id, rec.name))
+            project.save()
+        if items:
+            job = self._submit_variant_job(
+                project_id, project, "refresh", items, briefs, {}, references,
+                owner=meter_owner, meta={"keep_layout": keep_layout},
+            )
+            self.usage.add(meter_owner, "variants", len(items))
+            self.usage.add(meter_owner, "jobs")
+        self.events.record(
+            meter_owner, "variants_refreshed", project_id=project_id,
+            refreshed=len(items), up_to_date=len(up_to_date),
+        )
+        return {
+            "job": job.to_dict() if job else None,
+            "document_version": current,
+            "refreshed": [r.id for r in affected],
+            "up_to_date": up_to_date,
+            "reasons": reasons,
+            "not_stale": [r.id for r in project.variants.values()
+                          if r.status == "done" and r.document_version >= current
+                          and r.id not in up_to_date and r.id not in reasons],
+        }
+
     def set_approval(
         self,
         project_id: str,

@@ -621,6 +621,16 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
         )
         return {"variant": rec.to_dict()}
 
+    @app.post("/api/projects/{project_id}/variants/refresh", dependencies=edit,
+              status_code=202)
+    async def refresh_variants(project_id: str, request: Request, owner: str = Owner) -> dict:
+        """Re-render only the variants a document change touched (incremental refresh)."""
+        body: Any = {}
+        if int(request.headers.get("content-length", "0") or 0) > 0:
+            body = await request.json()
+        keep = bool(body.get("keep_layout", True)) if isinstance(body, dict) else True
+        return service.refresh_variants(project_id, keep_layout=keep, owner=owner)
+
     @app.post("/api/projects/{project_id}/variants/{variant_id}/regenerate", dependencies=edit,
               status_code=202)
     async def regenerate(

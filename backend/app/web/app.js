@@ -649,7 +649,11 @@
     const filtered = variants.filter((v) => (state.filter === "all" ? true : state.filter === "approved" ? v.approval === "approved" : v.verdict === state.filter) && (state.rowFilter === "all" || (rowOf(v) || {}).id === state.rowFilter));
     const counts = { accepted: 0, needs_review: 0, failed: 0, approved: 0, pending: 0 };
     variants.forEach((v) => { if (counts[v.verdict] !== undefined) counts[v.verdict]++; if (v.approval === "approved") counts.approved++; if (["pending", "running"].includes(v.status)) counts.pending++; });
-    $("#review-summary").textContent = `${variants.length} variants${rowIds.length ? ` in ${rowIds.length} rows` : ""} · ${counts.accepted} accepted · ${counts.needs_review} need review · ${counts.failed} failed · ${counts.approved} approved${counts.pending ? ` · ${counts.pending} in progress` : ""}`;
+    const docVersion = (state.project.project || {}).document_version || 0;
+    const stale = variants.filter((v) => v.status === "done" && (v.document_version || 0) < docVersion).length;
+    $("#review-summary").textContent = `${variants.length} variants${rowIds.length ? ` in ${rowIds.length} rows` : ""} · ${counts.accepted} accepted · ${counts.needs_review} need review · ${counts.failed} failed · ${counts.approved} approved${counts.pending ? ` · ${counts.pending} in progress` : ""}${stale ? ` · ${stale} older than the design` : ""}`;
+    $("#btn-refresh").classList.toggle("hidden", stale === 0);
+    $("#btn-refresh").textContent = `Refresh ${stale} stale`;
     $("#review-empty").classList.toggle("hidden", variants.length > 0);
     const grid = $("#variant-grid");
     grid.innerHTML = filtered.map((v) => {
@@ -702,6 +706,15 @@
   async function exportZip(only) {
     try { const fmt = $("#export-format").value; const blob = await api(`/api/projects/${pid()}/export?format=${fmt}&only=${only}`); downloadBlob(blob, `${state.project.project.name}_${only}.zip`); } catch (e) { toast(e.message, true); }
   }
+  $("#btn-refresh").addEventListener("click", async () => {
+    try {
+      const res = await api(`/api/projects/${pid()}/variants/refresh`, json({ keep_layout: true }));
+      const n = res.refreshed.length, k = res.up_to_date.length;
+      if (res.job) trackJob(res.job.id);
+      await refreshProject(); renderReview();
+      toast(`${n} variant${n === 1 ? "" : "s"} re-rendered, ${k} untouched by the change and marked current.`);
+    } catch (e) { toast(e.message, true); }
+  });
   $("#btn-export-approved").addEventListener("click", () => exportZip("approved"));
   $("#btn-export-all").addEventListener("click", () => exportZip("all"));
 
