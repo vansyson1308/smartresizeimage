@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -31,6 +32,39 @@ logger = logging.getLogger("autobanner.design.project")
 
 PROJECT_SCHEMA_VERSION = "1.0"
 MAX_HISTORY = 200
+_SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def safe_relative_path(root: str | Path, rel: str | None) -> Path | None:
+    """Resolve ``rel`` inside ``root`` or return ``None`` when it would escape.
+
+    Paths recorded in a project (variant images, reports, assets) come from files a
+    user can hand-edit or import, so they are untrusted: absolute paths, traversal,
+    backslashes, NUL bytes and symlinks that point outside the project root are all
+    refused. The returned path is ``root / rel`` (unresolved) so callers keep working
+    with the project directory they know.
+    """
+    if not rel or not isinstance(rel, str):
+        return None
+    if "\x00" in rel or "\\" in rel or rel.startswith("/") or rel.startswith("~"):
+        return None
+    parts = Path(rel).parts
+    if not parts or any(part in ("..", ".") for part in parts) or Path(rel).is_absolute():
+        return None
+    root = Path(root)
+    candidate = root / rel
+    try:
+        resolved_root = root.resolve()
+        resolved = candidate.resolve()
+    except (OSError, RuntimeError):
+        return None
+    if resolved == resolved_root or resolved_root not in resolved.parents:
+        return None
+    return candidate
+
+
+def is_safe_id(value: object) -> bool:
+    return isinstance(value, str) and bool(_SAFE_ID.match(value))
 
 
 @dataclass
@@ -99,7 +133,13 @@ class Project:
         return project
 
     @classmethod
-    def load(cls, root: str | Path) -> Project:
+    def load(cls, root: str | Path, *, strict: bool = False) -> Project:
+        """Load a project directory.
+
+        The variant index is untrusted input (it travels inside editable archives):
+        records whose id or file paths would escape the project are neutralised, or
+        rejected with ``ValueError`` when ``strict`` is set (used by imports).
+        """
         root = Path(root)
         payload = json.loads((root / "project.json").read_text(encoding="utf-8"))
         version = str(payload.get("project_schema_version", PROJECT_SCHEMA_VERSION))
@@ -108,12 +148,55 @@ class Project:
         document = document_from_dict(payload["document"])
         meta = {k: v for k, v in payload.items() if k != "document"}
         project = cls(root, document, meta)
+        for element in document.elements:
+            if element.asset is not None:
+                try:
+                    project.assets.path(element.asset)
+                except ValueError as exc:
+                    if strict:
+                        raise ValueError(f"unsafe asset path for '{element.name}'") from exc
+                    logger.warning("project %s: %s", root, exc)
         vindex = root / "variants" / "index.json"
         if vindex.exists():
-            for d in json.loads(vindex.read_text(encoding="utf-8")):
+            entries = json.loads(vindex.read_text(encoding="utf-8"))
+            if not isinstance(entries, list):
+                raise ValueError("variant index must be a list")
+            for d in entries:
+                if not isinstance(d, dict):
+                    raise ValueError("variant index entries must be objects")
                 rec = VariantRecord.from_dict(d)
+                if not is_safe_id(rec.id):
+                    if strict:
+                        raise ValueError("unsafe variant id in variant index")
+                    logger.warning("project %s: dropping variant with unsafe id", root)
+                    continue
+                for attr in ("image_path", "report_path"):
+                    rel = getattr(rec, attr)
+                    if rel is None:
+                        continue
+                    if safe_relative_path(root, rel) is None:
+                        if strict:
+                            raise ValueError("unsafe path in variant index")
+                        logger.warning(
+                            "project %s: variant %s has an unsafe %s; neutralised",
+                            root, rec.id, attr,
+                        )
+                        setattr(rec, attr, None)
+                        rec.status = "failed"
+                        rec.error = "unsafe path in variant index"
                 project.variants[rec.id] = rec
         return project
+
+    def variant_file(self, variant_id: str, kind: str) -> Path | None:
+        """Safe on-disk path of a variant's ``image`` or ``report``, else ``None``."""
+        rec = self.variants.get(variant_id)
+        if rec is None:
+            return None
+        rel = rec.image_path if kind == "image" else rec.report_path
+        path = safe_relative_path(self.root, rel)
+        if path is None or not path.is_file():
+            return None
+        return path
 
     @property
     def id(self) -> str:
@@ -290,27 +373,26 @@ class Project:
         return out
 
     def variant_image(self, variant_id: str) -> Image.Image | None:
-        rec = self.variants.get(variant_id)
-        if rec is None or not rec.image_path:
+        path = self.variant_file(variant_id, "image")
+        if path is None:
             return None
-        with Image.open(self.root / rec.image_path) as img:
+        with Image.open(path) as img:
             return img.convert("RGB").copy()
 
     def variant_detail(self, variant_id: str) -> dict | None:
-        rec = self.variants.get(variant_id)
-        if rec is None or not rec.report_path:
+        path = self.variant_file(variant_id, "report")
+        if path is None:
             return None
-        return json.loads((self.root / rec.report_path).read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
 
     def delete_variant(self, variant_id: str) -> bool:
-        rec = self.variants.pop(variant_id, None)
-        if rec is None:
+        if variant_id not in self.variants:
             return False
-        for rel in (rec.image_path, rec.report_path):
-            if rel:
-                p = self.root / rel
-                if p.exists():
-                    p.unlink()
+        for kind in ("image", "report"):
+            path = self.variant_file(variant_id, kind)
+            if path is not None and not path.is_symlink():
+                path.unlink()
+        self.variants.pop(variant_id, None)
         self._save_variant_index()
         return True
 

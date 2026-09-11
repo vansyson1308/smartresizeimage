@@ -98,6 +98,7 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
     edit = [Depends(current_owner), require("editor")]
     approve = [Depends(current_owner), require("approver")]
     Owner = Depends(current_owner)  # noqa: N806
+    Role = Depends(current_role)  # noqa: N806
 
     @app.middleware("http")
     async def rate_limit(request: Request, call_next):
@@ -242,9 +243,11 @@ def create_app(data_dir: str | Path | None = None, *, max_workers: int | None = 
         return service.project_payload(project)
 
     @app.post("/api/projects/import", dependencies=edit, status_code=201)
-    async def import_project(file: UploadFile = _UPLOAD, owner: str = Owner) -> dict:
+    async def import_project(
+        file: UploadFile = _UPLOAD, owner: str = Owner, role: str = Role
+    ) -> dict:
         data = await read_limited(file, MAX_UPLOAD_BYTES * 4)
-        project = service.import_project(data, owner=owner)
+        project = service.import_project(data, owner=owner, role=role)
         return service.project_payload(project)
 
     @app.get("/api/projects/{project_id}", dependencies=dep)

@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import shutil
+import stat
 import tempfile
 import threading
 import zipfile
@@ -40,7 +41,7 @@ from ..design.document import (
 from ..design.examples import example_from_plan, infer_families
 from ..design.fonts import FontRegistry
 from ..design.planner import Family, aspect_class, choose_families
-from ..design.project import Project, VariantRecord
+from ..design.project import Project, VariantRecord, safe_relative_path
 from ..design.render import render_master
 from ..design.serialize import document_from_dict, document_to_dict
 from ..design.variant import VariantBrief, generate_variant
@@ -54,6 +55,7 @@ from .presets import find_preset
 logger = logging.getLogger("autobanner.api.service")
 
 MAX_UPLOAD_BYTES = 64 * 1024 * 1024
+MAX_ARCHIVE_MEMBERS = 5000
 MAX_PIXELS = 40_000_000
 MAX_VARIANTS_PER_JOB = 48
 MAX_TARGET_SIDE = Config.MAX_IMAGE_SIZE
@@ -1036,10 +1038,10 @@ class ProjectService:
         self, project_id: str, variant_id: str, owner: str | None = LOCAL_OWNER
     ) -> Path:
         project = self.get_project(project_id, owner)
-        rec = project.variants.get(variant_id)
-        if rec is None or not rec.image_path:
+        path = project.variant_file(variant_id, "image")
+        if path is None:
             raise ServiceError("variant image not available", 404)
-        return project.root / rec.image_path
+        return path
 
     # ---- export / import ------------------------------------------------------------------
     def export_deliverables(self, project_id: str, *, fmt: str = "png", only: str = "all",
@@ -1139,7 +1141,16 @@ class ProjectService:
                     zf.write(path, arcname=str(path.relative_to(project.root)))
         return buf.getvalue()
 
-    def import_project(self, data: bytes, owner: str | None = LOCAL_OWNER) -> Project:
+    def import_project(
+        self, data: bytes, owner: str | None = LOCAL_OWNER, *, role: str = "admin"
+    ) -> Project:
+        """Reopen an editable project archive as a new project of ``owner``.
+
+        Everything inside the archive is untrusted: member names, the variant index,
+        asset references and the trust-bearing metadata (owner, id, approvals). The
+        archive can neither place files outside its new project directory nor carry
+        approvals the importer could not have granted (``role`` below approver).
+        """
         owner = owner or LOCAL_OWNER
         self._check_quota_projects(owner)
         if len(data) > MAX_UPLOAD_BYTES * 4:
@@ -1150,12 +1161,16 @@ class ProjectService:
         total = 0
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as zf:
-                names = zf.namelist()
-                if "project.json" not in names:
+                infos = zf.infolist()
+                if len(infos) > MAX_ARCHIVE_MEMBERS:
+                    raise ServiceError("archive has too many members", 400)
+                if "project.json" not in {i.filename for i in infos}:
                     raise ServiceError("archive is not an AutoBanner project", 400)
-                for info in zf.infolist():
+                for info in infos:
                     name = info.filename
-                    if name.startswith("/") or ".." in Path(name).parts:
+                    if _is_symlink_member(info):
+                        raise ServiceError("unsafe path in archive", 400)
+                    if safe_relative_path(root, name.rstrip("/")) is None:
                         raise ServiceError("unsafe path in archive", 400)
                     total += info.file_size
                     if total > MAX_UPLOAD_BYTES * 8:
@@ -1165,10 +1180,25 @@ class ProjectService:
                     target = root / name
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_bytes(zf.read(info))
-            project = Project.load(root)
+            try:
+                project = Project.load(root, strict=True)
+            except ValueError as exc:
+                if "unsafe" in str(exc):
+                    raise ServiceError(f"unsafe archive: {exc}", 400) from exc
+                raise
             project.meta["id"] = project_id
             project.meta["owner"] = owner
             project.meta["imported_at"] = _now()
+            project.meta["imported_by_role"] = role
+            if role not in ("approver", "admin"):
+                # Reviewer decisions are not editor-supplied data: a claimed approval
+                # travels as history only, never as authority.
+                for rec in project.variants.values():
+                    if rec.approval != "none":
+                        rec.approval_reason = (
+                            f"reset on import by {role} (archive claimed '{rec.approval}')"
+                        )
+                        rec.approval = "none"
             project.save()
             self.usage.add(owner, "projects")
         except ServiceError:
@@ -1290,6 +1320,11 @@ def _normalize_hex(color: str) -> str:
     if len(c) in (6, 8) and all(ch in "0123456789abcdefABCDEF" for ch in c):
         return "#" + c.lower()
     return "#ffffff"
+
+
+def _is_symlink_member(info: zipfile.ZipInfo) -> bool:
+    """Unix zip members record their mode in the high 16 bits of external_attr."""
+    return stat.S_ISLNK(info.external_attr >> 16)
 
 
 def _now() -> str:

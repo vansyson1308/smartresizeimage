@@ -12,6 +12,7 @@ from PIL import Image
 from .document import AssetRef
 
 _SAFE = re.compile(r"[^A-Za-z0-9._-]+")
+_FILENAME = re.compile(r"^(?!\.)[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$")
 
 
 class AssetStore:
@@ -53,7 +54,14 @@ class AssetStore:
             return self.put(img, original_name or p.name)
 
     def path(self, ref: AssetRef | str) -> Path:
+        """On-disk path of an asset; raises ``ValueError`` for a name that would leave the store.
+
+        Asset references travel inside editable project archives, so ``ref.path`` is
+        untrusted: only a bare ``<hash>.png`` style filename is accepted.
+        """
         name = ref.path if isinstance(ref, AssetRef) else f"{ref}.png"
+        if not isinstance(name, str) or not _FILENAME.match(name):
+            raise ValueError(f"unsafe asset path {name!r}")
         return self.root / name
 
     def get(self, ref: AssetRef | str) -> Image.Image:
@@ -62,7 +70,10 @@ class AssetStore:
             return img.convert("RGBA").copy()
 
     def exists(self, ref: AssetRef | str) -> bool:
-        return self.path(ref).exists()
+        try:
+            return self.path(ref).is_file()
+        except ValueError:
+            return False
 
     def verify(self, ref: AssetRef) -> bool:
         """Confirm the stored bytes still match the recorded content hash."""
