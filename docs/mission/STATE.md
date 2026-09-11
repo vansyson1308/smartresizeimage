@@ -235,25 +235,27 @@ isolated → token lists projects → 900 px without horizontal scroll.
   mask overlap, bounds, hard rules on final boxes, subject correlation) re-judge renders
   under seeded perturbations; result recorded below once run.
 
-## Release-criteria check (2026-09-09, end of this session)
+## Release-criteria check (updated 2026-09-11)
 
 | Criterion (MISSION.md priorities / brief) | Status | Evidence |
 |---|---|---|
 | Truthful evaluation: score describes what the customer sees | VERIFIED_LOCAL | Contract v2 on rendered pixels; preserved false positive rejected for the right reason; skipped checks never pass. Calibration vs humans BLOCKED_EXTERNAL. |
-| One complete, reopenable end-to-end journey | VERIFIED_LOCAL | 21-step browser journey against the real server (import/blank → interpret → brief → generate → review → campaign change with kept layout → export → reopen); no console errors. |
+| One complete, reopenable end-to-end journey | VERIFIED_LOCAL | Committed 41-step browser journey against the real server with local auth and the offline guard (setup → design → brief with a creative direction → campaign table → generate → review per row → approve/reject → regenerate → export → save/reopen → members, tokens, second workspace, approver account); green on CI. |
 | Native text and asset fidelity | VERIFIED_LOCAL | Native text fitting/rendering with font disclosure and glyph coverage; assets by content hash; recovered elements never silently converted. |
 | Measured differentiation before claims | VERIFIED_LOCAL (synthetic) | Frozen holdout, Wilson intervals, ablations for planner/repair/plates/joint/H1/H3/H5 with verbatim reports; no customer numbers claimed. |
-| Operability | VERIFIED_LOCAL | Owner isolation + roles, quotas/metering, rate limiting, retention, durable jobs, pilot instruments, Docker/compose, operations doc. Multi-node, billing, SSO not provided. |
+| Operability | VERIFIED_LOCAL | Local users/sessions/tokens with roles, workspace isolation, plans and quotas, rate limiting, retention, durable jobs with restart resume, incremental refresh, offline guard, pilot instruments, Docker/compose, operations doc. Multi-node, billing, SSO not provided; Docker image build unverified here. |
 | Real design corpus, human reviewers, provider credentials, Docker daemon | BLOCKED_EXTERNAL | Not available in this environment; every dependent claim is marked as such. |
 
 ## Next actions (in order)
 
-1. Real-design corpus when access exists (licensed PSDs/photos); decomposition on
-   photographs; human calibration of verdicts and correction-time measurement via the pilot
-   instruments (this is also what turns the H1 proxy into a measured correction rate).
-2. Still open on the commercial side: Docker image build verification on a machine with a
-   Docker daemon; event-log retention (projects are purged, events are not); multi-node
-   rate limits and job records (per process today); billing remains out of scope without
-   authorization.
-3. Research follow-ups: H1 with more than one example per orientation and with real designer
-   examples; brand rules for layout families (only constraints carry today).
+1. Phase D as declared in Mission V2: R1–R4 on a *designed* corpus of 12 brands with real
+   masters (licensed PSDs or designer-made layered files), baselines and ablations run with
+   `tools/run_ablations.py`, `run_campaign.py` and `find_counterexamples.py`; human
+   calibration of verdicts and correction-time measurement through the pilot instruments.
+   All of this needs designs and reviewers this environment does not have (BLOCKED_EXTERNAL).
+2. Phase E: Docker image build on a machine with a daemon (`docker compose build && up`,
+   `/api/health`, browser journey against port 8000, record image size and cold start);
+   packaging notes; keep the Vietnamese handoff (`docs/mission/HANDOFF_VI.md`) current.
+3. Product follow-ups with evidence value: grammar families for extreme strips (728×90),
+   directions in the per-variant detail view, run-level text editing in the UI, multi-node
+   job records and sessions.

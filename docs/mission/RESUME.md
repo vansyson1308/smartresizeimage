@@ -43,17 +43,17 @@ Screenshots and `journey_report.json` (every step with its result) land in
 
 ## Next executable task
 
-Mission V2 phase A (audit closure) is done locally; see `LEDGER.json`. Continue with phase B,
-in this order:
+Phases A (audit closure), B (commercial spine) and C (owned intelligence: grammar,
+directions, subject integrity, incremental refresh, counterexample search) are done locally
+and recorded in `LEDGER.json`. What remains needs things this environment does not have:
 
-Phase B is done locally: campaign table (`rows`, CSV import, per-row review/export,
-`tools/run_campaign.py`), restart resume, brand profiles, plan entitlements, offline guard.
-
-1. Phase C (owned intelligence): creative directions per campaign row as planner inputs;
-   adaptive grammar/compiler over the layout families; mascot/subject invariants;
-   incremental compilation; counterexample tooling.
-2. Then phase D (R1–R4 on a designed 12-brand corpus with baselines and ablations) and
-   phase E (Docker build on a machine with a daemon, packaging, Vietnamese handoff).
+1. Phase D research on a designed 12-brand corpus with real masters and human reviewers
+   (R1–R4 with baselines); the tools are in place (`run_ablations.py`, `run_campaign.py`,
+   `find_counterexamples.py`, pilot instruments). Until then every number is synthetic.
+2. Phase E: Docker image build on a machine with a daemon; the Vietnamese handoff is in
+   `HANDOFF_VI.md`.
+3. Product follow-ups: grammar families for extreme strips, directions shown in the detail
+   view, run-level text editing in the UI.
 
 ## Files to know
 
