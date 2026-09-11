@@ -292,6 +292,31 @@ def _run(j: Journey, page, base: str, logo: Path, hero: Path) -> None:
     price = next(e for e in doc["elements"] if e["name"] == "Price")
     j.step("mark price verbatim via panel", price["text"]["protected"] is True)
 
+    # run-level editing: split the price into two styled runs from the panel
+    original = page.input_value("#el-text")
+    page.check("#el-runs-mode")
+    page.wait_for_selector("#el-runs:not(.hidden) .run-row")
+    cut = max(1, len(original) // 2)
+    page.fill("#el-runs .run-row:nth-child(1) [data-rtext]", original[:cut])
+    page.click("#el-run-add")
+    page.fill("#el-runs .run-row:nth-child(2) [data-rtext]", original[cut:])
+    page.select_option("#el-runs .run-row:nth-child(2) [data-rweight]", "bold")
+    page.fill("#el-runs .run-row:nth-child(2) [data-rcolor]", "#d62828")
+    page.click("#el-apply")
+    page.wait_for_timeout(600)
+    doc = j.get(f"/api/projects/{pid}")["document"]
+    price = next(e for e in doc["elements"] if e["name"] == "Price")
+    runs = price["text"]["runs"]
+    page.click("#layer-list li:has-text('SUMMER')")
+    page.click("#layer-list li:has-text('Price')")
+    note = page.inner_text("#el-runs-note")
+    j.step("split price into two styled runs via panel",
+           len(runs) == 2 and "".join(r["text"] for r in runs) == original
+           and runs[1]["style"]["weight"] == "bold" and runs[1]["style"]["color"] == "#d62828"
+           and runs[0]["style"]["color"] != "#d62828" and price["text"]["protected"] is True
+           and "2 styled runs" in note and page.is_checked("#el-runs-mode"),
+           runs=[(r["text"], r["style"]["weight"], r["style"]["color"]) for r in runs], note=note)
+
     page.click("#layer-list li:has-text('SUMMER')")
     page.wait_for_selector("rect.el-box.selected")
     box = None

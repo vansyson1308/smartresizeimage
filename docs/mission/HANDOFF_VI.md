@@ -25,7 +25,7 @@ python3 -m venv .venv && .venv/bin/pip install -r backend/requirements-ci.txt
 .venv/bin/pip install "uvicorn[standard]" playwright && .venv/bin/python -m playwright install --with-deps chromium
 .venv/bin/ruff check backend                                   # sạch
 .venv/bin/python -m pytest backend/tests --ignore=backend/tests/e2e -q   # 343 passed (11/09)
-.venv/bin/python -m pytest backend/tests/e2e -rs               # browser journey 42 bước, 0 lỗi, server chạy AUTOBANNER_OFFLINE=1
+.venv/bin/python -m pytest backend/tests/e2e -rs               # browser journey 43 bước, 0 lỗi, server chạy AUTOBANNER_OFFLINE=1
 AUTOBANNER_AUTH=local AUTOBANNER_DATA_DIR=./data .venv/bin/uvicorn backend.app.api.server:app --port 8000
 ```
 
@@ -54,7 +54,8 @@ Chi tiết vận hành: `docs/OPERATIONS.md`.
 - **Cục bộ, đã kiểm chứng (VERIFIED_LOCAL)**: import PSD (layer tổng hợp) và ảnh phẳng (tách có
   độ tin cậy), tài liệu thiết kế có type, bố cục theo ràng buộc + họ bố cục + grammar, dàn chữ
   font thật với disclosure, kiểm tra chất lượng trên ảnh render (che khuất, cắt, đọc được, rule
-  cứng, palette/font thương hiệu, giữ nguyên chủ thể), sửa cục bộ, học từ biến thể đã duyệt và
+  cứng, palette/font thương hiệu, giữ nguyên chủ thể), sửa cục bộ, sửa từng run chữ (đậm/cỡ/màu
+  riêng) ngay trong panel, học từ biến thể đã duyệt và
   lịch sử từ chối, rule thương hiệu, bảng chiến dịch (12 × 6 = 72 đo được), làm mới tăng dần,
   export PNG/JPEG/WebP/PDF + manifest, lưu/mở lại project, auth cục bộ + workspace, gói dịch vụ,
   chạy tiếp job sau restart (đã sửa race giữa bước khôi phục và worker khi cùng ghi index biến

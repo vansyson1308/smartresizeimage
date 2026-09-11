@@ -14,6 +14,9 @@ All notable changes to this project will be documented in this file.
   silently ignored; selector in the Variants view and a `direction` CSV column. The variant
   detail view summarises the layout: family, traits, direction asked and whether it was
   honoured, and copy left out on that size.
+- Run-level text editing in the design panel ("Edit styled runs separately"): each styled run
+  gets its own text, weight, size and colour, runs can be added or removed, and the edit is
+  saved as an explicit `runs` operation; font family and alignment stay element-wide.
 - Hideable copy on small sizes: an element the design marks "May be left out on small
   sizes" is dropped by the planner only when the stack cannot fit at the minimum text sizes
   (least important first; never headline, CTA, logo or keep_visible elements), recorded as a

@@ -159,6 +159,8 @@
           <div id="el-text-wrap" class="hidden">
             <label>Text</label><textarea id="el-text"></textarea>
             <div id="el-runs-note" class="small muted hidden"></div>
+            <label class="row" style="color:var(--text)" title="Edit each styled run (text, weight, size, colour) on its own; font family and alignment below then apply to the whole element"><input id="el-runs-mode" type="checkbox" style="width:auto"> Edit styled runs separately</label>
+            <div id="el-runs" class="hidden"></div>
             <div class="row">
               <div class="grow"><label>Font family</label><input id="el-font" type="text" list="font-list"><datalist id="font-list"></datalist></div>
               <div style="width:90px"><label>Size (px)</label><input id="el-size" type="number" min="4" step="1"></div>

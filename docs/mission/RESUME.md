@@ -52,7 +52,8 @@ and recorded in `LEDGER.json`. What remains needs things this environment does n
    `find_counterexamples.py`, pilot instruments). Until then every number is synthetic.
 2. Phase E: Docker image build on a machine with a daemon; the Vietnamese handoff is in
    `HANDOFF_VI.md`.
-3. Product follow-ups: grammar families for extreme strips, run-level text editing in the UI.
+3. Product follow-ups: grammar families for extreme strips, multi-node job records and
+   sessions.
 
 ## Files to know
 

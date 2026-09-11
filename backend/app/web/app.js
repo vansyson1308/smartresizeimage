@@ -241,8 +241,11 @@
       runsNote.classList.toggle("hidden", e.text.runs.length <= 1);
       if (e.text.runs.length > 1) {
         const parts = e.text.runs.map((r) => `"${r.text.length > 18 ? r.text.slice(0, 18) + "…" : r.text}" ${r.style.weight || "regular"} ${Math.round(r.style.font_size || 0)}px ${r.style.color || ""}`);
-        runsNote.textContent = `${e.text.runs.length} styled runs (kept on edit; the fields below show the first run and apply changes to all): ${parts.join(" · ")}`;
+        runsNote.textContent = `${e.text.runs.length} styled runs (kept on edit; the single-style fields show the first run and apply changes to all): ${parts.join(" · ")}`;
       }
+      $("#el-runs-mode").checked = e.text.runs.length > 1;
+      renderRuns(e.text.runs);
+      setRunsMode($("#el-runs-mode").checked);
       $("#el-font").value = st.font_family || "";
       $("#el-size").value = Math.round(st.font_size || 24);
       $("#el-weight").value = st.weight || "regular";
@@ -262,6 +265,50 @@
     $("#font-list").innerHTML = state.fonts.map((f) => `<option value="${esc(f)}">`).join("");
   }
 
+  // Run-level editing: each styled run of a text element gets its own text, weight,
+  // size and colour; the element-wide fields keep the family and alignment. Saved as
+  // an explicit ``runs`` edit, so nothing is inferred from a flattened string.
+  function runRow(r) {
+    const st = r.style || {};
+    const weights = ["regular", "bold", "light", "medium"].map((w) => `<option ${(st.weight || "regular") === w ? "selected" : ""}>${w}</option>`).join("");
+    return `<div class="row run-row"><input type="text" class="grow" data-rtext value="${esc(r.text || "")}" placeholder="text"><select data-rweight style="width:92px">${weights}</select><input type="number" data-rsize min="4" step="1" style="width:70px" value="${Math.round(st.font_size || 24)}" title="Size (px)"><input type="text" data-rcolor style="width:90px" value="${esc(st.color || "#000000")}" title="Color"><button type="button" data-rdel class="small" title="Remove this run">×</button></div>`;
+  }
+  function renderRuns(runs) {
+    const box = $("#el-runs");
+    box.innerHTML = runs.map(runRow).join("") + '<div class="row"><button type="button" id="el-run-add" class="small">+ Add run</button><span class="small muted">Runs render on one line in order; a run keeps its own weight, size and colour.</span></div>';
+    box.querySelectorAll("[data-rdel]").forEach((b) => b.addEventListener("click", () => { if (box.querySelectorAll(".run-row").length > 1) { b.closest(".run-row").remove(); syncRunsText(); } }));
+    box.querySelectorAll("[data-rtext]").forEach((i) => i.addEventListener("input", syncRunsText));
+    $("#el-run-add").addEventListener("click", () => {
+      const last = readRuns().slice(-1)[0] || { text: "", style: {} };
+      const rows = box.querySelectorAll(".run-row"); const anchor = rows[rows.length - 1];
+      anchor.insertAdjacentHTML("afterend", runRow({ text: "", style: last.style }));
+      const row = anchor.nextElementSibling;
+      row.querySelector("[data-rdel]").addEventListener("click", () => { if (box.querySelectorAll(".run-row").length > 1) { row.remove(); syncRunsText(); } });
+      row.querySelector("[data-rtext]").addEventListener("input", syncRunsText);
+      row.querySelector("[data-rtext]").focus();
+    });
+  }
+  function readRuns() {
+    return $$("#el-runs .run-row").map((row) => ({
+      text: row.querySelector("[data-rtext]").value,
+      style: { weight: row.querySelector("[data-rweight]").value, font_size: Number(row.querySelector("[data-rsize]").value) || 24, color: row.querySelector("[data-rcolor]").value.trim() || "#000000" },
+    }));
+  }
+  function syncRunsText() { $("#el-text").value = readRuns().map((r) => r.text).join(""); }
+  function setRunsMode(on) {
+    $("#el-runs").classList.toggle("hidden", !on);
+    $("#el-text").readOnly = on;
+    ["#el-size", "#el-weight", "#el-color"].forEach((sel) => { $(sel).disabled = on; });
+    if (on) syncRunsText();
+  }
+  $("#el-runs-mode").addEventListener("change", (ev) => {
+    const e = elementById(state.selectedId);
+    if (ev.target.checked && e && e.kind === "text" && e.text.runs.length <= 1) {
+      // Start from the text as typed in the single-style editor.
+      renderRuns([{ text: $("#el-text").value, style: { weight: $("#el-weight").value, font_size: Number($("#el-size").value) || 24, color: $("#el-color").value || "#000000" } }]);
+    }
+    setRunsMode(ev.target.checked);
+  });
   $("#el-apply").addEventListener("click", async () => {
     const e = elementById(state.selectedId); if (!e) return;
     const ops = [];
@@ -271,8 +318,15 @@
     if (e.kind === "text") {
       const translations = {};
       $("#el-translations").value.split("\n").forEach((line) => { const m = /^\s*([A-Za-z0-9-]+)\s*=\s*(.+)$/.exec(line); if (m) translations[m[1]] = m[2].trim(); });
-      ops.push({ op: "set_text", element_id: e.id, text: $("#el-text").value, protected: $("#el-protected").checked, translations,
-        style: { font_family: $("#el-font").value || "DejaVu Sans", font_size: Number($("#el-size").value) || 24, weight: $("#el-weight").value, align: $("#el-align").value, color: $("#el-color").value || "#000000" } });
+      const family = $("#el-font").value || "DejaVu Sans", align = $("#el-align").value;
+      if ($("#el-runs-mode").checked) {
+        const runs = readRuns().filter((r) => r.text).map((r) => ({ text: r.text, style: { ...r.style, font_family: family, align } }));
+        if (!runs.length) { toast("Give at least one run some text.", true); return; }
+        ops.push({ op: "set_text", element_id: e.id, runs, protected: $("#el-protected").checked, translations, style: { font_family: family, align } });
+      } else {
+        ops.push({ op: "set_text", element_id: e.id, text: $("#el-text").value, protected: $("#el-protected").checked, translations,
+          style: { font_family: family, font_size: Number($("#el-size").value) || 24, weight: $("#el-weight").value, align, color: $("#el-color").value || "#000000" } });
+      }
     }
     await patchDocument(ops, `edit ${e.name}`);
     toast("Saved.");
