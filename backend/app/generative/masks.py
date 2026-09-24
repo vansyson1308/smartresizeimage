@@ -121,6 +121,35 @@ def _paint_bbox(mask: np.ndarray, x: int, y: int, w: int, h: int) -> None:
         mask[y1:y2, x1:x2] = True
 
 
+def _paint_element(mask: np.ndarray, elem: DesignElement, layout: LayoutResult) -> None:
+    """Protect the element's silhouette where the compositor draws it.
+
+    Painting the whole bounding box would also freeze the background around
+    round or irregular elements (a mascot, a pill-shaped CTA), and background
+    grading then leaves a visible rectangle around them.
+    """
+    box = layout.new_bbox
+    if elem.image is None or box.width <= 0 or box.height <= 0:
+        _paint_bbox(mask, box.x, box.y, box.width, box.height)
+        return
+    image = elem.image
+    fitted = box.fit_aspect(*image.size)  # where the compositor actually draws it
+    if "A" not in image.getbands():
+        _paint_bbox(mask, fitted.x, fitted.y, fitted.width, fitted.height)
+        return
+    alpha = image.getchannel("A").resize((fitted.width, fitted.height), Image.Resampling.BILINEAR)
+    # alpha > 8 already includes the anti-aliased rim; no dilation, or the
+    # ungraded rim shows up as a halo around round shapes.
+    silhouette = np.asarray(alpha) > 8
+    height, width = mask.shape
+    x1, y1 = max(0, fitted.x), max(0, fitted.y)
+    x2, y2 = min(width, fitted.x + fitted.width), min(height, fitted.y + fitted.height)
+    if x1 >= x2 or y1 >= y2:
+        return
+    sx, sy = x1 - fitted.x, y1 - fitted.y
+    mask[y1:y2, x1:x2] |= silhouette[sy:sy + (y2 - y1), sx:sx + (x2 - x1)]
+
+
 def _build_ocr_text_mask(image: Image.Image) -> np.ndarray:
     width, height = image.size
     mask = np.zeros((height, width), dtype=bool)
@@ -203,8 +232,7 @@ def build_layout_masks(
         if not _is_protected_element(elem):
             continue
 
-        bbox = layout.new_bbox
-        _paint_bbox(protected, bbox.x, bbox.y, bbox.width, bbox.height)
+        _paint_element(protected, elem, layout)
 
     editable = ~protected
     masks = Masks(

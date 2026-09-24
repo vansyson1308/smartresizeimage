@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from functools import lru_cache
 
 import numpy as np
 from PIL import Image
@@ -33,36 +34,25 @@ def high_quality_resize(
     if image.mode not in ("RGB", "RGBA"):
         image = image.convert("RGBA")
 
-    # Convert to numpy for gamma correction
-    arr = np.array(image).astype(np.float32) / 255.0
+    # Gamma decode -> resize in linear light -> gamma encode. Both transfer
+    # functions map uint8 -> uint8, so they are applied as 256-entry lookup
+    # tables (bit-identical to the float pipeline, ~10x faster).
+    decode, encode, alpha = _gamma_luts(float(Config.GAMMA))
+    has_alpha = image.mode == "RGBA"
+    lut_decode = decode * 3 + (alpha if has_alpha else [])
+    lut_encode = encode * 3 + (alpha if has_alpha else [])
 
-    # Gamma decode (to linear)
-    rgb = arr[:, :, :3]
-    alpha = arr[:, :, 3:4] if arr.shape[2] == 4 else None
+    linear = image.point(lut_decode)
+    resized = linear.resize(target_size, Config.RESIZE_QUALITY)
+    return resized.point(lut_encode)
 
-    linear = np.power(np.clip(rgb, 0, 1), Config.GAMMA)
 
-    if alpha is not None:
-        linear = np.concatenate([linear, alpha], axis=2)
-
-    # Resize
-    pil_linear = Image.fromarray(
-        (linear * 255).astype(np.uint8),
-        mode="RGBA" if alpha is not None else "RGB",
-    )
-    resized = pil_linear.resize(target_size, Config.RESIZE_QUALITY)
-
-    # Gamma encode (back to sRGB)
-    arr_resized = np.array(resized).astype(np.float32) / 255.0
-    rgb_resized = arr_resized[:, :, :3]
-
-    encoded = np.power(np.clip(rgb_resized, 0, 1), 1.0 / Config.GAMMA)
-
-    if alpha is not None:
-        alpha_resized = arr_resized[:, :, 3:4]
-        encoded = np.concatenate([encoded, alpha_resized], axis=2)
-        result = Image.fromarray((encoded * 255).astype(np.uint8), mode="RGBA")
-    else:
-        result = Image.fromarray((encoded * 255).astype(np.uint8), mode="RGB")
-
-    return result
+@lru_cache(maxsize=4)
+def _gamma_luts(gamma: float) -> tuple[list[int], list[int], list[int]]:
+    # Same float32 arithmetic (x / 255 -> f -> * 255 -> truncate) as the
+    # original per-pixel implementation, so results are bit-identical.
+    values = np.arange(256, dtype=np.float32) / np.float32(255.0)
+    decode = (np.power(np.clip(values, 0, 1), gamma) * 255).astype(np.uint8)
+    encode = (np.power(np.clip(values, 0, 1), 1.0 / gamma) * 255).astype(np.uint8)
+    alpha = (values * 255).astype(np.uint8)
+    return decode.tolist(), encode.tolist(), alpha.tolist()

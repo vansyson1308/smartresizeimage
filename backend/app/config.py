@@ -9,8 +9,12 @@ class Config:
     """Global configuration."""
 
     # Processing limits
-    MAX_IMAGE_SIZE = 4096
+    MAX_IMAGE_SIZE = 4096  # max target width/height
     MIN_ELEMENT_SIZE = 10
+    MAX_SOURCE_DIMENSION = 12000  # max source width/height accepted from uploads
+    MAX_SOURCE_PIXELS = 80_000_000  # decompression-bomb guard for PIL
+    MAX_UPLOAD_BYTES = 150 * 1024 * 1024
+    MAX_TARGETS_PER_JOB = 60
 
     # Layout
     MARGIN_PERCENT = 0.05  # 5% margin from edges
@@ -20,6 +24,9 @@ class Config:
     INPAINT_RADIUS = 5
     BLUR_RADIUS = 50
     OPENCV_INPAINT_RADIUS = 5  # Radius for cv2.inpaint TELEA
+    INPAINT_FULLRES_MAX_PIXELS = 250_000  # larger fills are solved at low resolution
+    INPAINT_LOWRES_TARGET_PIXELS = 120_000
+    INPAINT_SEAM_BAND_PX = 12  # full-res refinement band next to original content
 
     # Content-aware fit (flat PNG/JPG relayout)
     MAX_CROP_PERCENT = 0.20  # Never crop more than 20% of source content
@@ -35,6 +42,10 @@ class Config:
     # AI
     CLIP_MODEL = "openai/clip-vit-base-patch32"
     CONFIDENCE_THRESHOLD = 0.7
+
+    # Layout engine for layered designs: "stack" (role-aware, overlap-free)
+    # or "legacy" (zone templates + profile solver).
+    LAYOUT_ENGINE = "stack"
 
     # Zone assignment
     MAX_ELEMENTS_PER_ZONE = 2
@@ -61,3 +72,8 @@ class Config:
     # Optional decor synthesis (Phase 2 PR-D)
     GENERATIVE_DECOR_POLICY = "OFF"  # OFF | BG_PLUS_DECOR
     GENERATIVE_DECOR_SEED = 123
+
+
+# Guard every PIL decode in the process against decompression bombs. PIL warns
+# above this limit and raises DecompressionBombError above twice the limit.
+Image.MAX_IMAGE_PIXELS = Config.MAX_SOURCE_PIXELS

@@ -2,10 +2,12 @@
 
 ## Pre-release verification
 - [ ] `ruff check backend/app backend/tests backend/tools`
-- [ ] `pytest -q`
+- [ ] `pytest backend/tests -q`
 - [ ] `python backend/tools/generate_bench_fixtures.py --cases 12 --seed 42`
 - [ ] `python backend/tools/run_layout_bench.py --mode both --seed 42`
-- [ ] Runtime smoke (UI + CLI smoke for 3 sizes)
+- [ ] Runtime smoke: `docker compose up --build`, render the `starter` pack in the studio
+- [ ] CLI smoke: `python -m app render <file> -k starter -o /tmp/out`
+- [ ] Version bumped in `backend/app/__init__.py`
 - [ ] Confirm no binary artifacts are staged/tracked
 
 ## Repo hygiene

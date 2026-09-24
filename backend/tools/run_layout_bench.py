@@ -38,10 +38,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cases", default="all")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--generate", action="store_true", help="Generate fixtures before run")
+    parser.add_argument(
+        "--engine", choices=["legacy", "stack"], default="stack",
+        help="Layout engine under test (stack = role-aware engine used in production)",
+    )
     return parser.parse_args()
 
 
+_ENGINE = "legacy"
+
+
 def run_benchmark(args: argparse.Namespace) -> Path:
+    global _ENGINE
+    _ENGINE = getattr(args, "engine", "legacy")
     random.seed(args.seed)
     np.random.seed(args.seed)
 
@@ -124,7 +133,13 @@ def _run_one_mode(
         from backend.app.layout.engine import LayoutEngine
 
         layout_engine = LayoutEngine()
-        layout = layout_engine.calculate_layout(elements, source_size, target_size)
+        layout = None
+        if _ENGINE == "stack":
+            from backend.app.layout.stack import StackLayoutEngine
+
+            layout = StackLayoutEngine().calculate(elements, source_size, target_size)
+        if layout is None:
+            layout = layout_engine.calculate_layout(elements, source_size, target_size)
 
         if mode == "phase3":
             from backend.app.redesign.api import run_target_first_redesign

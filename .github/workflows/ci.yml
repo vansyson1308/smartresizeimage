@@ -6,17 +6,81 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  backend-tests:
+  test:
+    name: Lint & test (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - name: Install dependencies
+        run: pip install -r backend/requirements-ci.txt
+      - name: Lint
+        run: ruff check backend/app backend/tests backend/tools
+      - name: Test
+        run: pytest backend/tests/ -q --cov=backend/app --cov-report=term-missing:skip-covered
+
+  package:
+    name: Build & install package
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install dependencies
-        run: pip install -r backend/requirements-ci.txt
-      - name: Lint
-        run: ruff check backend/app backend/tests backend/tools
-      - name: Test
-        run: pytest backend/tests/ -v --cov=backend/app --cov-report=term-missing
+      - name: Build wheel
+        run: |
+          pip install build
+          python -m build --wheel backend --outdir dist
+      - name: Install wheel and smoke-test CLI
+        run: |
+          pip install dist/*.whl
+          cd /tmp
+          autobanner --version
+          autobanner presets --json > /dev/null
+          python -c "import app.api.app as m; assert (m.STATIC_DIR / 'studio.js').exists()"
+
+  docker:
+    name: Docker image smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Build image
+        run: docker build -t autobanner:ci backend
+      - name: Run container and render
+        run: |
+          docker run -d --name ab -p 7860:7860 --read-only --tmpfs /tmp \
+            -e AUTOBANNER_API_KEYS=ci-key autobanner:ci
+          for i in $(seq 1 30); do
+            curl -fsS localhost:7860/healthz && break
+            sleep 1
+          done
+          curl -fsS localhost:7860/healthz
+          pip install -q Pillow
+          python -c "from PIL import Image; Image.new('RGB', (600, 314), (40, 90, 160)).save('/tmp/in.png')"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -F file=@/tmp/in.png localhost:7860/v1/analyze)" = "401"
+          curl -fsS -H 'X-API-Key: ci-key' -F file=@/tmp/in.png \
+            -F 'options={"packs":["starter"],"format":"webp"}' \
+            -o /tmp/out.zip localhost:7860/v1/render
+          unzip -l /tmp/out.zip | grep manifest.json
+      - name: Container logs
+        if: always()
+        run: docker logs ab || true

@@ -44,6 +44,24 @@ class BoundingBox:
     def to_tuple(self) -> tuple[int, int, int, int]:
         return (self.x, self.y, self.x2, self.y2)
 
+    def fit_aspect(self, src_w: int, src_h: int, tolerance: float = 0.01) -> BoundingBox:
+        """Largest box with the ``src_w:src_h`` aspect ratio centred inside this one.
+
+        Raster layers are never re-rendered, so they must be scaled uniformly:
+        stretching a logo or a line of type to a reflowed box distorts the brand.
+        Returns ``self`` when the aspect ratios already match within ``tolerance``.
+        """
+        if src_w <= 0 or src_h <= 0 or self.width <= 0 or self.height <= 0:
+            return self
+        box_ratio = self.width / self.height
+        src_ratio = src_w / src_h
+        if abs(box_ratio / src_ratio - 1.0) <= tolerance:
+            return self
+        scale = min(self.width / src_w, self.height / src_h)
+        w = max(1, int(round(src_w * scale)))
+        h = max(1, int(round(src_h * scale)))
+        return BoundingBox(self.x + (self.width - w) // 2, self.y + (self.height - h) // 2, w, h)
+
 
 @dataclass
 class DesignElement:

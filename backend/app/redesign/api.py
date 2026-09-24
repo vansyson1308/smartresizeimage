@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 import numpy as np
 from PIL import Image
 
 from ..composition.engine import CompositionEngine
+from ..constants import BACKGROUND_ROLES
+from ..layout.safe_zone import fit_group_into_safe_rect
 from ..models import CompositionResult, DesignElement, LayoutResult
-from .anchors import extract_anchors, extract_anchors_from_boxes
+from .anchors import (
+    AnchorBundle,
+    build_protected_mask,
+    extract_anchors,
+    extract_anchors_from_boxes,
+)
 from .generator import make_generator
 from .planner import build_target_first_plan
 from .selector import select_best_candidate
@@ -36,10 +43,18 @@ def run_target_first_redesign(
     target_size: tuple[int, int],
     manual_anchors: list[dict[str, int | str]] | None = None,
     n_candidates: int = 8,
+    safe_rect: tuple[int, int, int, int] | None = None,
 ) -> CompositionResult:
     """Execute Phase 3 target-first redesign using anchored brand-locked workflow."""
     compositor = CompositionEngine(use_ai_inpainting=False)
-    base = compositor.compose(elements, layout_results, source_size, target_size)
+    # Layered input: the base must not contain the foreground. Every foreground
+    # layer is pasted once as an anchor; if it were also in the base, any shift
+    # or skyline stitching would leave ghost copies. Readability plates are
+    # still rendered under the (final) text positions.
+    layered = not manual_anchors and any(e.role in BACKGROUND_ROLES for e in elements)
+    base = compositor.compose(
+        elements, layout_results, source_size, target_size, draw_content=not layered
+    )
     source_bg = base.image.convert("RGBA")
     base_text_plate_meta = dict(base.metadata.get("text_plate", {}))
     # Phase 3 composes fresh background around immutable text anchors;
@@ -59,6 +74,12 @@ def run_target_first_redesign(
         )
     else:
         anchors_bundle = extract_anchors(elements, layout_results, target_size, mask_padding=8)
+
+    safe_zone_scale = 1.0
+    if safe_rect is not None and anchors_bundle.anchors:
+        anchors_bundle, safe_zone_scale = _fit_anchors_to_safe_rect(
+            anchors_bundle, safe_rect, target_size
+        )
 
     plan = build_target_first_plan(
         anchors_bundle.anchors,
@@ -110,6 +131,7 @@ def run_target_first_redesign(
         metadata={
             "redesign": asdict(debug),
             "text_plate": base_text_plate_meta,
+            "safe_zone_scale": round(safe_zone_scale, 4),
             "protected_ratio": float(np.mean(anchors_bundle.protected_mask))
             if anchors_bundle.protected_mask.size
             else 0.0,
@@ -117,10 +139,31 @@ def run_target_first_redesign(
     )
 
 
+def _fit_anchors_to_safe_rect(
+    bundle: AnchorBundle,
+    safe_rect: tuple[int, int, int, int],
+    target_size: tuple[int, int],
+) -> tuple[AnchorBundle, float]:
+    # Key by position, not element_id: ids are not guaranteed unique.
+    boxes = {str(i): a.target_bbox for i, a in enumerate(bundle.anchors)}
+    critical = {str(i) for i, a in enumerate(bundle.anchors) if a.protected}
+    adjusted, scale = fit_group_into_safe_rect(boxes, critical, safe_rect)
+    if scale == 1.0 and adjusted == boxes:
+        return bundle, 1.0
+    anchors = [
+        replace(a, target_bbox=adjusted[str(i)]) for i, a in enumerate(bundle.anchors)
+    ]
+    mask = build_protected_mask(anchors, target_size, padding=8)
+    return AnchorBundle(anchors=anchors, protected_mask=mask), scale
+
+
 def _pick_source_background(
     elements: list[DesignElement],
     source_size: tuple[int, int],
 ) -> Image.Image:
+    for e in elements:
+        if e.effects.get("_source_type") == "flat_image" and e.image is not None:
+            return e.image.convert("RGBA")
     for e in elements:
         if e.role.value == "background" and e.image is not None:
             return e.image.convert("RGBA")

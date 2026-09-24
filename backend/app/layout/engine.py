@@ -257,6 +257,10 @@ class LayoutEngine:
 
     @staticmethod
     def _is_text_element(elem: DesignElement) -> bool:
+        # Auto-detected text is pixels without a string to reflow: lay it out
+        # as a visual block (uniform scale) instead of re-wrapping its name.
+        if elem.effects.get("_auto_layer") and not elem.text_content:
+            return False
         return elem.role in _TEXT_ROLES or bool(elem.text_content)
 
     def _layout_text_element(

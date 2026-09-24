@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 import os
 from pathlib import Path
@@ -12,6 +13,7 @@ from PIL import Image, ImageDraw
 from .classifier import SemanticClassifier
 from .composition import CompositionEngine
 from .config import Config
+from .constants import BACKGROUND_ROLES
 from .enums import ElementRole
 from .generative.decor import apply_optional_decor_synthesis
 from .generative.engine import GenerativeOutpaintEngine
@@ -23,20 +25,42 @@ from .generative.harmonize import (
 )
 from .generative.masks import build_layout_masks
 from .layout import LayoutEngine
+from .layout.safe_zone import fit_group_into_safe_rect
 from .layout.solver import export_layout_debug_json, render_layout_debug_overlay
+from .layout.stack import StackLayoutEngine
 from .models import CompositionResult, DesignElement, LayoutResult
-from .parser import get_parser
+from .parser import ImageParser, get_parser
 from .redesign import run_target_first_redesign
 from .validators import validate_dimensions, validate_file_path
 
 logger = logging.getLogger("autobanner.relayout")
 
+_SAFE_ZONE_CRITICAL_ROLES = frozenset(
+    {
+        ElementRole.HEADLINE,
+        ElementRole.SUBHEADLINE,
+        ElementRole.BODY_TEXT,
+        ElementRole.CTA,
+        ElementRole.LOGO,
+        ElementRole.BADGE,
+        ElementRole.LABEL,
+    }
+)
+
 
 class ReLayoutEngine:
     """Main engine that orchestrates the entire re-layout process."""
 
-    def __init__(self, use_ai: bool = True) -> None:
-        self.classifier = SemanticClassifier(use_ai=use_ai)
+    def __init__(
+        self,
+        use_ai: bool = True,
+        classifier: SemanticClassifier | None = None,
+    ) -> None:
+        self.stack_layout = StackLayoutEngine()
+        self._mask_cache: tuple[Any, list[LayoutResult], Any] | None = None
+        # A classifier may be shared across engines so the (optional) CLIP
+        # model is loaded once per process rather than once per job.
+        self.classifier = classifier or SemanticClassifier(use_ai=use_ai)
         self.layout_engine = LayoutEngine()
         self.compositor = CompositionEngine(use_ai_inpainting=use_ai)
         self.generative_engine = GenerativeOutpaintEngine()
@@ -46,11 +70,13 @@ class ReLayoutEngine:
         self.file_path: str | None = None
         self._last_outpaint_metadata: dict[str, Any] = {}
 
-    def load_file(self, file_path: str) -> dict[str, Any]:
+    def load_file(self, file_path: str, auto_layers: bool = False) -> dict[str, Any]:
         """Load and analyze a design file (PSD, PNG, JPG, WEBP).
 
         Args:
             file_path: Path to the design file.
+            auto_layers: For flat PNG/JPG/WEBP, detect headline/CTA/logo/hero
+                as pseudo-layers so they can be rearranged independently.
 
         Returns:
             Dict with analysis results for UI display.
@@ -66,8 +92,11 @@ class ReLayoutEngine:
         # Get appropriate parser
         parser = get_parser(file_path)
 
-        # Parse file
-        self.elements, self.source_size = parser.parse(file_path)
+        # Parse file (auto-layering only applies to flat raster images)
+        if auto_layers and isinstance(parser, ImageParser):
+            self.elements, self.source_size = parser.parse(file_path, auto_layers=True)
+        else:
+            self.elements, self.source_size = parser.parse(file_path)
 
         # Classify elements
         self.elements = self.classifier.classify_all(self.elements, self.source_size)
@@ -141,11 +170,17 @@ class ReLayoutEngine:
                 return True
         return False
 
-    def relayout(self, target_size: tuple[int, int]) -> CompositionResult:
+    def relayout(
+        self,
+        target_size: tuple[int, int],
+        safe_rect: tuple[int, int, int, int] | None = None,
+    ) -> CompositionResult:
         """Re-layout elements to target size.
 
         Args:
             target_size: Target canvas size (width, height).
+            safe_rect: Optional (x1, y1, x2, y2) area that key elements must
+                stay inside (platform UI overlay avoidance).
 
         Returns:
             CompositionResult with final image.
@@ -160,9 +195,9 @@ class ReLayoutEngine:
         validate_dimensions(target_size[0], target_size[1])
 
         # Calculate layout
-        layout_results = self.layout_engine.calculate_layout(
-            self.elements, self.source_size, target_size
-        )
+        layout_results = self._calculate_layout(target_size)
+        if safe_rect is not None:
+            layout_results = self._fit_layout_to_safe_rect(layout_results, safe_rect)
         self._maybe_export_layout_debug(layout_results, target_size)
 
         # Deterministic baseline (fallback target)
@@ -181,26 +216,39 @@ class ReLayoutEngine:
 
         # Candidate with generative stages
         self._last_outpaint_metadata = {}
-        candidate = self.compositor.compose(
-            self.elements,
-            layout_results,
-            self.source_size,
-            target_size,
-            bg_outpaint_fn=(
-                lambda canvas: self._bg_only_outpaint(canvas, layout_results, target_size)
-            ),
-        )
-        if self._last_outpaint_metadata:
-            candidate.metadata["generative"] = self._last_outpaint_metadata
+        if not Config.GENERATIVE_BG_ENABLED and Config.GENERATIVE_DECOR_POLICY == "OFF":
+            # Both generative stages are no-ops, so the candidate would be a
+            # pixel-identical second composition. Reuse the baseline instead of
+            # paying for compose + inpainting twice.
+            candidate = CompositionResult(
+                image=deterministic_result.image.copy(),
+                layout_results=deterministic_result.layout_results,
+                warnings=list(deterministic_result.warnings),
+                metadata=copy.deepcopy(deterministic_result.metadata),
+            )
+            masks = self._layout_masks(layout_results, target_size)
+            candidate.metadata["generative"] = self._disabled_outpaint_metadata(masks)
+        else:
+            candidate = self.compositor.compose(
+                self.elements,
+                layout_results,
+                self.source_size,
+                target_size,
+                bg_outpaint_fn=(
+                    lambda canvas: self._bg_only_outpaint(canvas, layout_results, target_size)
+                ),
+            )
+            if self._last_outpaint_metadata:
+                candidate.metadata["generative"] = self._last_outpaint_metadata
 
-        candidate = self._apply_harmonize_and_grounding(
-            candidate,
-            layout_results,
-            target_size,
-            apply_decor=True,
-        )
+            candidate = self._apply_harmonize_and_grounding(
+                candidate,
+                layout_results,
+                target_size,
+                apply_decor=True,
+            )
 
-        masks = build_layout_masks(self.elements, layout_results, target_size)
+        masks = self._layout_masks(layout_results, target_size)
         gate_report = evaluate_quality_gates(
             baseline=deterministic_result.image,
             candidate=candidate.image,
@@ -235,6 +283,74 @@ class ReLayoutEngine:
 
 
 
+    def _layout_masks(
+        self, layout_results: list[LayoutResult], target_size: tuple[int, int]
+    ) -> Any:
+        """build_layout_masks, memoised for the layout currently being rendered.
+
+        One relayout needs the same masks for harmonisation, generative
+        metadata and quality gates; recomputing them resized every protected
+        layer's alpha several times per size.
+        """
+        key = (id(layout_results), target_size)
+        cached = self._mask_cache
+        if cached is not None and cached[0] == key and cached[1] is layout_results:
+            return cached[2]
+        masks = build_layout_masks(self.elements, layout_results, target_size)
+        self._mask_cache = (key, layout_results, masks)
+        return masks
+
+    def _calculate_layout(self, target_size: tuple[int, int]) -> list[LayoutResult]:
+        """Pick the layout engine: role-aware stack layout for layered designs."""
+        if Config.LAYOUT_ENGINE == "stack":
+            results = self.stack_layout.calculate(self.elements, self.source_size, target_size)
+            if results is not None:
+                debug = self.stack_layout.last_debug
+                self.layout_engine.last_layout_debug = {
+                    "engine": "stack",
+                    "mode": debug.mode if debug else None,
+                    "dropped": list(debug.dropped) if debug else [],
+                }
+                return results
+        return self.layout_engine.calculate_layout(self.elements, self.source_size, target_size)
+
+    def _fit_layout_to_safe_rect(
+        self,
+        layout_results: list[LayoutResult],
+        safe_rect: tuple[int, int, int, int],
+    ) -> list[LayoutResult]:
+        """Shift/shrink the foreground group so key elements avoid UI overlays."""
+        by_id = {e.id: e for e in self.elements}
+        movable = [
+            lr for lr in layout_results
+            if lr.visible and lr.element_id in by_id
+            and by_id[lr.element_id].role not in BACKGROUND_ROLES
+            and by_id[lr.element_id].effects.get("_source_type") != "flat_image"
+        ]
+        if not movable:
+            return layout_results
+        critical = {
+            lr.element_id for lr in movable
+            if by_id[lr.element_id].role in _SAFE_ZONE_CRITICAL_ROLES
+        }
+        adjusted, scale = fit_group_into_safe_rect(
+            {lr.element_id: lr.new_bbox for lr in movable}, critical, safe_rect
+        )
+        out: list[LayoutResult] = []
+        for lr in layout_results:
+            if lr.element_id in adjusted:
+                out.append(
+                    LayoutResult(
+                        element_id=lr.element_id,
+                        new_bbox=adjusted[lr.element_id],
+                        scale_factor=lr.scale_factor * scale,
+                        visible=lr.visible,
+                    )
+                )
+            else:
+                out.append(lr)
+        return out
+
     def _maybe_export_layout_debug(
         self,
         layout_results: list[LayoutResult],
@@ -268,7 +384,7 @@ class ReLayoutEngine:
         apply_decor: bool,
     ) -> CompositionResult:
         """Apply safe color harmonization and grounding shadow without changing protected pixels."""
-        masks = build_layout_masks(self.elements, layout_results, target_size)
+        masks = self._layout_masks(layout_results, target_size)
 
         rgba = result.image.convert("RGBA")
         graded = apply_color_grading_safe(rgba, masks.protected_mask)
@@ -304,6 +420,18 @@ class ReLayoutEngine:
         result.metadata["decor"] = decor_meta
         return result
 
+    @staticmethod
+    def _disabled_outpaint_metadata(masks: Any) -> dict[str, Any]:
+        return {
+            "policy": Config.GENERATIVE_BG_POLICY,
+            "seed": int(Config.GENERATIVE_BG_SEED),
+            "model_id": Config.GENERATIVE_BG_MODEL_ID,
+            "backend_used": False,
+            "fallback_reason": "disabled",
+            "protected_ratio": masks.protected_ratio,
+            "editable_ratio": masks.editable_ratio,
+        }
+
     def _bg_only_outpaint(
         self,
         canvas: Image.Image,
@@ -314,18 +442,10 @@ class ReLayoutEngine:
         policy = Config.GENERATIVE_BG_POLICY
         seed = Config.GENERATIVE_BG_SEED
 
-        masks = build_layout_masks(self.elements, layout_results, target_size)
+        masks = self._layout_masks(layout_results, target_size)
 
         if not Config.GENERATIVE_BG_ENABLED:
-            self._last_outpaint_metadata = {
-                "policy": policy,
-                "seed": int(seed),
-                "model_id": Config.GENERATIVE_BG_MODEL_ID,
-                "backend_used": False,
-                "fallback_reason": "disabled",
-                "protected_ratio": masks.protected_ratio,
-                "editable_ratio": masks.editable_ratio,
-            }
+            self._last_outpaint_metadata = self._disabled_outpaint_metadata(masks)
             return canvas
 
         outpainted = self.generative_engine.outpaint_background(
@@ -348,15 +468,18 @@ class ReLayoutEngine:
         self,
         target_size: tuple[int, int],
         manual_anchors: list[dict[str, int | str]] | None = None,
+        safe_rect: tuple[int, int, int, int] | None = None,
     ) -> CompositionResult:
         """Phase 3 target-first redesign (anchored, brand-locked)."""
         if not self.elements:
             raise ValueError("No file loaded. Call load_file() first.")
 
         validate_dimensions(target_size[0], target_size[1])
-        layout_results = self.layout_engine.calculate_layout(
-            self.elements, self.source_size, target_size
-        )
+        layout_results = self._calculate_layout(target_size)
+        if safe_rect is not None and not manual_anchors:
+            # Move the layout itself so the base's readability plates and the
+            # anchors agree on where text ends up.
+            layout_results = self._fit_layout_to_safe_rect(layout_results, safe_rect)
         self._maybe_export_layout_debug(layout_results, target_size)
 
         return run_target_first_redesign(
@@ -365,6 +488,7 @@ class ReLayoutEngine:
             source_size=self.source_size,
             target_size=target_size,
             manual_anchors=manual_anchors,
+            safe_rect=safe_rect,
         )
 
     def batch_relayout(

@@ -400,8 +400,7 @@ class ContentAwareFitStrategy:
         mask_dilated = cv2.dilate(mask, kernel, iterations=1)
 
         # Apply inpainting
-        inpaint_radius = Config.OPENCV_INPAINT_RADIUS
-        inpainted = cv2.inpaint(canvas, mask_dilated, inpaint_radius, cv2.INPAINT_TELEA)
+        inpainted = _fast_inpaint(cv2, canvas, mask_dilated, Config.OPENCV_INPAINT_RADIUS)
 
         # Blend: keep sharp original, smooth transition to inpainted
         result = self._blend_with_feather(
@@ -550,3 +549,39 @@ class ContentAwareFitStrategy:
         final.paste(sharp, (dx1, dy1))
 
         return final
+
+
+def _fast_inpaint(cv2: object, canvas: np.ndarray, mask: np.ndarray, radius: int) -> np.ndarray:
+    """TELEA inpainting that stays fast on large fill areas.
+
+    TELEA cost grows with the number of masked pixels, and extending a banner
+    to a Story can mean >1.5 MP of fill (several seconds). For large masks the
+    bulk of the fill is solved at reduced resolution and upscaled - it is a
+    smooth colour field anyway - and only a narrow band touching the original
+    content is re-solved at full resolution so the seam stays crisp.
+    """
+    area = int(np.count_nonzero(mask))
+    if area <= Config.INPAINT_FULLRES_MAX_PIXELS:
+        return cv2.inpaint(canvas, mask, radius, cv2.INPAINT_TELEA)  # type: ignore[attr-defined]
+
+    h, w = mask.shape
+    factor = float(np.sqrt(Config.INPAINT_LOWRES_TARGET_PIXELS / area))
+    sw, sh = max(8, int(round(w * factor))), max(8, int(round(h * factor)))
+    small = cv2.resize(canvas, (sw, sh), interpolation=cv2.INTER_AREA)  # type: ignore[attr-defined]
+    small_mask = cv2.resize(mask, (sw, sh), interpolation=cv2.INTER_NEAREST)  # type: ignore[attr-defined]
+    # Grow the low-res mask by a pixel so downsampled edge mixing is re-solved.
+    small_mask = cv2.dilate(small_mask, np.ones((3, 3), np.uint8))  # type: ignore[attr-defined]
+    small_filled = cv2.inpaint(small, small_mask, radius, cv2.INPAINT_TELEA)  # type: ignore[attr-defined]
+    upscaled = cv2.resize(small_filled, (w, h), interpolation=cv2.INTER_CUBIC)  # type: ignore[attr-defined]
+
+    masked = mask > 0
+    filled = canvas.copy()
+    filled[masked] = upscaled[masked]
+
+    band_px = Config.INPAINT_SEAM_BAND_PX
+    known = (~masked).astype(np.uint8)
+    near_known = cv2.dilate(  # type: ignore[attr-defined]
+        known, np.ones((2 * band_px + 1, 2 * band_px + 1), np.uint8)
+    )
+    band = ((near_known > 0) & masked).astype(np.uint8) * 255
+    return cv2.inpaint(filled, band, radius, cv2.INPAINT_TELEA)  # type: ignore[attr-defined]

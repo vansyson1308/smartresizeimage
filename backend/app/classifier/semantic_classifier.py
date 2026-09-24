@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 
 from ..config import Config
 from ..constants import ROLE_PRIORITIES
@@ -91,12 +92,21 @@ class SemanticClassifier:
         self._clip_model = None
         self._clip_processor = None
         self._loaded = False
+        # The classifier is shared across render threads; loading must finish
+        # before any thread sees ``_loaded`` or it would silently skip CLIP.
+        self._load_lock = threading.Lock()
 
     def _ensure_loaded(self) -> None:
         """Lazy-load CLIP model on first AI classification request."""
         if self._loaded or not self._use_ai:
             return
-        self._loaded = True
+        with self._load_lock:
+            if self._loaded:
+                return
+            self._load_model()
+            self._loaded = True
+
+    def _load_model(self) -> None:
         try:
             logger.info("Loading CLIP model...")
             self._clip_model = CLIPModel.from_pretrained(Config.CLIP_MODEL)
@@ -246,7 +256,14 @@ class SemanticClassifier:
             The same list with roles and priorities updated.
         """
         for element in elements:
-            element.role = self.classify(element, canvas_size)
+            # A flattened PNG/JPG/WEBP is one full-canvas layer that the parser
+            # already marks as the background; re-classifying it (e.g. as PHOTO)
+            # hides the source from preview and Phase 3 anchor cropping.
+            if element.effects.get("_source_type") == "flat_image":
+                continue
+            # Auto-layer detection already assigned a role from geometry.
+            if not element.effects.get("_auto_layer"):
+                element.role = self.classify(element, canvas_size)
 
             # Set priority based on role
             if element.role in ROLE_PRIORITIES:

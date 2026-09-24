@@ -44,6 +44,7 @@ class CompositionEngine:
         source_size: tuple[int, int],
         target_size: tuple[int, int],
         bg_outpaint_fn: Callable[[Image.Image], Image.Image] | None = None,
+        draw_content: bool = True,
     ) -> CompositionResult:
         """Compose final image.
 
@@ -57,6 +58,9 @@ class CompositionEngine:
             layout_results: Layout results with new positions.
             source_size: Original canvas size.
             target_size: Target canvas size.
+            draw_content: When False (layered sources only), render the
+                background and readability plates but not the content layers -
+                used by Phase 3, which pastes content itself as anchors.
 
         Returns:
             CompositionResult with final image.
@@ -76,7 +80,7 @@ class CompositionEngine:
 
         # Standard multi-element composition (PSD, etc.)
         return self._compose_multi_element(
-            elements, layout_results, source_size, target_size, bg_outpaint_fn
+            elements, layout_results, source_size, target_size, bg_outpaint_fn, draw_content
         )
 
     @staticmethod
@@ -148,6 +152,7 @@ class CompositionEngine:
         source_size: tuple[int, int],
         target_size: tuple[int, int],
         bg_outpaint_fn: Callable[[Image.Image], Image.Image] | None = None,
+        draw_content: bool = True,
     ) -> CompositionResult:
         """Standard composition for multi-element sources (PSD files)."""
         warnings: list[str] = []
@@ -186,7 +191,7 @@ class CompositionEngine:
         content_elements.sort(key=lambda x: x[0].z_index if x[0] else 0)
 
         # Compose content elements
-        for elem, layout in content_elements:
+        for elem, layout in content_elements if draw_content else []:
             if not layout or not layout.visible or not elem.image:
                 continue
 
@@ -334,8 +339,9 @@ class CompositionEngine:
 
         elem_image = element.image.convert("RGBA")
 
-        # Resize to new dimensions
-        new_size = (layout.new_bbox.width, layout.new_bbox.height)
+        # Resize uniformly into the allotted box (never stretch a raster layer)
+        box = layout.new_bbox.fit_aspect(*elem_image.size)
+        new_size = (box.width, box.height)
         if new_size[0] <= 0 or new_size[1] <= 0:
             return canvas
 
@@ -355,7 +361,7 @@ class CompositionEngine:
             canvas = composite_pil_over(
                 canvas,
                 shadow_img,
-                (layout.new_bbox.x + shadow_off[0], layout.new_bbox.y + shadow_off[1]),
+                (box.x + shadow_off[0], box.y + shadow_off[1]),
                 use_linear=Config.USE_LINEAR_COMPOSITING,
                 blend_mode=BlendMode.NORMAL,
             )
@@ -372,7 +378,7 @@ class CompositionEngine:
         canvas = composite_pil_over(
             canvas,
             resized,
-            (layout.new_bbox.x, layout.new_bbox.y),
+            (box.x, box.y),
             use_linear=Config.USE_LINEAR_COMPOSITING,
             blend_mode=blend_mode,
         )
