@@ -77,7 +77,7 @@ Every ZIP (and every finished job) includes a manifest:
   "mode": "phase21",
   "duration_ms": 1203,
   "source": {"file": "spring.psd", "width": 1200, "height": 628, "sha256": "…",
-             "source_type": "layered", "layers": 7},  // or "flat_image" / "auto_layers"
+             "source_type": "layered", "layers": 7},
   "summary": {"total": 8, "succeeded": 8, "failed": 0, "with_warnings": 1},
   "assets": [
     {
@@ -94,6 +94,9 @@ Every ZIP (and every finished job) includes a manifest:
   ]
 }
 ```
+
+`source.source_type` is `layered` (PSD), `flat_image` (PNG/JPG rendered as a whole) or
+`auto_layers` (PNG/JPG split into detected elements).
 
 A size that fails does not abort the job: it is reported with `status: "failed"` and an
 `error`, and the other sizes are still delivered. `/v1/render` also exposes the counts
