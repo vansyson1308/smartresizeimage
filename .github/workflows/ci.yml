@@ -60,6 +60,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
       - name: Build image
         run: docker build -t autobanner:ci backend
       - name: Run container and render
@@ -70,8 +73,9 @@ jobs:
             curl -fsS localhost:7860/healthz && break
             sleep 1
           done
-          python3 -c "from PIL import Image; Image.new('RGB', (600, 314), (40, 90, 160)).save('/tmp/in.png')" \
-            || (pip install -q Pillow && python3 -c "from PIL import Image; Image.new('RGB', (600, 314), (40, 90, 160)).save('/tmp/in.png')")
+          curl -fsS localhost:7860/healthz
+          pip install -q Pillow
+          python -c "from PIL import Image; Image.new('RGB', (600, 314), (40, 90, 160)).save('/tmp/in.png')"
           test "$(curl -s -o /dev/null -w '%{http_code}' -F file=@/tmp/in.png localhost:7860/v1/analyze)" = "401"
           curl -fsS -H 'X-API-Key: ci-key' -F file=@/tmp/in.png \
             -F 'options={"packs":["starter"],"format":"webp"}' \

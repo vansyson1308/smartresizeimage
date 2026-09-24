@@ -97,6 +97,24 @@ def _parse_options(raw: str | None) -> RenderOptions:
         raise ApiError(422, "invalid_options", f"{loc}: {first.get('msg')}") from e
 
 
+def _make_work_root(data_dir: str | None) -> Path:
+    """Create the private working directory for uploads and job results.
+
+    Falls back to the system temp dir when the configured data dir is not
+    writable (e.g. a read-only container started without a /data volume).
+    """
+    if data_dir:
+        try:
+            Path(data_dir).mkdir(parents=True, exist_ok=True)
+            return Path(tempfile.mkdtemp(prefix="autobanner-", dir=data_dir))
+        except OSError as e:
+            logger.warning(
+                "AUTOBANNER_DATA_DIR=%s is not writable (%s); using %s instead",
+                data_dir, e, tempfile.gettempdir(),
+            )
+    return Path(tempfile.mkdtemp(prefix="autobanner-"))
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build the ASGI application."""
     settings = settings or Settings.from_env()
@@ -114,9 +132,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     auth = ApiKeyAuth(settings.api_keys)
     limiter = RateLimiter(settings.rate_limit_per_minute)
-    data_dir = Path(settings.data_dir) if settings.data_dir else Path(tempfile.gettempdir())
-    data_dir.mkdir(parents=True, exist_ok=True)
-    tmp_root = Path(tempfile.mkdtemp(prefix="autobanner-", dir=data_dir))
+    tmp_root = _make_work_root(settings.data_dir)
 
     if not auth.enabled:
         logger.warning(

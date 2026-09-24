@@ -313,3 +313,11 @@ def test_auto_layers_option_and_analyze_query(client):
     assert r.status_code == 200
     manifest = json.loads(zipfile.ZipFile(io.BytesIO(r.content)).read("manifest.json"))
     assert manifest["source"]["source_type"] == "auto_layers"
+
+
+def test_unwritable_data_dir_falls_back_to_tmp(tmp_path):
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("x")  # mkdir under a regular file fails even for root
+    app = create_app(Settings(data_dir=str(blocker / "data"), rate_limit_per_minute=0))
+    with TestClient(app) as c:
+        assert c.post("/v1/analyze", files=_upload()).status_code == 200

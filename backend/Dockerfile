@@ -30,6 +30,9 @@ ENV AUTOBANNER_SERVER_NAME=0.0.0.0 \
     AUTOBANNER_DATA_DIR=/data \
     HF_HOME=/app/cache
 
+# Job results; a named/anonymous volume keeps it writable under --read-only.
+VOLUME ["/data"]
+
 EXPOSE 7860
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
