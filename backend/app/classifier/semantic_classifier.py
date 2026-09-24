@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 
 from ..config import Config
 from ..constants import ROLE_PRIORITIES
@@ -91,12 +92,21 @@ class SemanticClassifier:
         self._clip_model = None
         self._clip_processor = None
         self._loaded = False
+        # The classifier is shared across render threads; loading must finish
+        # before any thread sees ``_loaded`` or it would silently skip CLIP.
+        self._load_lock = threading.Lock()
 
     def _ensure_loaded(self) -> None:
         """Lazy-load CLIP model on first AI classification request."""
         if self._loaded or not self._use_ai:
             return
-        self._loaded = True
+        with self._load_lock:
+            if self._loaded:
+                return
+            self._load_model()
+            self._loaded = True
+
+    def _load_model(self) -> None:
         try:
             logger.info("Loading CLIP model...")
             self._clip_model = CLIPModel.from_pretrained(Config.CLIP_MODEL)

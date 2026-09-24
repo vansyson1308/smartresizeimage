@@ -86,7 +86,7 @@ def sniff_extension(header: bytes) -> str | None:
     return None
 
 
-def validate_upload(path: str) -> None:
+def validate_upload(path: str, max_bytes: int | None = None) -> None:
     """Validate an untrusted uploaded file before any decoder touches it.
 
     Checks existence, extension, byte size, that the file content matches its
@@ -98,13 +98,12 @@ def validate_upload(path: str) -> None:
     """
     validate_file_path(path)
     p = Path(path)
+    limit = Config.MAX_UPLOAD_BYTES if max_bytes is None else max_bytes
     size = p.stat().st_size
     if size == 0:
         raise ValidationError("Uploaded file is empty")
-    if size > Config.MAX_UPLOAD_BYTES:
-        raise ValidationError(
-            f"File is {size / 1048576:.1f} MB; limit is {Config.MAX_UPLOAD_BYTES / 1048576:.0f} MB"
-        )
+    if size > limit:
+        raise ValidationError(f"File is {size / 1048576:.1f} MB; limit is {limit / 1048576:.0f} MB")
 
     with p.open("rb") as fh:
         header = fh.read(32)
@@ -176,6 +175,7 @@ def validate_manual_anchors(
         raise ValidationError(f"At most {max_anchors} anchors are allowed")
     sw, sh = source_size
     normalised: list[dict[str, int | str]] = []
+    used_ids: set[str] = set()
     for idx, raw in enumerate(anchors):
         if not isinstance(raw, dict):
             raise ValidationError(f"anchor #{idx} must be an object")
@@ -195,9 +195,14 @@ def validate_manual_anchors(
         x2, y2 = min(sw, x + w), min(sh, y + h)
         if x2 - x1 < 2 or y2 - y1 < 2:
             raise ValidationError(f"anchor #{idx} lies outside the {sw}x{sh} source canvas")
+        anchor_id = safe_filename(str(raw.get("id", f"anchor_{idx}")), f"anchor_{idx}", 40)
+        base_id, n = anchor_id, 2
+        while anchor_id in used_ids:  # ids key layout lookups; keep them unique
+            anchor_id, n = f"{base_id}_{n}", n + 1
+        used_ids.add(anchor_id)
         normalised.append(
             {
-                "id": safe_filename(str(raw.get("id", f"anchor_{idx}")), f"anchor_{idx}", 40),
+                "id": anchor_id,
                 "role": role,
                 "x": x1,
                 "y": y1,

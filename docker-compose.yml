@@ -17,6 +17,7 @@ services:
       NO_PROXY: localhost,127.0.0.1
     volumes:
       - model-cache:/app/cache
+      - autobanner-data:/data   # job results (AUTOBANNER_DATA_DIR)
     read_only: true
     tmpfs:
       - /tmp:size=2g
@@ -30,3 +31,4 @@ services:
 
 volumes:
   model-cache:
+  autobanner-data:

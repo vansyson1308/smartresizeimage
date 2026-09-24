@@ -16,6 +16,7 @@
     job: null,
     pollTimer: null,
     blobUrls: [],
+    analyzeSeq: 0,
   };
 
   /* ---------- tiny DOM helper (never uses innerHTML for data) ---------- */
@@ -185,6 +186,8 @@
   /* ---------- upload & analyze ---------- */
   async function handleFile(file) {
     if (!file) return;
+    // Only the latest selection may update state (responses can arrive out of order).
+    const seq = ++state.analyzeSeq;
     state.file = file;
     state.analysis = null;
     showError("");
@@ -207,9 +210,12 @@
     body.append("file", file);
     try {
       const res = await api("/v1/analyze", { method: "POST", body });
-      state.analysis = await res.json();
+      const analysis = await res.json();
+      if (seq !== state.analyzeSeq) return;
+      state.analysis = analysis;
       renderSourceInfo();
     } catch (err) {
+      if (seq !== state.analyzeSeq) return;
       state.file = null;
       showError(`Could not read this file: ${err.message}`);
     }
@@ -338,12 +344,7 @@
     const cards = m.assets.map((a) => buildCard(a));
     $("gallery").replaceChildren(...cards.map((c) => c.node));
 
-    const zip = $("download-all");
-    try {
-      zip.href = await fetchBlobUrl(job.links.download);
-      zip.download = `${(m.source.file || "design").replace(/\.[^.]+$/, "")}_autobanner.zip`;
-      zip.hidden = false;
-    } catch (err) { showError(`ZIP unavailable: ${err.message}`); }
+    $("download-all").hidden = s.succeeded === 0;
 
     await Promise.all(cards.map(async ({ asset, img, link }) => {
       if (!img) return;
@@ -385,6 +386,29 @@
         el("div", { class: "card-media" }, img),
         el("div", { class: "card-body" }, title, meta, warnings, el("div", { class: "card-actions" }, link))),
     };
+  }
+
+  // The ZIP is fetched only when asked for: most users preview first, and the
+  // individual assets are already downloaded for the gallery.
+  async function downloadZip() {
+    const job = state.job;
+    if (!job || !job.links) return;
+    const btn = $("download-all");
+    btn.disabled = true;
+    try {
+      const url = await fetchBlobUrl(job.links.download);
+      const a = el("a", {
+        href: url,
+        download: `${(job.manifest.source.file || "design").replace(/\.[^.]+$/, "")}_autobanner.zip`,
+      });
+      document.body.append(a);
+      a.click();
+      a.remove();
+    } catch (err) {
+      showError(`ZIP unavailable: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   /* ---------- API key dialog ---------- */
@@ -435,6 +459,7 @@
   });
   $("custom-size").addEventListener("input", (e) => e.target.setCustomValidity(""));
   $("generate").addEventListener("click", generate);
+  $("download-all").addEventListener("click", downloadZip);
   $("api-key-btn").addEventListener("click", openKeyDialog);
   $("key-dialog").addEventListener("close", () => {
     if ($("key-dialog").returnValue === "save") {

@@ -43,16 +43,24 @@ class Job:
     progress_total: int = 0
     current: str = ""
     error: dict[str, str] | None = None
-    report: RenderReport | None = None
-    _zip: bytes | None = None
-    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    # Results live on disk (workdir), not in memory: only the manifest is kept.
+    manifest: dict[str, Any] | None = None
+    zip_path: Path | None = None
+    asset_files: dict[str, tuple[Path, str]] = field(default_factory=dict)
 
-    def zip_bytes(self) -> bytes:
-        with self._lock:
-            if self._zip is None:
-                assert self.report is not None
-                self._zip = self.report.to_zip()
-            return self._zip
+    def persist(self, report: RenderReport) -> None:
+        """Write outputs + ZIP into the job's workdir and keep only metadata."""
+        assets_dir = self.workdir / "assets"
+        assets_dir.mkdir(parents=True, exist_ok=True)
+        for asset in report.succeeded:
+            assert asset.encoded is not None
+            path = assets_dir / asset.filename
+            path.write_bytes(asset.encoded.data)
+            self.asset_files[asset.filename] = (path, asset.encoded.mime_type)
+        zip_path = self.workdir / "result.zip"
+        report.write_zip(zip_path)
+        self.manifest = report.manifest()
+        self.zip_path = zip_path
 
     def describe(self) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -70,13 +78,12 @@ class Job:
             },
             "error": self.error,
         }
-        if self.report is not None:
-            data["manifest"] = self.report.manifest()
+        if self.manifest is not None:
+            data["manifest"] = self.manifest
             data["links"] = {
                 "download": f"/v1/jobs/{self.id}/download",
                 "assets": {
-                    a.filename: f"/v1/jobs/{self.id}/assets/{a.filename}"
-                    for a in self.report.succeeded
+                    name: f"/v1/jobs/{self.id}/assets/{name}" for name in self.asset_files
                 },
             }
         return data
@@ -198,9 +205,10 @@ class JobManager:
             job.current = current
 
         try:
-            job.report = self.service.render(
+            report = self.service.render(
                 source_path, job.request, display_name=job.source_name, progress=progress
             )
+            job.persist(report)
             job.status = SUCCEEDED
         except AutoBannerError as e:
             job.status = FAILED

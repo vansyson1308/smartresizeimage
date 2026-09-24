@@ -72,3 +72,21 @@ def test_render_missing_file_is_partial_failure(tmp_path):
 def test_bad_preset_is_usage_error(two_inputs, capsys):
     assert main(["render", two_inputs[0], "-p", "nope"]) == 2
     assert "Unknown preset" in capsys.readouterr().err
+
+
+def test_serve_port_precedence(monkeypatch):
+    import sys
+    import types
+
+    from backend.app import main as main_mod
+
+    calls = {}
+    fake = types.SimpleNamespace(run=lambda app, **kw: calls.update(kw))
+    monkeypatch.setitem(sys.modules, "uvicorn", fake)
+    monkeypatch.delenv("AUTOBANNER_SERVER_PORT", raising=False)
+    monkeypatch.setenv("PORT", "8081")
+    main_mod.main()
+    assert calls["port"] == 8081
+    monkeypatch.setenv("AUTOBANNER_SERVER_PORT", "9000")
+    main_mod.main()
+    assert calls["port"] == 9000

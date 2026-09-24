@@ -149,6 +149,7 @@ Chi tiết tham số, mã lỗi và schema `manifest.json`: [docs/API.md](docs/A
 | `AUTOBANNER_RATE_LIMIT_PER_MINUTE` | `60` | Giới hạn request render/analyze mỗi key hoặc IP (`0` = tắt) |
 | `AUTOBANNER_MAX_UPLOAD_MB` | `150` | Dung lượng upload tối đa |
 | `AUTOBANNER_JOB_TTL_SECONDS` | `3600` | Thời gian giữ kết quả job |
+| `AUTOBANNER_DATA_DIR` | thư mục tạm hệ thống | Nơi lưu file upload & kết quả job (Docker: volume `/data`) |
 | `AUTOBANNER_CORS_ORIGINS` | *(trống)* | Origin được phép gọi API từ trình duyệt |
 | `AUTOBANNER_TRUST_PROXY_HEADERS` | `false` | Tin `X-Forwarded-For` khi chạy sau reverse proxy |
 | `AUTOBANNER_USE_AI` | `false` | Bật CLIP/LaMa (cần `requirements-ai.txt`) |

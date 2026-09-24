@@ -60,7 +60,8 @@ class ApiKeyAuth:
 class RateLimiter:
     """Token bucket per client identity (API key id or client IP)."""
 
-    def __init__(self, per_minute: int, burst: int | None = None) -> None:
+    def __init__(self, per_minute: int, burst: int | None = None, max_clients: int = 10_000):
+        self.max_clients = max_clients
         self.rate = per_minute / 60.0
         self.capacity = float(burst if burst is not None else max(1, per_minute))
         self._buckets: dict[str, tuple[float, float]] = {}
@@ -84,15 +85,28 @@ class RateLimiter:
                     429, "rate_limited", "Too many requests", headers={"Retry-After": str(retry)}
                 )
             self._buckets[identity] = (tokens - 1.0, now)
-            if len(self._buckets) > 10_000:  # bound memory under IP churn
-                stale = [k for k, (_, ts) in self._buckets.items() if now - ts > 600]
-                for k in stale:
-                    del self._buckets[k]
+            if len(self._buckets) > self.max_clients:
+                self._evict(now)
+
+    def _evict(self, now: float) -> None:
+        """Bound memory under client churn: drop idle buckets, else the oldest half.
+
+        An idle bucket has refilled to capacity, so dropping it loses nothing.
+        """
+        idle_after = self.capacity / self.rate if self.rate else 0.0
+        stale = [k for k, (_, ts) in self._buckets.items() if now - ts >= idle_after]
+        if not stale:
+            by_age = sorted(self._buckets.items(), key=lambda kv: kv[1][1])
+            stale = [k for k, _ in by_age[: len(by_age) // 2]]
+        for k in stale:
+            del self._buckets[k]
 
 
 def client_ip(request: Request, settings: Settings) -> str:
     if settings.trust_proxy_headers:
         forwarded = request.headers.get("x-forwarded-for")
         if forwarded:
-            return forwarded.split(",")[0].strip()
+            # The right-most entry is the one appended by our own proxy; entries
+            # to its left are supplied by the client and can be forged.
+            return forwarded.split(",")[-1].strip()
     return request.client.host if request.client else "unknown"

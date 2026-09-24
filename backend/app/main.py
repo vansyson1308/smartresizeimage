@@ -39,7 +39,8 @@ def main(host: str | None = None, port: int | None = None) -> None:
     from .api import create_app
 
     host = host or _env("AUTOBANNER_SERVER_NAME", "GRADIO_SERVER_NAME", default="127.0.0.1")
-    port = port or int(_env("AUTOBANNER_SERVER_PORT", "GRADIO_SERVER_PORT", "PORT",
+    # PORT is what PaaS platforms (Cloud Run, Railway, Heroku, ...) inject.
+    port = port or int(_env("AUTOBANNER_SERVER_PORT", "PORT", "GRADIO_SERVER_PORT",
                             default="7860"))
 
     app = create_app()

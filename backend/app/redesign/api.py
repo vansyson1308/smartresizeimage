@@ -136,12 +136,15 @@ def _fit_anchors_to_safe_rect(
     safe_rect: tuple[int, int, int, int],
     target_size: tuple[int, int],
 ) -> tuple[AnchorBundle, float]:
-    boxes = {a.element_id: a.target_bbox for a in bundle.anchors}
-    critical = {a.element_id for a in bundle.anchors if a.protected}
+    # Key by position, not element_id: ids are not guaranteed unique.
+    boxes = {str(i): a.target_bbox for i, a in enumerate(bundle.anchors)}
+    critical = {str(i) for i, a in enumerate(bundle.anchors) if a.protected}
     adjusted, scale = fit_group_into_safe_rect(boxes, critical, safe_rect)
     if scale == 1.0 and adjusted == boxes:
         return bundle, 1.0
-    anchors = [replace(a, target_bbox=adjusted[a.element_id]) for a in bundle.anchors]
+    anchors = [
+        replace(a, target_bbox=adjusted[str(i)]) for i, a in enumerate(bundle.anchors)
+    ]
     mask = build_protected_mask(anchors, target_size, padding=8)
     return AnchorBundle(anchors=anchors, protected_mask=mask), scale
 

@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 from . import __version__
 from .classifier import SemanticClassifier
@@ -168,7 +168,12 @@ class RenderReport:
     def to_zip(self) -> bytes:
         """Return a ZIP with every successful asset and ``manifest.json``."""
         buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        self.write_zip(buf)
+        return buf.getvalue()
+
+    def write_zip(self, target: str | Path | IO[bytes]) -> None:
+        """Write the ZIP to a path or binary file object."""
+        with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zf:
             for asset in self.succeeded:
                 assert asset.encoded is not None
                 # Encoded images are already compressed; don't waste CPU.
@@ -178,7 +183,6 @@ class RenderReport:
                     compress_type=zipfile.ZIP_STORED,
                 )
             zf.writestr("manifest.json", json.dumps(self.manifest(), indent=2))
-        return buf.getvalue()
 
     def write_to(self, out_dir: str | Path) -> list[Path]:
         """Write assets and ``manifest.json`` into ``out_dir``."""
@@ -346,8 +350,9 @@ def evaluate_qa(
 class RenderService:
     """Thread-safe facade over the layout engines."""
 
-    def __init__(self, use_ai: bool = False) -> None:
+    def __init__(self, use_ai: bool = False, max_upload_bytes: int | None = None) -> None:
         self.use_ai = use_ai
+        self.max_upload_bytes = max_upload_bytes
         self._classifier: SemanticClassifier | None = None
         self._classifier_lock = threading.Lock()
 
@@ -365,7 +370,7 @@ class RenderService:
         """Validate and parse a source file into a fresh engine."""
         path = str(file_path)
         if not trusted:
-            validate_upload(path)
+            validate_upload(path, self.max_upload_bytes)
         engine = self._new_engine()
         engine.load_file(path)
         return engine

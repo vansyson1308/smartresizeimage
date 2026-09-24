@@ -27,16 +27,20 @@ docker run -d -p 7860:7860 --read-only --tmpfs /tmp:size=2g \
   compose file caps the container at 4 GB.
 - Typical latency on one vCPU: Relayout 0.1–1 s per size; Redesign (phase3) 1–14 s per
   size depending on output area.
-- Job results live in memory for `AUTOBANNER_JOB_TTL_SECONDS` (default 1 h). Run one
-  replica per job store, or put a sticky load balancer in front when scaling
-  horizontally with async jobs. `/v1/render` (synchronous) is stateless and scales
+- Job results (images + ZIP) are written to `AUTOBANNER_DATA_DIR` (`/data` in the image,
+  a named volume in compose) and deleted after `AUTOBANNER_JOB_TTL_SECONDS` (default
+  1 h); only job metadata stays in memory. Job ids are local to a replica: run one
+  replica, or use a sticky load balancer when scaling horizontally with async jobs. `/v1/render` (synchronous) is stateless and scales
   behind any load balancer.
 
 ## Behind a reverse proxy
 
 - Terminate TLS at the proxy and forward to `:7860`.
-- Set `AUTOBANNER_TRUST_PROXY_HEADERS=true` so rate limiting uses `X-Forwarded-For`
-  (only if the proxy overwrites that header).
+- Set `AUTOBANNER_TRUST_PROXY_HEADERS=true` so rate limiting uses the right-most
+  `X-Forwarded-For` entry (the address your proxy appended). Only enable it when a
+  proxy is always in front of the service.
+- On PaaS platforms that inject `PORT` (Cloud Run, Railway, Heroku) the server binds to
+  it automatically.
 - Raise the proxy body limit to match `AUTOBANNER_MAX_UPLOAD_MB` (nginx:
   `client_max_body_size 150m;`) and the read timeout for large synchronous renders
   (e.g. `proxy_read_timeout 300s;`), or use `/v1/jobs`.
@@ -49,7 +53,8 @@ docker run -d -p 7860:7860 --read-only --tmpfs /tmp:size=2g \
 - [ ] `AUTOBANNER_ENABLE_DOCS=false` if you do not want the schema public.
 - [ ] Container run read-only, non-root, with memory limits.
 
-Built in: magic-byte validation of uploads, PIL decompression-bomb guard, dimension and
+Built in: API key, rate-limit and size checks run before the upload body is read,
+magic-byte validation of uploads, PIL decompression-bomb guard, dimension and
 byte limits, sanitised output filenames, constant-time key comparison, per-key job
 isolation, strict CSP on the studio, `nosniff`/`DENY` frame headers.
 

@@ -202,3 +202,93 @@ def test_studio_served_with_csp(client):
         pytest.skip("studio assets not bundled")
     assert "content-security-policy" in r.headers
     assert "AutoBanner" in r.text
+
+
+# --- hardening regressions ---------------------------------------------------------------
+
+
+def test_oversized_content_length_rejected_before_body_is_read():
+    app = create_app(Settings(max_upload_mb=1, rate_limit_per_minute=0))
+    with TestClient(app) as c:
+        r = c.post(
+            "/v1/analyze",
+            content=b"x" * 16,
+            headers={"content-length": str(50 * 1024 * 1024),
+                     "content-type": "multipart/form-data; boundary=x"},
+        )
+    assert r.status_code == 413
+    assert r.json()["error"]["code"] == "payload_too_large"
+
+
+def test_streamed_body_over_limit_is_413():
+    app = create_app(Settings(max_upload_mb=1, rate_limit_per_minute=0))
+
+    def chunks():
+        for _ in range(40):
+            yield b"0" * 100_000
+
+    with TestClient(app) as c:
+        r = c.post(
+            "/v1/analyze", content=chunks(),
+            headers={"content-type": "multipart/form-data; boundary=x"},
+        )
+    assert r.status_code == 413
+
+
+def test_auth_checked_before_body(secured_client):
+    r = secured_client.post(
+        "/v1/render",
+        content=b"x",
+        headers={"content-length": str(10 * 1024 ** 3),
+                 "content-type": "multipart/form-data; boundary=x"},
+    )
+    assert r.status_code == 401
+    assert r.headers["x-request-id"]
+
+
+def test_create_app_does_not_mutate_global_config():
+    from backend.app.config import Config
+
+    before = Config.MAX_UPLOAD_BYTES
+    create_app(Settings(max_upload_mb=1))
+    assert before == Config.MAX_UPLOAD_BYTES
+
+
+def test_unhandled_error_keeps_request_id_and_headers():
+    app = create_app(Settings(rate_limit_per_minute=0))
+
+    @app.get("/boom")
+    def boom():
+        raise RuntimeError("kaboom")
+
+    with TestClient(app, raise_server_exceptions=False) as c:
+        r = c.get("/boom", headers={"X-Request-ID": "rid-500"})
+        assert r.status_code == 500
+        assert r.headers["x-request-id"] == "rid-500"
+        assert r.headers["x-content-type-options"] == "nosniff"
+        assert r.json()["error"]["code"] == "internal_error"
+        assert "kaboom" not in r.text
+        assert 'status="500"' in c.get("/metrics").text
+
+
+def test_unknown_route_uses_uniform_error_shape(client):
+    r = client.get("/v1/nope")
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "not_found"
+
+
+def test_job_results_are_served_from_disk_not_memory(client):
+    r = client.post("/v1/jobs", files=_upload(),
+                    data={"options": json.dumps({"sizes": ["120x120"]})})
+    job_id = r.json()["id"]
+    jobs = client.app.state.jobs
+    deadline = time.time() + 60
+    while time.time() < deadline and jobs.get(job_id, None).status not in ("succeeded", "failed"):
+        time.sleep(0.05)
+    job = jobs.get(job_id, None)
+    assert job.status == "succeeded"
+    assert not hasattr(job, "report")
+    assert job.zip_path.is_file()
+    (path, mime), = job.asset_files.values()
+    assert path.is_file() and mime == "image/png"
+    assert client.get(f"/v1/jobs/{job_id}/download").status_code == 200

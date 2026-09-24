@@ -109,3 +109,22 @@ def test_manual_anchors_are_clipped_and_sanitised():
 def test_manual_anchors_reject_bad_input(bad):
     with pytest.raises(ValidationError):
         validate_manual_anchors(bad, (100, 100))
+
+
+def test_duplicate_anchor_ids_are_made_unique():
+    anchors = validate_manual_anchors(
+        [
+            {"id": "logo", "x": 0, "y": 0, "width": 10, "height": 10},
+            {"id": "logo", "x": 20, "y": 0, "width": 10, "height": 10},
+            {"id": "lo go", "x": 40, "y": 0, "width": 10, "height": 10},
+            {"id": "lo_go", "x": 60, "y": 0, "width": 10, "height": 10},
+        ],
+        (100, 100),
+    )
+    assert [a["id"] for a in anchors] == ["logo", "logo_2", "lo_go", "lo_go_2"]
+
+
+def test_explicit_upload_limit_overrides_config(tmp_path):
+    path = _png(tmp_path / "a.png")
+    with pytest.raises(ValidationError, match="limit"):
+        validate_upload(path, max_bytes=10)

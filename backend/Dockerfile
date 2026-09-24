@@ -17,21 +17,22 @@ RUN if [ "$WITH_AI" = "true" ]; then pip install -r requirements-ai.txt; \
     else pip install -r requirements.txt; fi
 
 RUN useradd --create-home --uid 10001 autobanner \
-    && mkdir -p /app/cache \
-    && chown autobanner:autobanner /app/cache
+    && mkdir -p /app/cache /data \
+    && chown autobanner:autobanner /app/cache /data
 
 COPY --chown=autobanner:autobanner app/ ./app/
 
 USER autobanner
 
+# Port: 7860 by default, or $PORT when the platform injects one.
 ENV AUTOBANNER_SERVER_NAME=0.0.0.0 \
-    AUTOBANNER_SERVER_PORT=7860 \
     AUTOBANNER_USE_AI=${WITH_AI} \
+    AUTOBANNER_DATA_DIR=/data \
     HF_HOME=/app/cache
 
 EXPOSE 7860
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:7860/healthz', timeout=4).status == 200 else 1)"
+    CMD python -c "import os,sys,urllib.request; port=os.environ.get('AUTOBANNER_SERVER_PORT') or os.environ.get('PORT') or '7860'; sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{port}/healthz', timeout=4).status == 200 else 1)"
 
 CMD ["python", "-m", "app.main"]

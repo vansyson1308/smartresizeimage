@@ -44,6 +44,7 @@ class Settings:
     enable_studio: bool = True
     enable_docs: bool = True
     trust_proxy_headers: bool = False
+    data_dir: str | None = None
     extra: dict[str, str] = field(default_factory=dict)
 
     @property
@@ -65,4 +66,5 @@ class Settings:
             enable_studio=_env_bool("AUTOBANNER_ENABLE_STUDIO", True),
             enable_docs=_env_bool("AUTOBANNER_ENABLE_DOCS", True),
             trust_proxy_headers=_env_bool("AUTOBANNER_TRUST_PROXY_HEADERS", False),
+            data_dir=os.environ.get("AUTOBANNER_DATA_DIR") or None,
         )

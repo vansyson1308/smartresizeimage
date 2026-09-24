@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from pydantic import ValidationError as PydanticValidationError
 from starlette.concurrency import run_in_threadpool
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .. import __version__
 from ..config import Config
@@ -33,9 +34,10 @@ from ..presets import PACK_DESCRIPTIONS, PACKS, list_presets, resolve_targets
 from ..service import ANCHOR_PRESETS, MODES, RenderRequest, RenderService
 from ..validators import safe_filename, validate_upload
 from .errors import ApiError
-from .jobs import SUCCEEDED, JobManager
+from .guard import UploadGuard
+from .jobs import SUCCEEDED, Job, JobManager
 from .metrics import Metrics
-from .security import ApiKeyAuth, RateLimiter, client_ip
+from .security import ApiKeyAuth, RateLimiter
 from .settings import Settings
 
 logger = logging.getLogger("autobanner.api")
@@ -94,10 +96,10 @@ def _parse_options(raw: str | None) -> RenderOptions:
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build the ASGI application."""
     settings = settings or Settings.from_env()
-    Config.MAX_UPLOAD_BYTES = settings.max_upload_mb * 1024 * 1024
+    max_upload_bytes = settings.max_upload_mb * 1024 * 1024
 
     metrics = Metrics()
-    service = RenderService(use_ai=settings.use_ai)
+    service = RenderService(use_ai=settings.use_ai, max_upload_bytes=max_upload_bytes)
     jobs = JobManager(
         service,
         metrics,
@@ -108,7 +110,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     auth = ApiKeyAuth(settings.api_keys)
     limiter = RateLimiter(settings.rate_limit_per_minute)
-    tmp_root = Path(tempfile.mkdtemp(prefix="autobanner-"))
+    data_dir = Path(settings.data_dir) if settings.data_dir else Path(tempfile.gettempdir())
+    data_dir.mkdir(parents=True, exist_ok=True)
+    tmp_root = Path(tempfile.mkdtemp(prefix="autobanner-", dir=data_dir))
 
     if not auth.enabled:
         logger.warning(
@@ -138,6 +142,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.jobs = jobs
     app.state.metrics = metrics
 
+    # Outermost: reject unauthenticated, rate-limited or oversized uploads
+    # before a single body byte is buffered.
+    app.add_middleware(UploadGuard, settings=settings, auth=auth, limiter=limiter)
+
     if settings.cors_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -154,7 +162,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request_id = incoming if 0 < len(incoming) <= 64 and incoming.isascii() else ""
         request.state.request_id = request_id or uuid.uuid4().hex
         start = time.perf_counter()
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception:
+            # Unhandled errors bypass exception handlers at this layer; build the
+            # 500 here so it still carries the request id, headers and metrics.
+            logger.exception("Unhandled error rid=%s", request.state.request_id)
+            err = ApiError(500, "internal_error", "Internal server error")
+            response = JSONResponse(err.body(request.state.request_id), status_code=500)
         elapsed = time.perf_counter() - start
         response.headers["X-Request-ID"] = request.state.request_id
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
@@ -186,6 +201,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         err = ApiError(422, "invalid_input", str(exc))
         return JSONResponse(err.body(_rid(request)), status_code=422)
 
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error_handler(
+        request: Request, exc: StarletteHTTPException
+    ) -> JSONResponse:
+        code = {404: "not_found", 405: "method_not_allowed", 413: "payload_too_large"}.get(
+            exc.status_code, "http_error"
+        )
+        err = ApiError(exc.status_code, code, str(exc.detail))
+        return JSONResponse(
+            err.body(_rid(request)), status_code=exc.status_code, headers=exc.headers
+        )
+
     @app.exception_handler(RequestValidationError)
     async def validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
         first = exc.errors()[0] if exc.errors() else {}
@@ -204,11 +231,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """Authenticate; returns the caller's key id (None when auth is disabled)."""
         return auth.identify(request)
 
-    def limited_caller(
-        request: Request, owner: Annotated[str | None, Depends(caller)]
-    ) -> str | None:
-        limiter.check(owner or "ip:" + client_ip(request, settings))
-        return owner
+    # Rate limiting of upload endpoints happens in UploadGuard (before the body
+    # is read); the dependency only resolves the caller's identity.
+    limited_caller = caller
 
     async def save_upload(upload: UploadFile) -> tuple[Path, Path, str]:
         """Stream an upload to a private temp dir enforcing the size limit."""
@@ -220,7 +245,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         workdir = Path(tempfile.mkdtemp(dir=tmp_root))
         dest = workdir / f"source{suffix}"
-        limit = Config.MAX_UPLOAD_BYTES
+        limit = max_upload_bytes
         written = 0
         try:
             with dest.open("wb") as fh:
@@ -265,7 +290,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "formats": ["png", "jpeg", "webp"],
             "anchor_presets": list(ANCHOR_PRESETS),
             "limits": {
-                "max_upload_mb": Config.MAX_UPLOAD_BYTES // 1048576,
+                "max_upload_mb": settings.max_upload_mb,
                 "max_targets_per_job": Config.MAX_TARGETS_PER_JOB,
                 "max_target_dimension": Config.MAX_IMAGE_SIZE,
                 "max_source_dimension": Config.MAX_SOURCE_DIMENSION,
@@ -342,7 +367,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         path, workdir, display = await save_upload(file)
         try:
             # Validate before queueing so bad files fail fast with a 422.
-            await run_in_threadpool(validate_upload, str(path))
+            await run_in_threadpool(validate_upload, str(path), max_upload_bytes)
             job = jobs.submit(
                 owner=owner, source_path=path, source_name=display,
                 workdir=workdir, request=request,
@@ -361,9 +386,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         jobs.delete(job_id, owner)
         return Response(status_code=204)
 
-    def _finished(job_id: str, owner: str | None):  # type: ignore[no-untyped-def]
+    def _finished(job_id: str, owner: str | None) -> Job:
         job = jobs.get(job_id, owner)
-        if job.status != SUCCEEDED or job.report is None:
+        if job.status != SUCCEEDED or job.zip_path is None:
             raise ApiError(409, "not_ready", f"Job is {job.status}")
         return job
 
@@ -371,39 +396,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         "/v1/jobs/{job_id}/download",
         tags=["jobs"],
         summary="Download all outputs as ZIP",
-        response_class=Response,
+        response_class=FileResponse,
         responses={200: {"content": {"application/zip": {}}}},
     )
     def download_job(job_id: str, owner: Annotated[str | None, Depends(caller)]) -> Response:
         job = _finished(job_id, owner)
         stem = safe_filename(Path(job.source_name).stem, "design")
-        return Response(
-            job.zip_bytes(),
+        return FileResponse(
+            job.zip_path,
             media_type="application/zip",
-            headers={"Content-Disposition": f'attachment; filename="{stem}_autobanner.zip"'},
+            filename=f"{stem}_autobanner.zip",
         )
 
     @app.get(
         "/v1/jobs/{job_id}/assets/{filename}",
         tags=["jobs"],
         summary="Download one output image",
-        response_class=Response,
+        response_class=FileResponse,
     )
     def job_asset(
         job_id: str, filename: str, owner: Annotated[str | None, Depends(caller)]
     ) -> Response:
         job = _finished(job_id, owner)
-        for asset in job.report.succeeded:
-            if asset.filename == filename and asset.encoded is not None:
-                return Response(
-                    asset.encoded.data,
-                    media_type=asset.encoded.mime_type,
-                    headers={
-                        "Content-Disposition": f'inline; filename="{asset.filename}"',
-                        "Cache-Control": "private, max-age=3600",
-                    },
-                )
-        raise ApiError(404, "not_found", "Asset not found")
+        stored = job.asset_files.get(filename)
+        if stored is None:
+            raise ApiError(404, "not_found", "Asset not found")
+        path, mime = stored
+        return FileResponse(
+            path,
+            media_type=mime,
+            content_disposition_type="inline",
+            filename=filename,
+            headers={"Cache-Control": "private, max-age=3600"},
+        )
 
     # -- studio -----------------------------------------------------------------------------
     if settings.enable_studio and STATIC_DIR.is_dir():
