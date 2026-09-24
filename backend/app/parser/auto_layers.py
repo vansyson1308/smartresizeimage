@@ -288,6 +288,29 @@ def _classify(blocks: list[_Block], w: int, h: int) -> list[tuple[_Block, Elemen
     return roles
 
 
+def _assign_orphans(labels: np.ndarray, blocks: list[_Block]) -> dict[int, frozenset[int]]:
+    """Give every orphan component to exactly one block.
+
+    An orphan (too small to be a block, e.g. the dot of an "i") joins the
+    smallest block whose box contains its centre, so a fragment inside two
+    overlapping boxes is never rendered twice.
+    """
+    assigned = {lab for b in blocks for lab in b.labels}
+    out: dict[int, set[int]] = {}
+    for lab, sl in enumerate(ndimage.find_objects(labels), start=1):
+        if sl is None or lab in assigned:
+            continue
+        cy = (sl[0].start + sl[0].stop) / 2
+        cx = (sl[1].start + sl[1].stop) / 2
+        owners = [
+            (b.w * b.h, i) for i, b in enumerate(blocks)
+            if b.x1 - 3 <= cx <= b.x2 + 3 and b.y1 - 3 <= cy <= b.y2 + 3
+        ]
+        if owners:
+            out.setdefault(min(owners)[1], set()).add(lab)
+    return {i: frozenset(v) for i, v in out.items()}
+
+
 def decompose_flat_image(image: Image.Image) -> list[DesignElement] | None:
     """Split a flat banner into background + foreground pseudo-layers.
 
@@ -335,7 +358,7 @@ def decompose_flat_image(image: Image.Image) -> list[DesignElement] | None:
     )
     labels_full = ndimage.grey_dilation(labels_full, size=(5, 5))
 
-    assigned = sorted({lab for b, _ in roles for lab in b.labels})
+    orphans = _assign_orphans(labels, [b for b, _ in roles])
     elements: list[DesignElement] = []
     fg_union = np.zeros((sh, sw), dtype=bool)
     for idx, (b, role) in enumerate(roles):
@@ -348,9 +371,9 @@ def decompose_flat_image(image: Image.Image) -> list[DesignElement] | None:
             continue
         crop = src.crop((x1, y1, x2, y2))
         window = labels_full[y1:y2, x1:x2]
-        # Its own components, plus tiny unassigned ones inside its box (i-dots,
-        # accents, punctuation) that the minimum-area filter left orphaned.
-        own = np.isin(window, list(b.labels)) | ((window > 0) & ~np.isin(window, assigned))
+        # Its own components, plus the tiny orphans (i-dots, accents,
+        # punctuation) the minimum-area filter left out and that belong to it.
+        own = np.isin(window, list(b.labels | orphans.get(idx, frozenset())))
         region = (np.asarray(mask_full.crop((x1, y1, x2, y2))) > 0) & own
         if role in (ElementRole.CTA, ElementRole.LOGO, ElementRole.BADGE):
             # Solid plates: fill the holes (the label text) but keep the plate's

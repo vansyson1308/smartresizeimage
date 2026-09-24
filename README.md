@@ -16,7 +16,20 @@ và được **kiểm tra vùng an toàn** (safe zone) trước khi bạn tải 
 > elements preserved, platform safe zones respected, file-size caps met. Studio UI,
 > REST API, CLI and Docker image included. See [docs/API.md](docs/API.md).*
 
-![1 banner gốc → 12 kích thước](docs/demo/showcase_tech.jpg)
+### Ảnh gốc: 1 thiết kế nhiều layer (như file PSD), 1200×628
+
+<p align="center"><img src="docs/demo/master_mascot.jpg" width="720" alt="Original master banner: PawMart Mega Sale 10.10 with a cat mascot"></p>
+
+### ↓ Kết quả: 1 click → 16 kích thước quảng cáo & mạng xã hội
+
+[![1 master → 16 sizes](docs/demo/showcase_mascot.jpg)](docs/demo/showcase_mascot.jpg)
+
+Mascot mèo, sticker "-70%", headline viền chữ, CTA và logo đều là layer riêng. Engine
+giữ nguyên tỉ lệ từng layer (không méo, không cắt), sticker "-70%" luôn bám theo mascot,
+bố cục tự đổi theo hình dạng khung: 1 hàng ngang ở 728×90, chồng dọc ở 300×600 và
+Story 1080×1920 (né vùng UI tô đỏ), chữ phụ tự bỏ ở size quá nhỏ để headline còn đọc được
+(và ghi lại trong "QA note"). Dung lượng dưới mỗi ô là file WebP thật; mọi size Google
+Display đều dưới trần 150 KB.
 
 ---
 
@@ -27,10 +40,10 @@ Mọi ô ảnh trong các bảng dưới đây là **output thật của engine*
 `python backend/tools/make_demo.py` là ra lại **đúng từng byte** các ảnh này. Dung lượng
 ghi dưới mỗi ô là kích thước file WebP thật sau khi xuất; vùng tô đỏ trên Story là vùng
 UI của Instagram/Facebook mà engine đã chủ động tránh (chỉ vẽ để minh họa, không có
-trong file xuất). Banner gốc là thiết kế mẫu vẽ bằng code (3 phong cách khác nhau),
-không phải ảnh chỉnh tay.
+trong file xuất). Các banner gốc là thiết kế mẫu vẽ bằng code (4 phong cách khác nhau),
+không phải ảnh chỉnh tay; output không được chỉnh sửa gì thêm.
 
-### 1 master → 12 size quảng cáo (PSD nhiều layer)
+### Thêm 3 phong cách khác: 1 master → 12 size quảng cáo
 
 <table>
 <tr>

@@ -38,4 +38,5 @@ Use deterministic generators/tests instead of committing generated artifacts whe
 
 Exception: the README demo images in `docs/demo/` are committed on purpose. Regenerate them
 with `python backend/tools/make_demo.py` whenever rendering changes, and keep the folder
-small (JPEG boards, ~1.5 MB total).
+small (JPEG boards, ~2.5 MB total). `docs/demo/studio.jpg` is a screenshot of the running
+studio; refresh it with `backend/tools/capture_studio.mjs` (instructions in the file).

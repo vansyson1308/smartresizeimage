@@ -354,7 +354,9 @@ class StackLayoutEngine:
         # rest of the height (between 30% and 60%).
         hero_elem: DesignElement = hero  # type: ignore[assignment]
         hw0, hh0 = _natural_size(hero_elem)
-        want_h = math.sqrt(self._profile.target_hero_ratio * tw * th * hh0 / max(1.0, hw0))
+        # Aim a little above the prominence floor (0.65 x target) rather than at the
+        # full target, so copy keeps a readable share on square and 4:5 canvases.
+        want_h = math.sqrt(0.75 * self._profile.target_hero_ratio * tw * th * hh0 / max(1.0, hw0))
         want_h = min(want_h, 0.92 * rw * hh0 / max(1.0, hw0))
         copy_share = min(0.6, max(0.3, (rh - want_h - 2 * gap) / rh))
         budget = copy_share * rh - gap * max(0, len(copy_items) - 1)
@@ -561,7 +563,20 @@ class StackLayoutEngine:
             h = w * h0 / max(1.0, w0)
             x = min(max(hb.x + rx * hb.width, 0), tw - w)
             y = min(max(hb.y + ry * hb.height, 0), th - h)
-            boxes[e.id] = BoundingBox(round(x), round(y), max(1, round(w)), max(1, round(h)))
+            box = BoundingBox(round(x), round(y), max(1, round(w)), max(1, round(h)))
+            others = [b for k, b in boxes.items() if k != hero.id]  # type: ignore[union-attr]
+            if any(_overlap(box, b) > 0 for b in others):
+                # A sticker protruding from the hero would collide with the
+                # copy or CTA laid out next to it: pull it inside the hero.
+                w = min(w, float(hb.width))
+                h = w * h0 / max(1.0, w0)
+                if h > hb.height:
+                    h = float(hb.height)
+                    w = h * w0 / max(1.0, h0)
+                x = min(max(x, hb.x), hb.x2 - w)
+                y = min(max(y, hb.y), hb.y2 - h)
+                box = BoundingBox(round(x), round(y), max(1, round(w)), max(1, round(h)))
+            boxes[e.id] = box
 
     # ------------------------------------------------------- secondary visuals
     @staticmethod

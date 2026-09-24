@@ -1,11 +1,14 @@
 """Render the README demo images with the real engine.
 
-Every picture in ``docs/demo/`` is produced by this script: it draws three
+Every board in ``docs/demo/`` is produced by this script: it draws three
 master banners as separate layers (like a PSD), runs them through
 ``RenderService`` exactly as the API/CLI would, and lays the real outputs out
 on showcase boards labelled with each file's real size and weight.
 
     python backend/tools/make_demo.py            # writes docs/demo/*.jpg
+
+``docs/demo/studio.jpg`` is the one exception: it is a screenshot of the running
+studio, captured with ``backend/tools/capture_studio.mjs`` (see that file).
 
 Fonts: uses Liberation/DejaVu Sans Bold when installed, otherwise Pillow's
 built-in font (outputs then differ slightly in typography only).
@@ -237,6 +240,175 @@ def travel_master() -> Master:
     )
 
 
+# ------------------------------------------------------------ mascot master
+_SS = 2  # draw at 2x and downsample: cartoon outlines stay smooth
+
+
+def _ss_layer() -> tuple[Image.Image, ImageDraw.ImageDraw]:
+    img = Image.new("RGBA", (W * _SS, H * _SS), (0, 0, 0, 0))
+    return img, ImageDraw.Draw(img)
+
+
+def _finish(img: Image.Image) -> Image.Image:
+    # Premultiplied resize so transparent edges do not pick up dark fringes.
+    return img.convert("RGBa").resize((W, H), Image.Resampling.LANCZOS).convert("RGBA")
+
+
+def _s(*v: float) -> list[int]:
+    return [int(round(x * _SS)) for x in v]
+
+
+def _shape(d: ImageDraw.ImageDraw, kind: str, box, fill, outline=(70, 30, 20), width=6):
+    getattr(d, kind)(_s(*box), fill=fill, outline=outline, width=width * _SS)
+
+
+def _star(cx: float, cy: float, r_out: float, r_in: float, n: int = 12, rot: float = 0.0):
+    pts = []
+    for i in range(n * 2):
+        r = r_out if i % 2 == 0 else r_in
+        a = math.pi * i / n + rot
+        pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+    return pts
+
+
+def mascot_master() -> Master:
+    rng = np.random.default_rng(1010)
+
+    # Background: radial gradient, sunburst rays, bokeh and confetti.
+    yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
+    dist = np.sqrt(((xx - 0.72 * W) / W) ** 2 + ((yy - 0.45 * H) / H) ** 2)
+    t = np.clip(dist / 0.85, 0, 1)[..., None]
+    inner, outer = np.array([255, 128, 176], np.float32), np.array([88, 36, 168], np.float32)
+    bg = Image.fromarray((inner * (1 - t) + outer * t).astype(np.uint8), "RGB").convert("RGBA")
+    rays, rd = _ss_layer()
+    cx, cy = 0.72 * W, 0.45 * H
+    for i in range(0, 32, 2):
+        a0, a1 = 2 * math.pi * i / 32, 2 * math.pi * (i + 1) / 32
+        rd.polygon(_s(cx, cy, cx + 1600 * math.cos(a0), cy + 1600 * math.sin(a0),
+                      cx + 1600 * math.cos(a1), cy + 1600 * math.sin(a1)),
+                   fill=(255, 255, 255, 26))
+    for _ in range(9):
+        bx, by, br = rng.uniform(0, W), rng.uniform(0, H), rng.uniform(30, 90)
+        rd.ellipse(_s(bx - br, by - br, bx + br, by + br), fill=(255, 255, 255, 18))
+    colors = [(255, 214, 64), (64, 224, 208), (255, 255, 255), (255, 99, 132), (130, 200, 255)]
+    for _ in range(90):
+        x, y = rng.uniform(0, W), rng.uniform(0, H)
+        c = colors[int(rng.integers(len(colors)))] + (230,)
+        kind = rng.integers(3)
+        if kind == 0:
+            w_, h_, a = rng.uniform(8, 16), rng.uniform(4, 7), rng.uniform(0, math.pi)
+            ca, sa = math.cos(a), math.sin(a)
+            pts = [(x + dx * ca - dy * sa, y + dx * sa + dy * ca)
+                   for dx, dy in ((-w_, -h_), (w_, -h_), (w_, h_), (-w_, h_))]
+            rd.polygon([v for p in pts for v in _s(*p)], fill=c)
+        elif kind == 1:
+            r = rng.uniform(3, 6)
+            rd.ellipse(_s(x - r, y - r, x + r, y + r), fill=c)
+        else:
+            rd.polygon([v for p in _star(x, y, 9, 4, 5, rng.uniform(0, 1)) for v in _s(*p)], fill=c)
+    bg.alpha_composite(_finish(rays))
+
+    # Mascot: a cheerful cat with a shopping bag (one layer, like a PSD group).
+    m, d = _ss_layer()
+    shadow, sd = _ss_layer()
+    sd.ellipse(_s(730, 552, 1030, 598), fill=(40, 10, 60, 90))
+    m.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(10 * _SS)))
+    orange, dark, cream, pink = (255, 150, 50), (70, 30, 20), (255, 236, 205), (255, 150, 170)
+    tail = []  # smooth S-curve curling up on the left, behind the body
+    for k in range(40):
+        u = k / 39
+        tail.append((800 - 110 * u + 25 * math.sin(u * math.pi * 1.4),
+                     540 - 150 * u - 40 * math.sin(u * math.pi)))
+    d.line([v for p in tail for v in _s(*p)], fill=dark, width=40 * _SS, joint="curve")
+    d.line([v for p in tail for v in _s(*p)], fill=orange, width=28 * _SS, joint="curve")
+    tip = tail[-1]
+    _shape(d, "ellipse", (tip[0] - 20, tip[1] - 20, tip[0] + 20, tip[1] + 20), (225, 110, 30))
+    _shape(d, "ellipse", (770, 345, 975, 575), orange)  # body
+    _shape(d, "ellipse", (818, 405, 928, 565), cream, outline=None)  # belly
+    _shape(d, "ellipse", (768, 538, 858, 584), cream)  # feet
+    _shape(d, "ellipse", (886, 538, 976, 584), cream)
+    d.line(_s(800, 430, 722, 322), fill=dark, width=46 * _SS)  # waving arm
+    d.line(_s(800, 430, 722, 322), fill=orange, width=34 * _SS)
+    _shape(d, "ellipse", (694, 290, 750, 346), cream)
+    d.line(_s(945, 440, 1005, 470), fill=dark, width=44 * _SS)  # arm holding the bag
+    d.line(_s(945, 440, 1005, 470), fill=orange, width=32 * _SS)
+    d.arc(_s(1008, 392, 1072, 470), 180, 360, fill=dark, width=10 * _SS)  # bag handle
+    _shape(d, "rounded_rectangle", (985, 440, 1095, 565), (255, 84, 140))
+    d.text(_s(1018, 470), "%", font=font(58 * _SS), fill=(255, 255, 255))
+    _shape(d, "ellipse", (984, 452, 1030, 496), cream)  # paw on the handle
+    for ear in ((762, 205, 780, 92, 852, 160), (888, 160, 960, 92, 978, 205)):
+        d.polygon(_s(*ear), fill=orange, outline=dark, width=6 * _SS)
+    d.polygon(_s(780, 185, 785, 122, 830, 162), fill=pink)
+    d.polygon(_s(910, 162, 955, 122, 960, 185), fill=pink)
+    _shape(d, "ellipse", (742, 132, 998, 382), orange)  # head
+    for i, x in enumerate((838, 870, 902)):  # forehead stripes
+        d.line(_s(x, 142, x + (i - 1) * 6, 178), fill=(225, 110, 30), width=9 * _SS)
+    _shape(d, "ellipse", (810, 262, 930, 348), cream, outline=None)  # muzzle
+    for ex in (808, 890):  # eyes with highlights
+        d.ellipse(_s(ex, 212, ex + 42, 266), fill=(35, 20, 30))
+        d.ellipse(_s(ex + 8, 220, ex + 22, 236), fill=(255, 255, 255))
+        d.ellipse(_s(ex + 26, 246, ex + 33, 254), fill=(255, 255, 255))
+    for bx in (780, 922):
+        d.ellipse(_s(bx, 272, bx + 40, 298), fill=(255, 120, 150, 170))  # blush
+    d.polygon(_s(858, 272, 882, 272, 870, 286), fill=(230, 80, 110))  # nose
+    d.arc(_s(846, 276, 870, 304), 0, 180, fill=dark, width=4 * _SS)  # "w" mouth
+    d.arc(_s(870, 276, 894, 304), 0, 180, fill=dark, width=4 * _SS)
+    d.chord(_s(856, 296, 884, 322), 0, 180, fill=(230, 80, 110))  # tongue
+    for sx, sy, ex_, ey in ((800, 300, 752, 290), (800, 312, 754, 320),
+                            (940, 300, 988, 290), (940, 312, 986, 320)):
+        d.line(_s(sx, sy, ex_, ey), fill=dark, width=3 * _SS)  # whiskers
+    hero = _finish(m)
+
+    # "-70%" sticker slapped on the mascot (a separate layer, like in a PSD).
+    st, std = _ss_layer()
+    std.polygon([v for p in _star(1050, 185, 84, 68, 14) for v in _s(*p)],
+                fill=(255, 56, 88), outline=(255, 255, 255), width=5 * _SS)
+    label = Image.new("RGBA", _s(240, 110), (0, 0, 0, 0))
+    ImageDraw.Draw(label).text(_s(12, 16), "-70%", font=font(50 * _SS), fill=(255, 255, 255))
+    label = label.crop(label.getbbox())
+    label = label.rotate(-12, resample=Image.Resampling.BICUBIC, expand=True)
+    st.alpha_composite(label, tuple(_s(1050 - label.width / (2 * _SS),
+                                       185 - label.height / (2 * _SS))))
+    sticker = _finish(st)
+
+    # Copy: outlined two-line headline, sub-copy, CTA with a drop shadow, logo.
+    hl, hd = _ss_layer()
+    purple = (58, 18, 108)
+    for txt, y, size, fill in (("MEGA SALE", 150, 96, (255, 255, 255)),
+                               ("10.10", 252, 132, (255, 214, 64))):
+        hd.text(_s(76, y + 7), txt, font=font(size * _SS), fill=(40, 10, 70, 150),
+                stroke_width=9 * _SS, stroke_fill=(40, 10, 70, 150))
+        hd.text(_s(70, y), txt, font=font(size * _SS), fill=fill,
+                stroke_width=9 * _SS, stroke_fill=purple)
+    headline = _finish(hl)
+    sub = _text_layer((74, 412), "Up to 70% off · Free shipping nationwide", 32,
+                      (255, 255, 255), bold=False)
+    ct, cd = _ss_layer()
+    cd.rounded_rectangle(_s(74, 478, 380, 548), radius=35 * _SS, fill=(150, 40, 20, 170))
+    cd.rounded_rectangle(_s(74, 468, 380, 538), radius=35 * _SS, fill=(255, 214, 64))
+    cd.text(_s(112, 482), "SHOP NOW  ›", font=font(34 * _SS), fill=purple)
+    cta = _finish(ct)
+    lg, ld = _ss_layer()
+    ld.rounded_rectangle(_s(70, 44, 300, 106), radius=16 * _SS, fill=(255, 255, 255))
+    for px, py, r in ((96, 83, 11), (86, 64, 5), (98, 58, 5), (110, 64, 5), (114, 76, 4)):
+        ld.ellipse(_s(px - r, py - r, px + r, py + r), fill=purple)
+    ld.text(_s(128, 56), "PAWMART", font=font(32 * _SS), fill=purple)
+    logo = _finish(lg)
+
+    return Master(
+        "mascot", "PawMart · Mega Sale 10.10",
+        [
+            ("background", ElementRole.BACKGROUND, bg),
+            ("logo", ElementRole.LOGO, logo),
+            ("headline", ElementRole.HEADLINE, headline),
+            ("subheadline", ElementRole.SUBHEADLINE, sub),
+            ("cta", ElementRole.CTA, cta),
+            ("mascot", ElementRole.HERO_IMAGE, hero),
+            ("sticker", ElementRole.BADGE, sticker),
+        ],
+    )
+
+
 # ----------------------------------------------------------------------- boards
 BOARD_BG = (244, 245, 247)
 INK = (28, 31, 36)
@@ -377,6 +549,31 @@ def make_showcase(service: RenderService, master: Master, tmp: Path) -> Image.Im
     )
 
 
+MASCOT_STRIPS = ["iab-leaderboard", "iab-billboard", "iab-banner", "iab-mobile-banner"]
+MASCOT_BOXES = ["iab-medium-rectangle", "iab-large-rectangle", "iab-half-page",
+                "iab-wide-skyscraper", "iab-mobile-interstitial"]
+MASCOT_SOCIAL = ["meta-story", "meta-feed-portrait", "meta-feed-square", "pinterest-standard",
+                 "linkedin-single-image", "x-header", "facebook-cover"]
+
+
+def make_mascot_showcase(service: RenderService, master: Master, tmp: Path) -> Image.Image:
+    """The README hero: one complex master, every size it becomes."""
+    src = tmp / f"{master.name}.png"
+    master.flat().save(src)
+    rows = []
+    total = 0
+    for ids, scale in ((MASCOT_STRIPS, 1.0), (MASCOT_BOXES, 1.0), (MASCOT_SOCIAL, 1 / 3)):
+        tiles, _ = _render(service, src, _layered_engine(master), ids)
+        total += len(tiles)
+        rows.append((tiles, scale))
+    return board(
+        f"{master.title}: 1 master → {total} sizes, one click",
+        "Every tile is the engine's real output (layered input, default settings) with its real "
+        "WebP size. Ad units at 1:1, social sizes at 1:3. Shaded = Story UI zones kept clear.",
+        rows,
+    )
+
+
 def make_auto_layers(service: RenderService, master: Master, tmp: Path) -> Image.Image:
     src = tmp / f"{master.name}_flat.png"
     master.flat().save(src)
@@ -433,6 +630,12 @@ def main() -> None:
     masters = [coffee_master(), tech_master(), travel_master()]
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
+        mascot = mascot_master()
+        mascot.flat().save(out / "master_mascot.jpg", quality=90, optimize=True,
+                           progressive=True)
+        make_mascot_showcase(service, mascot, tmp).save(
+            out / "showcase_mascot.jpg", quality=86, optimize=True, progressive=True)
+        print("wrote", out / "showcase_mascot.jpg")
         for m in masters:
             make_showcase(service, m, tmp).save(out / f"showcase_{m.name}.jpg", quality=86,
                                                  optimize=True, progressive=True)
