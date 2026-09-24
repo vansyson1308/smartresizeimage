@@ -2,6 +2,28 @@
 
 All notable changes to this project are documented here. Versions follow SemVer.
 
+## [Unreleased]
+
+### Added
+- README demo gallery (`docs/demo/`): three layered masters rendered to 12 sizes each,
+  flat-PNG plain resize vs auto-layers, v1 vs v2 engine, and a studio screenshot. Boards
+  are produced by `backend/tools/make_demo.py` and are byte-for-byte reproducible.
+
+### Changed
+- Stack layout: stickers designed onto the hero (e.g. a "-50%" roundel) stay attached to
+  it instead of taking a slot in the copy stack; strip logos are capped so they never
+  dominate a 728×90 row.
+- Auto-layers: flat or gradient backgrounds are refilled from the fitted background model
+  instead of inpainting (no more "ghost" of removed elements, ~2x faster); small visual
+  fragments touching the hero (steam, sparkles) are merged into it; the corner wordmark
+  logo is detected before copy ranking so the sub-headline keeps its role.
+- QA warns only when content is removed; dropped decoration is still listed in
+  `qa.dropped` but no longer produces a warning.
+
+### Fixed
+- Auto-layers lost small glyph parts (the dot of an "i", accents) from text layers and left
+  them behind on the background plate.
+
 ## [2.0.0] - 2026-09-24
 
 A productisation release: AutoBanner becomes a deployable service with a studio, REST

@@ -354,10 +354,13 @@ def evaluate_qa(
         and e.role not in BACKGROUND_ROLES and e.role != ElementRole.GROUP
     ]
     qa["dropped"] = [{"id": e.id, "role": e.role.value} for e in dropped]
-    if dropped:
+    # Ornaments (background sparkles, bubbles) may be dropped freely; only
+    # removed *content* is worth a warning.
+    meaningful = [e for e in dropped if e.role not in (ElementRole.DECORATION,)]
+    if meaningful:
         warnings.append(
             f"Removed to stay legible at {preset.width}x{preset.height}: "
-            + ", ".join(sorted({e.role.value.replace("_", " ") for e in dropped}))
+            + ", ".join(sorted({e.role.value.replace("_", " ") for e in meaningful}))
         )
 
     qa["quality_gates_passed"] = bool(result.gates_passed)
