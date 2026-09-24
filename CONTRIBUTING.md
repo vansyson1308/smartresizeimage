@@ -6,10 +6,17 @@ Thanks for contributing to AutoBanner.
 1. `cd backend`
 2. `python -m venv .venv && source .venv/bin/activate`
 3. `pip install -r requirements-dev.txt`
+4. `python -m app.main` → studio + API on http://localhost:7860
 
-## Local checks (required)
+## Local checks (required, run from the repo root)
 - `ruff check backend/app backend/tests backend/tools`
-- `pytest -q`
+- `pytest backend/tests -q`
+
+## Where things live
+- `backend/app/service.py` - the one entry point used by API, CLI and studio
+- `backend/app/api/` - HTTP layer; `backend/app/web/static/` - studio
+- `backend/app/presets.py` - add new platform sizes here (with `max_kb` and safe zone)
+- Rendering engines: `relayout.py` (Phase 2.1) and `redesign/` (Phase 3)
 
 ## Benchmark (if layout/composition changes)
 - `python backend/tools/generate_bench_fixtures.py --cases 12 --seed 42`

@@ -1,13 +1,2 @@
-# Lightweight requirements for CI testing (no GPU/AI dependencies).
-# Tests run with use_ai=False so torch/transformers/lama are not needed.
-Pillow>=10.0.0,<11.0.0
-numpy>=1.24.0,<2.0.0
-scipy>=1.11.0,<2.0.0
-opencv-python-headless>=4.5.0
-psd-tools>=1.9.0,<2.0.0
-
-# Dev / test tools
-pytest>=7.0.0
-pytest-cov>=4.0.0
-ruff>=0.1.0
-mypy>=1.5.0
+# CI: lite runtime + test tools (tests run with use_ai=False).
+-r requirements-dev.txt

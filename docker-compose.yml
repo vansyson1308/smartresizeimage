@@ -1,29 +1,27 @@
 services:
-  backend:
+  autobanner:
     build:
       context: ./backend
-      dockerfile: Dockerfile
+      args:
+        WITH_AI: "false"   # set to "true" for CLIP/LaMa (large image)
+    image: autobanner:latest
     ports:
       - "7860:7860"
-    volumes:
-      - ./outputs:/app/outputs
-      - model-cache:/app/cache
     environment:
-      - AUTOBANNER_LOG_LEVEL=INFO
-      - AUTOBANNER_USE_AI=true
-
-      # Gradio in Docker: bind externally
-      - GRADIO_SERVER_NAME=0.0.0.0
-      - GRADIO_SERVER_PORT=7860
-
-      # IMPORTANT: bypass/disable proxy for localhost checks (fix "localhost not accessible")
-      - NO_PROXY=localhost,127.0.0.1,0.0.0.0
-      - no_proxy=localhost,127.0.0.1,0.0.0.0
-      - HTTP_PROXY=
-      - HTTPS_PROXY=
-      - http_proxy=
-      - https_proxy=
-
+      AUTOBANNER_LOG_LEVEL: INFO
+      # Comma-separated keys. Leave empty only on a trusted network.
+      AUTOBANNER_API_KEYS: ${AUTOBANNER_API_KEYS:-}
+      AUTOBANNER_WORKERS: ${AUTOBANNER_WORKERS:-2}
+      AUTOBANNER_RATE_LIMIT_PER_MINUTE: ${AUTOBANNER_RATE_LIMIT_PER_MINUTE:-60}
+      AUTOBANNER_MAX_UPLOAD_MB: ${AUTOBANNER_MAX_UPLOAD_MB:-150}
+      NO_PROXY: localhost,127.0.0.1
+    volumes:
+      - model-cache:/app/cache
+    read_only: true
+    tmpfs:
+      - /tmp:size=2g
+    security_opt:
+      - no-new-privileges:true
     deploy:
       resources:
         limits:

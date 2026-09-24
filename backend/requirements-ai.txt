@@ -1,0 +1,6 @@
+# Optional AI extras: CLIP role classification + LaMa inpainting (large download).
+-r requirements.txt
+torch>=2.0.0
+torchvision>=0.15.0
+transformers>=4.30.0,<5.0.0
+simple-lama-inpainting>=0.1.0

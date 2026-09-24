@@ -1,223 +1,197 @@
 # AutoBanner
 
-[![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
-AutoBanner là công cụ **tự bố cục lại banner** để chuyển từ 1 thiết kế gốc sang nhiều kích thước đích (ngang / vuông / dọc), **giữ nguyên tối đa mascot/logo/text** và tạo ra kết quả nhìn như “được thiết kế cho size đích”, không phải chỉ “resize kéo giãn”.
+[![CI](https://github.com/vansyson1308/smartresizeimage/actions/workflows/ci.yml/badge.svg)](https://github.com/vansyson1308/smartresizeimage/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+
+**Một thiết kế gốc → mọi kích thước quảng cáo & mạng xã hội, trong vài giây.**
+
+AutoBanner nhận 1 banner gốc (PSD nhiều layer hoặc PNG/JPG/WEBP) và tự **bố cục lại** cho
+40+ kích thước chuẩn của Google Display, Meta, TikTok, LinkedIn, X, YouTube, Pinterest…
+Logo, chữ, CTA và mascot được giữ nguyên (không méo, không cắt), phần nền được mở rộng
+thông minh, mỗi file xuất ra **nằm dưới giới hạn dung lượng của từng mạng quảng cáo**
+và được **kiểm tra vùng an toàn** (safe zone) trước khi bạn tải về.
+
+> *English: AutoBanner turns one master banner into every ad and social size — brand
+> elements preserved, platform safe zones respected, file-size caps met. Studio UI,
+> REST API, CLI and Docker image included. See [docs/API.md](docs/API.md).*
 
 ---
 
-## AutoBanner làm được gì?
-- Đọc **PSD** và ảnh phẳng (**PNG/JPG/WEBP**).
-- Phân loại vai trò phần tử: headline/subheadline/CTA/logo/mascot/hero/background.
-- **Phase 2.1 – Adaptive Relayout**: tự tính bố cục theo profile + solver + typography (tự wrap chữ, giữ hierarchy).
-- **Phase 3 – Target-first Redesign (Design-native)**: đặt các “điểm neo thương hiệu” (mascot/logo/text/CTA) trước, rồi **tạo lại nền + decor (sky/cityscape/fireworks/confetti)** theo style minh hoạ flat để nhìn như thiết kế cho size đích.
-- Có **benchmark** để đo chất lượng, tránh regress.
+## Vì sao AutoBanner?
 
-## AutoBanner KHÔNG phải là gì?
-- Không phải Photoshop full-render tất cả layer effects.
-- Không phải công cụ “đổi style / đổi concept” theo kiểu thiết kế mới hoàn toàn.
+| Vấn đề của team marketing | AutoBanner giải quyết |
+|---|---|
+| Designer mất hàng giờ resize 1 banner ra 15–30 size cho mỗi chiến dịch | Chọn **pack** (vd. `google-display`, `meta-ads`) → nhận ZIP đủ size trong vài giây |
+| Google Display từ chối file > 150 KB | Tự dò chất lượng JPEG/WebP (hoặc giảm màu PNG) để **vừa ngân sách KB**, báo rõ nếu không đạt |
+| Chữ/CTA bị che bởi thanh UI của Story/Reels/TikTok | Tự dời nhóm phần tử chính vào **safe zone** và cảnh báo trong báo cáo QA |
+| Resize kéo giãn làm méo logo, mascot | Phần tử thương hiệu được scale **đồng đều**, nền được mở rộng bằng inpainting |
+| Không tích hợp được vào pipeline | **REST API** có API key, job bất đồng bộ, `manifest.json` máy đọc được, **CLI** trả exit code cho CI/CD |
 
+## Tính năng
+
+- **Studio web** (không cần cài gì thêm): kéo-thả file, chọn pack/preset, xem trước từng size, tải từng file hoặc ZIP.
+- **REST API** (FastAPI, OpenAPI tại `/docs`): `/v1/render` (đồng bộ, trả ZIP), `/v1/jobs` (bất đồng bộ, có tiến độ), `/v1/analyze`, `/v1/presets`.
+- **CLI** `autobanner`: render hàng loạt nhiều file, nhiều pack, xuất thư mục hoặc ZIP.
+- **Thư viện 40+ preset** chuẩn IAB / Google Ads / Meta / TikTok / LinkedIn / X / YouTube / Pinterest / Web / Email, gom thành **pack** theo chiến dịch.
+- **Xuất PNG / JPEG / WebP** với **ngân sách dung lượng** (tự áp giới hạn của từng mạng hoặc tự đặt `max_kb`).
+- **QA tự động** cho từng file: vi phạm safe zone, chữ quá nhỏ (< 9px), quality gate, dung lượng.
+- **2 engine**:
+  - `phase21` — *Relayout*: nhanh, deterministic; PSD được bố cục lại theo vai trò layer, ảnh phẳng dùng content-aware fit.
+  - `phase3` — *Redesign*: đặt “điểm neo thương hiệu” trước rồi vẽ lại nền + decor phong cách flat illustration.
+- **Sẵn sàng production**: API key (so sánh hằng thời gian), rate limit, giới hạn upload, kiểm tra magic-byte, chống decompression bomb, request ID, Prometheus `/metrics`, log JSON, Docker non-root + read-only.
+
+## Hiệu năng (CPU, 1 luồng)
+
+| Tác vụ (nguồn 1200×628) | v1 | v2 |
+|---|---:|---:|
+| Relayout → Story 1080×1920 | 7.1 s | **0.9 s** |
+| Relayout → 8 size Google Display | 3.0 s | **1.2 s** |
+| Redesign (phase3) → Story 1080×1920 | 36 s | **13 s** |
+
+Chất lượng layout không đổi: benchmark Phase 2.1 cho kết quả **giống hệt** bản trước (75% pass, cùng điểm từng case).
 
 ---
 
-## Nên dùng chế độ nào?
-- **Phase 3 (khuyến nghị cho banner minh hoạ flat)**: khi bạn đổi ngang → dọc (hoặc tỷ lệ lệch mạnh) và muốn nhìn như thiết kế cho size đó từ đầu.
-- **Phase 2.1**: khi bạn cần relayout nhanh, ít thay đổi nền/decor.
+## Bắt đầu nhanh
 
----
-
-# Chuẩn bị (cực cơ bản)
-Bạn cần:
-1) **Git** (để clone repo)
-2) **Python 3.11+** (khuyến nghị)
-3) (Tuỳ chọn) **Docker Desktop** nếu bạn muốn chạy kiểu Docker
-
-Nếu bạn chưa quen kỹ thuật: chọn **Option A (Docker)** là dễ nhất.
-
----
-
-# Cài đặt & chạy (dành cho người mới)
-
-## Bước 1 — Clone repo về máy
-Mở Terminal/CMD ở chỗ bạn muốn lưu project rồi chạy:
+### Cách 1 — Docker (dễ nhất)
 
 ```bash
 git clone https://github.com/vansyson1308/smartresizeimage.git
 cd smartresizeimage
-Nếu lệnh git không chạy: bạn chưa cài Git.
-
-Option A (dễ nhất) — Chạy bằng Docker
-Yêu cầu: có Docker Desktop.
+cp .env.example .env        # đặt AUTOBANNER_API_KEYS nếu public ra internet
 docker compose up --build
+```
 
-Sau đó mở trình duyệt:
-http://localhost:7860
+Mở **http://localhost:7860** (Studio) — tài liệu API ở **http://localhost:7860/docs**.
 
-Dừng app:
-nhấn Ctrl + C trong cửa sổ terminal chạy docker.
+### Cách 2 — Python (Windows / macOS / Linux)
 
-Option B — Chạy local bằng Python (Windows / macOS / Linux)
-Bước 1 — Tạo môi trường ảo (venv)
+Yêu cầu Python 3.10+.
 
-Windows (CMD):
-cd backend
+```bash
+cd smartresizeimage/backend
 python -m venv .venv
-.venv\Scripts\activate
+# macOS/Linux:  source .venv/bin/activate
+# Windows:      .venv\Scripts\activate
+pip install -r requirements.txt
+python -m app.main            # Studio + API tại http://localhost:7860
+```
 
-Windows (PowerShell):
+Muốn dùng AI (phân loại CLIP + inpainting LaMa, tải vài GB): `pip install -r requirements-ai.txt` và đặt `AUTOBANNER_USE_AI=true`.
+
+---
+
+## Dùng Studio
+
+1. **Master design** — kéo-thả PSD/PNG/JPG/WEBP. Studio hiển thị kích thước, loại (layered/flat) và vai trò các layer phát hiện được.
+2. **Output sizes** — bấm một pack (vd. *Meta Ads*), tick thêm preset, hoặc thêm size tùy chỉnh `1200x628`.
+3. **Output settings** — chọn engine, định dạng, giới hạn KB (để trống = theo mạng quảng cáo).
+4. **Generate** — xem tiến độ, preview từng size kèm dung lượng / ngân sách và cảnh báo QA, tải từng file hoặc cả ZIP.
+
+> Mẹo: PSD có đặt tên layer rõ ràng (`logo`, `headline`, `cta`, `hero`, `bg`…) cho kết quả tốt nhất.
+> Với ảnh phẳng dùng Redesign, chọn preset anchor *Mascot + headline + CTA*.
+
+## Dùng CLI
+
+```bash
 cd backend
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+python -m app presets                                 # liệt kê preset & pack
+python -m app analyze design.psd                      # xem layer & vai trò
+python -m app render design.psd -k meta-ads -k google-display -o out/
+python -m app render banners/*.png -s 1200x628 -s 300x250 --format webp --max-kb 150 --zip
+```
 
-macOS / Linux (Terminal):
-cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-Khi activate thành công, bạn sẽ thấy trước dòng lệnh có (.venv).
+Sau khi `pip install ./backend`, có thể gọi trực tiếp `autobanner …`. Exit code: `0` thành công,
+`1` có size lỗi, `2` sai tham số — phù hợp để gắn vào CI/CD.
 
-Bước 2 — Cài thư viện
-Cài bản dev (đầy đủ lint/test):
-pip install -r requirements-dev.txt
+## Dùng REST API
 
-Bước 3 — Chạy UI (Gradio)
-python -m app.main
+```bash
+# Đồng bộ: trả về ZIP (ảnh + manifest.json)
+curl -H "X-API-Key: $KEY" \
+     -F file=@design.psd \
+     -F 'options={"packs":["google-display"],"format":"jpeg"}' \
+     -o banners.zip http://localhost:7860/v1/render
 
-Mở trình duyệt:
-http://localhost:7860
+# Bất đồng bộ: tạo job → hỏi trạng thái → tải ZIP
+curl -H "X-API-Key: $KEY" -F file=@design.psd \
+     -F 'options={"packs":["meta-ads"],"mode":"phase21"}' http://localhost:7860/v1/jobs
+curl -H "X-API-Key: $KEY" http://localhost:7860/v1/jobs/<id>
+curl -H "X-API-Key: $KEY" -o out.zip http://localhost:7860/v1/jobs/<id>/download
+```
 
-Cách dùng trong UI (dành cho designer / người không rành code)
+Chi tiết tham số, mã lỗi và schema `manifest.json`: [docs/API.md](docs/API.md).
 
-Mở UI tại http://localhost:7860
+## Pack có sẵn
 
-Upload file:
+| Pack | Nội dung |
+|---|---|
+| `starter` | Ngang 1200×628, vuông 1080×1080, dọc 1080×1920 |
+| `google-display` | 8 đơn vị IAB hiệu quả nhất (300×250, 728×90, 300×600, 160×600, 320×50, 320×100, 336×280, 970×250) — trần 150 KB |
+| `google-responsive` | Ảnh cho Responsive Display Ads (1200×628, 1200×1200, 960×1200) |
+| `meta-ads` | Feed vuông / 4:5 / ngang + Story/Reels (có safe zone) |
+| `social-organic` | 1 size post cho mỗi mạng lớn |
+| `covers` | Ảnh bìa Facebook, LinkedIn, X, YouTube |
+| `all` | Toàn bộ preset |
 
-PSD (khuyến nghị)
+---
 
-hoặc PNG/JPG
+## Cấu hình (biến môi trường)
 
-Chọn chế độ:
+| Biến | Mặc định | Ý nghĩa |
+|---|---|---|
+| `AUTOBANNER_API_KEYS` | *(trống)* | Danh sách key, cách nhau bằng dấu phẩy. Trống = API mở (chỉ dùng trong mạng tin cậy) |
+| `AUTOBANNER_SERVER_NAME` / `_PORT` | `127.0.0.1` / `7860` | Địa chỉ bind (Docker dùng `0.0.0.0`) |
+| `AUTOBANNER_WORKERS` | `2` | Số render chạy song song |
+| `AUTOBANNER_MAX_QUEUE` | `32` | Số job chờ tối đa trước khi trả 503 |
+| `AUTOBANNER_RATE_LIMIT_PER_MINUTE` | `60` | Giới hạn request render/analyze mỗi key hoặc IP (`0` = tắt) |
+| `AUTOBANNER_MAX_UPLOAD_MB` | `150` | Dung lượng upload tối đa |
+| `AUTOBANNER_JOB_TTL_SECONDS` | `3600` | Thời gian giữ kết quả job |
+| `AUTOBANNER_CORS_ORIGINS` | *(trống)* | Origin được phép gọi API từ trình duyệt |
+| `AUTOBANNER_TRUST_PROXY_HEADERS` | `false` | Tin `X-Forwarded-For` khi chạy sau reverse proxy |
+| `AUTOBANNER_USE_AI` | `false` | Bật CLIP/LaMa (cần `requirements-ai.txt`) |
+| `AUTOBANNER_LOG_FORMAT` | `text` | `json` để đẩy log vào hệ thống tập trung |
+| `AUTOBANNER_ENABLE_DOCS` / `_STUDIO` | `true` | Tắt `/docs` hoặc Studio khi chỉ cần API |
 
-Phase 3 (Design-native): khuyến nghị cho banner minh hoạ flat
+Triển khai production (reverse proxy, scale, giám sát): [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-Phase 2.1: relayout nhanh
+## Kiến trúc
 
-Nhập các size cần xuất (ví dụ):
+```
+backend/app/
+├── api/          FastAPI: auth, rate limit, job queue, metrics
+├── web/static/   Studio (HTML/CSS/JS thuần, CSP chặt)
+├── cli.py        CLI autobanner
+├── service.py    RenderService: stateless, thread-safe, manifest + QA
+├── presets.py    Thư viện size, pack, safe zone, giới hạn KB
+├── export.py     Mã hóa PNG/JPEG/WebP theo ngân sách dung lượng
+├── relayout.py   Engine Phase 2.1 (layout → compose → gates)
+├── redesign/     Engine Phase 3 (anchor → plan → best-of-N)
+├── layout/ composition/ parser/ classifier/ generative/
+```
 
-1200×628 (ngang)
+## Giới hạn (nói thật)
 
-1080×1080 (vuông)
+- Không phải trình render Photoshop đầy đủ: một số layer effect (stroke, glow, gradient overlay) chưa tái tạo 100%.
+- Ảnh phẳng (PNG/JPG) không có thông tin layer: với tỷ lệ cực đoan (vd. 728×90) thiết kế được thu nhỏ vào giữa và mở rộng nền; PSD nhiều layer cho kết quả tốt hơn nhiều.
+- Redesign (phase3) tối ưu cho banner **flat illustration**, không dành cho ảnh chụp.
+- AI (CLIP/LaMa) là tùy chọn; mặc định chạy hoàn toàn deterministic trên CPU.
 
-1080×1920 (dọc)
+## Phát triển
 
-Generate → tải kết quả
-
-Nếu bạn dùng ảnh JPG/PNG (flattened)
-
-Phase 3 có thể yêu cầu bạn chọn “anchors” (vùng mascot/text/logo).
-
-UI có preset nhanh cho banner flat: Mascot / MainText / CTA.
-
-CLI smoke test (dành cho người hơi biết kỹ thuật)
-Chạy từ thư mục backend/ (đang bật venv).
-
-python - <<'PY'
-from app.relayout import ReLayoutEngine
-
-engine = ReLayoutEngine(use_ai=False)
-engine.load_file("../path/to/input.png")  # đổi đường dẫn cho đúng file của bạn
-
-for (w, h) in [(1200, 628), (1080, 1080), (1080, 1920)]:
-    result = engine.relayout((w, h))
-    result.image.save(f"output_{w}x{h}.png")
-
-print("Done. Check output_*.png in current folder.")
-PY
-
-Benchmark (đo chất lượng – không commit output)
-Chạy từ repo root (khuyến nghị), hoặc từ backend đều được nếu đường dẫn đúng.
-
+```bash
+cd backend && pip install -r requirements-dev.txt && cd ..
+ruff check backend/app backend/tests backend/tools
+pytest backend/tests -q
 python backend/tools/generate_bench_fixtures.py --cases 12 --seed 42
 python backend/tools/run_layout_bench.py --mode both --seed 42
-python backend/tools/run_layout_bench.py --mode phase3 --seed 42
+```
 
-Output được sinh ra (KHÔNG commit):
-
-backend/tests/fixtures/outputs/bench_phase21/<case>/<size>/before.png
-
-backend/tests/fixtures/outputs/bench_phase21/<case>/<size>/after.png
-
-backend/tests/fixtures/outputs/bench_phase21/<case>/<size>/layout_debug.json
-
-backend/tests/fixtures/outputs/bench_phase21/<case>/<size>/overlay.png
-
-backend/tests/fixtures/outputs/bench_phase21/report.md
-
-Cấu hình (configuration)
-
-File cấu hình chính:
-
-backend/app/config.py
-
-Một số flag đáng chú ý:
-
-LAYOUT_PROFILE_SCORING_ENABLED
-
-LAYOUT_SOLVER_MAX_ITERS
-
-LAYOUT_DEBUG_ENABLED, LAYOUT_DEBUG_DIR
-
-TEXT_SAFE_PLATE_*
-
-Phase 3: các setting liên quan palette/seam/decor/horizon và số candidates
-
-Generative adapter (tuỳ chọn)
-
-Mặc định Phase 3 chạy deterministic (không cần key).
-
-Nếu bạn muốn bật generative adapter (tuỳ setup trong code), bật env var:
-
-Windows (CMD):
-set AUTOBANNER_ENABLE_GENERATIVE_REDESIGN=true
-
-macOS/Linux:
-export AUTOBANNER_ENABLE_GENERATIVE_REDESIGN=true
-Lưu ý: generative adapter là tùy chọn. Không có thì app vẫn chạy được.
-
-Troubleshooting (lỗi hay gặp)
-1) OpenCV inpaint failed: cv2 unavailable
-
-Không phải lỗi chết app. App sẽ fallback sang đường deterministic.
-
-Nếu bạn muốn OpenCV hoạt động tốt hơn trong môi trường headless, thử cài requirements-ci.txt.
-
-2) libGL.so.1 (Linux/headless)
-
-Đây là lỗi hệ thống do OpenCV GUI libs.
-
-Cách an toàn: dùng requirements-ci.txt hoặc chạy Docker.
-
-3) Không mở được http://localhost:7860
-
-Kiểm tra terminal có đang chạy python -m app.main không.
-
-Nếu bạn chạy qua proxy hoặc môi trường hạn chế, bật share:
-
-AUTOBANNER_SHARE=true
-
-GRADIO_ANALYTICS_ENABLED=false
-
-4) Benchmark output bị commit nhầm (binary)
-
-Output benchmark không được commit.
-
-Repo đã ignore outputs/ và các cache, nhưng nếu bạn lỡ add, hãy gỡ staged rồi commit lại.
-
-Development (dành cho dev)
-# chạy từ repo root (khuyến nghị)
-ruff check backend/app backend/tests backend/tools
-pytest -q
+Xem [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md), [SECURITY.md](SECURITY.md).
+Lịch sử thiết kế & audit các phase trước: [docs/history/](docs/history/).
 
 ## License
-See [LICENSE](./LICENSE).
 
-## Attribution
-Project code is first-party unless noted otherwise in future third-party attribution docs.
+[MIT](LICENSE)
