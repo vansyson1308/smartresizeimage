@@ -246,6 +246,11 @@ class SemanticClassifier:
             The same list with roles and priorities updated.
         """
         for element in elements:
+            # A flattened PNG/JPG/WEBP is one full-canvas layer that the parser
+            # already marks as the background; re-classifying it (e.g. as PHOTO)
+            # hides the source from preview and Phase 3 anchor cropping.
+            if element.effects.get("_source_type") == "flat_image":
+                continue
             element.role = self.classify(element, canvas_size)
 
             # Set priority based on role

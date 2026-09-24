@@ -101,19 +101,7 @@ def extract_anchors_from_boxes(
         )
         lr = layout_by_id.get(eid)
         if lr is None:
-            sx = target_size[0] / max(1, source_image.size[0])
-            sy = target_size[1] / max(1, source_image.size[1])
-            lr = LayoutResult(
-                element_id=eid,
-                new_bbox=BoundingBox(
-                    int(src.x * sx),
-                    int(src.y * sy),
-                    max(1, int(src.width * sx)),
-                    max(1, int(src.height * sy)),
-                ),
-                scale_factor=min(sx, sy),
-                visible=True,
-            )
+            lr = _project_box_uniform(eid, src, source_image.size, target_size)
         crop = source_image.convert("RGBA").crop((src.x, src.y, src.x2, src.y2))
         anchors.append(
             Anchor(
@@ -128,6 +116,36 @@ def extract_anchors_from_boxes(
 
     mask = build_protected_mask(anchors, target_size, padding=mask_padding)
     return AnchorBundle(anchors=anchors, protected_mask=mask)
+
+
+def _project_box_uniform(
+    element_id: str,
+    src: BoundingBox,
+    source_size: tuple[int, int],
+    target_size: tuple[int, int],
+) -> LayoutResult:
+    """Map a source box to the target canvas without distorting its content.
+
+    The box keeps its relative centre position but is scaled uniformly
+    (``min(sx, sy)``) so that logos, text and mascots are never stretched when
+    the aspect ratio changes, then clamped to stay on-canvas.
+    """
+    tw, th = target_size
+    sx = tw / max(1, source_size[0])
+    sy = th / max(1, source_size[1])
+    scale = min(sx, sy)
+    w = max(1, min(tw, int(round(src.width * scale))))
+    h = max(1, min(th, int(round(src.height * scale))))
+    cx = (src.x + src.width / 2.0) * sx
+    cy = (src.y + src.height / 2.0) * sy
+    x = int(round(min(max(cx - w / 2.0, 0), tw - w)))
+    y = int(round(min(max(cy - h / 2.0, 0), th - h)))
+    return LayoutResult(
+        element_id=element_id,
+        new_bbox=BoundingBox(x, y, w, h),
+        scale_factor=scale,
+        visible=True,
+    )
 
 
 def build_protected_mask(

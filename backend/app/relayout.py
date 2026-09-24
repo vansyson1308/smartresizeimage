@@ -12,6 +12,7 @@ from PIL import Image, ImageDraw
 from .classifier import SemanticClassifier
 from .composition import CompositionEngine
 from .config import Config
+from .constants import BACKGROUND_ROLES
 from .enums import ElementRole
 from .generative.decor import apply_optional_decor_synthesis
 from .generative.engine import GenerativeOutpaintEngine
@@ -23,6 +24,7 @@ from .generative.harmonize import (
 )
 from .generative.masks import build_layout_masks
 from .layout import LayoutEngine
+from .layout.safe_zone import fit_group_into_safe_rect
 from .layout.solver import export_layout_debug_json, render_layout_debug_overlay
 from .models import CompositionResult, DesignElement, LayoutResult
 from .parser import get_parser
@@ -31,12 +33,30 @@ from .validators import validate_dimensions, validate_file_path
 
 logger = logging.getLogger("autobanner.relayout")
 
+_SAFE_ZONE_CRITICAL_ROLES = frozenset(
+    {
+        ElementRole.HEADLINE,
+        ElementRole.SUBHEADLINE,
+        ElementRole.BODY_TEXT,
+        ElementRole.CTA,
+        ElementRole.LOGO,
+        ElementRole.BADGE,
+        ElementRole.LABEL,
+    }
+)
+
 
 class ReLayoutEngine:
     """Main engine that orchestrates the entire re-layout process."""
 
-    def __init__(self, use_ai: bool = True) -> None:
-        self.classifier = SemanticClassifier(use_ai=use_ai)
+    def __init__(
+        self,
+        use_ai: bool = True,
+        classifier: SemanticClassifier | None = None,
+    ) -> None:
+        # A classifier may be shared across engines so the (optional) CLIP
+        # model is loaded once per process rather than once per job.
+        self.classifier = classifier or SemanticClassifier(use_ai=use_ai)
         self.layout_engine = LayoutEngine()
         self.compositor = CompositionEngine(use_ai_inpainting=use_ai)
         self.generative_engine = GenerativeOutpaintEngine()
@@ -141,11 +161,17 @@ class ReLayoutEngine:
                 return True
         return False
 
-    def relayout(self, target_size: tuple[int, int]) -> CompositionResult:
+    def relayout(
+        self,
+        target_size: tuple[int, int],
+        safe_rect: tuple[int, int, int, int] | None = None,
+    ) -> CompositionResult:
         """Re-layout elements to target size.
 
         Args:
             target_size: Target canvas size (width, height).
+            safe_rect: Optional (x1, y1, x2, y2) area that key elements must
+                stay inside (platform UI overlay avoidance).
 
         Returns:
             CompositionResult with final image.
@@ -163,6 +189,8 @@ class ReLayoutEngine:
         layout_results = self.layout_engine.calculate_layout(
             self.elements, self.source_size, target_size
         )
+        if safe_rect is not None:
+            layout_results = self._fit_layout_to_safe_rect(layout_results, safe_rect)
         self._maybe_export_layout_debug(layout_results, target_size)
 
         # Deterministic baseline (fallback target)
@@ -234,6 +262,43 @@ class ReLayoutEngine:
         return deterministic_result
 
 
+
+    def _fit_layout_to_safe_rect(
+        self,
+        layout_results: list[LayoutResult],
+        safe_rect: tuple[int, int, int, int],
+    ) -> list[LayoutResult]:
+        """Shift/shrink the foreground group so key elements avoid UI overlays."""
+        by_id = {e.id: e for e in self.elements}
+        movable = [
+            lr for lr in layout_results
+            if lr.visible and lr.element_id in by_id
+            and by_id[lr.element_id].role not in BACKGROUND_ROLES
+            and by_id[lr.element_id].effects.get("_source_type") != "flat_image"
+        ]
+        if not movable:
+            return layout_results
+        critical = {
+            lr.element_id for lr in movable
+            if by_id[lr.element_id].role in _SAFE_ZONE_CRITICAL_ROLES
+        }
+        adjusted, scale = fit_group_into_safe_rect(
+            {lr.element_id: lr.new_bbox for lr in movable}, critical, safe_rect
+        )
+        out: list[LayoutResult] = []
+        for lr in layout_results:
+            if lr.element_id in adjusted:
+                out.append(
+                    LayoutResult(
+                        element_id=lr.element_id,
+                        new_bbox=adjusted[lr.element_id],
+                        scale_factor=lr.scale_factor * scale,
+                        visible=lr.visible,
+                    )
+                )
+            else:
+                out.append(lr)
+        return out
 
     def _maybe_export_layout_debug(
         self,
@@ -348,6 +413,7 @@ class ReLayoutEngine:
         self,
         target_size: tuple[int, int],
         manual_anchors: list[dict[str, int | str]] | None = None,
+        safe_rect: tuple[int, int, int, int] | None = None,
     ) -> CompositionResult:
         """Phase 3 target-first redesign (anchored, brand-locked)."""
         if not self.elements:
@@ -365,6 +431,7 @@ class ReLayoutEngine:
             source_size=self.source_size,
             target_size=target_size,
             manual_anchors=manual_anchors,
+            safe_rect=safe_rect,
         )
 
     def batch_relayout(

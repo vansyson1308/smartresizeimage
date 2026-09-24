@@ -9,8 +9,12 @@ class Config:
     """Global configuration."""
 
     # Processing limits
-    MAX_IMAGE_SIZE = 4096
+    MAX_IMAGE_SIZE = 4096  # max target width/height
     MIN_ELEMENT_SIZE = 10
+    MAX_SOURCE_DIMENSION = 12000  # max source width/height accepted from uploads
+    MAX_SOURCE_PIXELS = 80_000_000  # decompression-bomb guard for PIL
+    MAX_UPLOAD_BYTES = 150 * 1024 * 1024
+    MAX_TARGETS_PER_JOB = 60
 
     # Layout
     MARGIN_PERCENT = 0.05  # 5% margin from edges
@@ -61,3 +65,8 @@ class Config:
     # Optional decor synthesis (Phase 2 PR-D)
     GENERATIVE_DECOR_POLICY = "OFF"  # OFF | BG_PLUS_DECOR
     GENERATIVE_DECOR_SEED = 123
+
+
+# Guard every PIL decode in the process against decompression bombs. PIL warns
+# above this limit and raises DecompressionBombError above twice the limit.
+Image.MAX_IMAGE_PIXELS = Config.MAX_SOURCE_PIXELS

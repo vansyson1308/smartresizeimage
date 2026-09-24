@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 import numpy as np
 from PIL import Image
 
 from ..composition.engine import CompositionEngine
+from ..layout.safe_zone import fit_group_into_safe_rect
 from ..models import CompositionResult, DesignElement, LayoutResult
-from .anchors import extract_anchors, extract_anchors_from_boxes
+from .anchors import (
+    AnchorBundle,
+    build_protected_mask,
+    extract_anchors,
+    extract_anchors_from_boxes,
+)
 from .generator import make_generator
 from .planner import build_target_first_plan
 from .selector import select_best_candidate
@@ -36,6 +42,7 @@ def run_target_first_redesign(
     target_size: tuple[int, int],
     manual_anchors: list[dict[str, int | str]] | None = None,
     n_candidates: int = 8,
+    safe_rect: tuple[int, int, int, int] | None = None,
 ) -> CompositionResult:
     """Execute Phase 3 target-first redesign using anchored brand-locked workflow."""
     compositor = CompositionEngine(use_ai_inpainting=False)
@@ -59,6 +66,12 @@ def run_target_first_redesign(
         )
     else:
         anchors_bundle = extract_anchors(elements, layout_results, target_size, mask_padding=8)
+
+    safe_zone_scale = 1.0
+    if safe_rect is not None and anchors_bundle.anchors:
+        anchors_bundle, safe_zone_scale = _fit_anchors_to_safe_rect(
+            anchors_bundle, safe_rect, target_size
+        )
 
     plan = build_target_first_plan(
         anchors_bundle.anchors,
@@ -110,6 +123,7 @@ def run_target_first_redesign(
         metadata={
             "redesign": asdict(debug),
             "text_plate": base_text_plate_meta,
+            "safe_zone_scale": round(safe_zone_scale, 4),
             "protected_ratio": float(np.mean(anchors_bundle.protected_mask))
             if anchors_bundle.protected_mask.size
             else 0.0,
@@ -117,10 +131,28 @@ def run_target_first_redesign(
     )
 
 
+def _fit_anchors_to_safe_rect(
+    bundle: AnchorBundle,
+    safe_rect: tuple[int, int, int, int],
+    target_size: tuple[int, int],
+) -> tuple[AnchorBundle, float]:
+    boxes = {a.element_id: a.target_bbox for a in bundle.anchors}
+    critical = {a.element_id for a in bundle.anchors if a.protected}
+    adjusted, scale = fit_group_into_safe_rect(boxes, critical, safe_rect)
+    if scale == 1.0 and adjusted == boxes:
+        return bundle, 1.0
+    anchors = [replace(a, target_bbox=adjusted[a.element_id]) for a in bundle.anchors]
+    mask = build_protected_mask(anchors, target_size, padding=8)
+    return AnchorBundle(anchors=anchors, protected_mask=mask), scale
+
+
 def _pick_source_background(
     elements: list[DesignElement],
     source_size: tuple[int, int],
 ) -> Image.Image:
+    for e in elements:
+        if e.effects.get("_source_type") == "flat_image" and e.image is not None:
+            return e.image.convert("RGBA")
     for e in elements:
         if e.role.value == "background" and e.image is not None:
             return e.image.convert("RGBA")
