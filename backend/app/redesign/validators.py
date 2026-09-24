@@ -8,6 +8,7 @@ import numpy as np
 from PIL import Image
 
 from .anchors import Anchor
+from .generator import adjacent_column_similarity
 
 
 @dataclass(frozen=True)
@@ -81,16 +82,7 @@ class SeamArtifactHeuristic:
         boundary_grad = float(np.mean(grad[boundary])) if boundary.any() else 0.0
 
         # repeated-edge detector: very similar adjacent columns in fill area
-        rep = 0.0
-        col_sim_count = 0
-        for x in range(1, arr.shape[1]):
-            mask_col = fill_mask[:, x] & fill_mask[:, x - 1]
-            if not mask_col.any():
-                continue
-            d = np.abs(arr[:, x][mask_col] - arr[:, x - 1][mask_col]).mean()
-            rep += max(0.0, 3.0 - d)
-            col_sim_count += 1
-        rep_score = rep / max(1, col_sim_count)
+        rep_score = adjacent_column_similarity(arr, fill_mask)
 
         # periodic banding detector (lag-2 similarity catches striped repeats)
         col_profile = arr.mean(axis=0)
@@ -114,7 +106,8 @@ class PaletteDistanceValidator:
         b = np.array(source_bg.resize(image.size).convert("RGB"), dtype=np.float32)
         if fill_mask.shape != a[:, :, 0].shape or not fill_mask.any():
             return ValidationResult(True, False, 100.0, "")
-        diff = np.linalg.norm(a[fill_mask] - b[fill_mask], axis=1)
+        delta = a - b
+        diff = np.sqrt(np.einsum("hwc,hwc->hw", delta, delta))[fill_mask]
         mean = float(diff.mean()) if diff.size else 0.0
         score = max(0.0, 100.0 - min(100.0, mean * 0.9))
         return ValidationResult(True, False, score, "")

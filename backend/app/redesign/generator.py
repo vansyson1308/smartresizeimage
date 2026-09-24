@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import random
+import zlib
 from dataclasses import dataclass
 
 import numpy as np
@@ -34,6 +35,17 @@ class DeterministicFlatGenerator(BackgroundGenerator):
 
     def __post_init__(self) -> None:
         self._ext = BackgroundExtender(use_ai_inpainting=False)
+        # Best-of-N selection calls generate() many times with the same source
+        # and size; the extension is deterministic, so compute it once.
+        self._extend_cache: tuple[Image.Image, tuple[int, int], Image.Image] | None = None
+
+    def _extended(self, source: Image.Image, target_size: tuple[int, int]) -> Image.Image:
+        cached = self._extend_cache
+        if cached is not None and cached[0] is source and cached[1] == target_size:
+            return cached[2]
+        extended = self._ext.extend(source.convert("RGBA"), target_size)
+        self._extend_cache = (source, target_size, extended)
+        return extended
 
     def generate(
         self,
@@ -46,8 +58,10 @@ class DeterministicFlatGenerator(BackgroundGenerator):
         plan: RedesignPlan,
         recipe: str,
     ) -> tuple[Image.Image, dict[str, object]]:
-        rng = random.Random(seed + variant * 101 + hash(recipe) % 997)
-        src = self._ext.extend(source_background.convert("RGBA"), target_size)
+        # zlib.crc32, not hash(): str hashes are salted per process (PYTHONHASHSEED),
+        # which made Phase 3 output differ from run to run.
+        rng = random.Random(seed + variant * 101 + zlib.crc32(recipe.encode()) % 997)
+        src = self._extended(source_background, target_size)
         w, h = target_size
 
         palette = _extract_palette(src)
@@ -210,13 +224,12 @@ def _boundary_polish(
 
 
 def _micro_noise_unify(canvas: np.ndarray, fill_mask: np.ndarray, rng: random.Random) -> np.ndarray:
-    noise = np.zeros_like(canvas[:, :, :3], dtype=np.int16)
-    noise[:, :, 0] = int((rng.random() - 0.5) * 2)
-    noise[:, :, 1] = int((rng.random() - 0.5) * 2)
-    noise[:, :, 2] = int((rng.random() - 0.5) * 2)
-    arr = canvas[:, :, :3].astype(np.int16)
-    arr[fill_mask] = np.clip(arr[fill_mask] + noise[fill_mask], 0, 255)
-    canvas[:, :, :3] = arr.astype(np.uint8)
+    # One constant offset per channel (kept as three rng draws for reproducibility).
+    offsets = np.array([int((rng.random() - 0.5) * 2) for _ in range(3)], dtype=np.int16)
+    if not offsets.any():
+        return canvas
+    filled = canvas[:, :, :3][fill_mask].astype(np.int16)
+    canvas[:, :, :3][fill_mask] = np.clip(filled + offsets, 0, 255).astype(np.uint8)
     return canvas
 
 
@@ -263,23 +276,41 @@ def _draw_decor(
 
 
 def _palette_lock(canvas: np.ndarray, palette: list[tuple[int, int, int]]) -> np.ndarray:
-    flat = canvas[:, :, :3].reshape(-1, 3).astype(np.int16)
-    pal = np.array(palette, dtype=np.int16)
-    d = np.sum((flat[:, None, :] - pal[None, :, :]) ** 2, axis=2)
-    idx = np.argmin(d, axis=1)
-    q = pal[idx].astype(np.uint8).reshape(canvas.shape[0], canvas.shape[1], 3)
+    """Snap every pixel to its nearest palette colour (squared RGB distance)."""
+    rgb = canvas[:, :, :3].astype(np.int32)
+    pal = np.array(palette, dtype=np.int32)
+    # (P, H, W) squared distances; P <= 5 so this stays small. int32 avoids
+    # the int16 overflow of squared channel differences.
+    dist = np.stack([np.einsum("hwc,hwc->hw", rgb - c, rgb - c) for c in pal])
+    idx = np.argmin(dist, axis=0)
     out = canvas.copy()
-    out[:, :, :3] = q
+    out[:, :, :3] = pal.astype(np.uint8)[idx]
     return out
 
 
 def _palette_drift(canvas: np.ndarray, src_arr: np.ndarray, fill_mask: np.ndarray) -> float:
     if not fill_mask.any():
         return 0.0
-    lhs = canvas[:, :, :3][fill_mask].astype(np.float32)
-    rhs = src_arr[:, :, :3][fill_mask].astype(np.float32)
-    diff = np.linalg.norm(lhs - rhs, axis=1)
-    return float(diff.mean()) if diff.size else 0.0
+    diff = canvas[:, :, :3].astype(np.float32) - src_arr[:, :, :3]
+    dist = np.sqrt(np.einsum("hwc,hwc->hw", diff, diff))[fill_mask]
+    return float(dist.mean()) if dist.size else 0.0
+
+
+def adjacent_column_similarity(gray: np.ndarray, fill_mask: np.ndarray) -> float:
+    """Mean over columns of ``max(0, 3 - mean|col_x - col_{x-1}|)`` inside the fill.
+
+    Vectorised equivalent of a per-column Python loop; used to detect
+    repeated/stretched columns that read as smeared artwork.
+    """
+    both = fill_mask[:, 1:] & fill_mask[:, :-1]
+    counts = both.sum(axis=0)
+    valid = counts > 0
+    if not valid.any():
+        return 0.0
+    diffs = np.abs(gray[:, 1:] - gray[:, :-1]).astype(np.float64)
+    sums = np.where(both, diffs, 0.0).sum(axis=0)
+    means = sums[valid] / counts[valid]
+    return float(np.maximum(0.0, 3.0 - means).sum() / valid.sum())
 
 
 def _repetition_penalty(arr: np.ndarray, fill_mask: np.ndarray) -> float:
@@ -288,15 +319,7 @@ def _repetition_penalty(arr: np.ndarray, fill_mask: np.ndarray) -> float:
     gray = arr.mean(axis=2)
     prof = gray.mean(axis=0)
     periodic = float(np.mean(np.abs(prof[2:] - prof[:-2]) < 2.0)) if prof.shape[0] > 3 else 0.0
-    rep = 0.0
-    c = 0
-    for x in range(1, gray.shape[1]):
-        m = fill_mask[:, x] & fill_mask[:, x - 1]
-        if not m.any():
-            continue
-        rep += max(0.0, 3.0 - float(np.abs(gray[:, x][m] - gray[:, x - 1][m]).mean()))
-        c += 1
-    return periodic * 50.0 + (rep / max(1, c)) * 8.0
+    return periodic * 50.0 + adjacent_column_similarity(gray, fill_mask) * 8.0
 
 
 def _extract_palette(image: Image.Image, n: int = 5) -> list[tuple[int, int, int]]:

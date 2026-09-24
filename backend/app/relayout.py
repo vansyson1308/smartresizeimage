@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 import os
 from pathlib import Path
@@ -209,24 +210,37 @@ class ReLayoutEngine:
 
         # Candidate with generative stages
         self._last_outpaint_metadata = {}
-        candidate = self.compositor.compose(
-            self.elements,
-            layout_results,
-            self.source_size,
-            target_size,
-            bg_outpaint_fn=(
-                lambda canvas: self._bg_only_outpaint(canvas, layout_results, target_size)
-            ),
-        )
-        if self._last_outpaint_metadata:
-            candidate.metadata["generative"] = self._last_outpaint_metadata
+        if not Config.GENERATIVE_BG_ENABLED and Config.GENERATIVE_DECOR_POLICY == "OFF":
+            # Both generative stages are no-ops, so the candidate would be a
+            # pixel-identical second composition. Reuse the baseline instead of
+            # paying for compose + inpainting twice.
+            candidate = CompositionResult(
+                image=deterministic_result.image.copy(),
+                layout_results=deterministic_result.layout_results,
+                warnings=list(deterministic_result.warnings),
+                metadata=copy.deepcopy(deterministic_result.metadata),
+            )
+            masks = build_layout_masks(self.elements, layout_results, target_size)
+            candidate.metadata["generative"] = self._disabled_outpaint_metadata(masks)
+        else:
+            candidate = self.compositor.compose(
+                self.elements,
+                layout_results,
+                self.source_size,
+                target_size,
+                bg_outpaint_fn=(
+                    lambda canvas: self._bg_only_outpaint(canvas, layout_results, target_size)
+                ),
+            )
+            if self._last_outpaint_metadata:
+                candidate.metadata["generative"] = self._last_outpaint_metadata
 
-        candidate = self._apply_harmonize_and_grounding(
-            candidate,
-            layout_results,
-            target_size,
-            apply_decor=True,
-        )
+            candidate = self._apply_harmonize_and_grounding(
+                candidate,
+                layout_results,
+                target_size,
+                apply_decor=True,
+            )
 
         masks = build_layout_masks(self.elements, layout_results, target_size)
         gate_report = evaluate_quality_gates(
@@ -369,6 +383,18 @@ class ReLayoutEngine:
         result.metadata["decor"] = decor_meta
         return result
 
+    @staticmethod
+    def _disabled_outpaint_metadata(masks: Any) -> dict[str, Any]:
+        return {
+            "policy": Config.GENERATIVE_BG_POLICY,
+            "seed": int(Config.GENERATIVE_BG_SEED),
+            "model_id": Config.GENERATIVE_BG_MODEL_ID,
+            "backend_used": False,
+            "fallback_reason": "disabled",
+            "protected_ratio": masks.protected_ratio,
+            "editable_ratio": masks.editable_ratio,
+        }
+
     def _bg_only_outpaint(
         self,
         canvas: Image.Image,
@@ -382,15 +408,7 @@ class ReLayoutEngine:
         masks = build_layout_masks(self.elements, layout_results, target_size)
 
         if not Config.GENERATIVE_BG_ENABLED:
-            self._last_outpaint_metadata = {
-                "policy": policy,
-                "seed": int(seed),
-                "model_id": Config.GENERATIVE_BG_MODEL_ID,
-                "backend_used": False,
-                "fallback_reason": "disabled",
-                "protected_ratio": masks.protected_ratio,
-                "editable_ratio": masks.editable_ratio,
-            }
+            self._last_outpaint_metadata = self._disabled_outpaint_metadata(masks)
             return canvas
 
         outpainted = self.generative_engine.outpaint_background(

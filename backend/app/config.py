@@ -24,6 +24,9 @@ class Config:
     INPAINT_RADIUS = 5
     BLUR_RADIUS = 50
     OPENCV_INPAINT_RADIUS = 5  # Radius for cv2.inpaint TELEA
+    INPAINT_FULLRES_MAX_PIXELS = 250_000  # larger fills are solved at low resolution
+    INPAINT_LOWRES_TARGET_PIXELS = 120_000
+    INPAINT_SEAM_BAND_PX = 12  # full-res refinement band next to original content
 
     # Content-aware fit (flat PNG/JPG relayout)
     MAX_CROP_PERCENT = 0.20  # Never crop more than 20% of source content
