@@ -62,6 +62,8 @@ API and CLI.
 - Phase 3 output differed between runs (RNG seeded with per-process salted `hash()`).
 - `_palette_lock` overflowed int16 when squaring colour differences.
 - Batch rendering silently dropped sizes that raised errors.
+- Elements removed to keep a size legible are now listed in the QA report instead of
+  disappearing silently.
 
 ### Removed
 - Gradio dependency and UI.

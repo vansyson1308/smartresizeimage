@@ -16,6 +16,10 @@ docker run -d -p 7860:7860 --read-only --tmpfs /tmp:size=2g \
   -e AUTOBANNER_API_KEYS="$(openssl rand -hex 24)" autobanner
 ```
 
+The image declares `VOLUME /data` for job results, so it stays writable under
+`--read-only`. If `AUTOBANNER_DATA_DIR` points somewhere unwritable the server refuses
+to start with an explicit error rather than silently writing elsewhere.
+
 `docker compose up --build` does the same with settings from `.env`
 (see `.env.example`).
 
