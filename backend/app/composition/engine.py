@@ -334,8 +334,9 @@ class CompositionEngine:
 
         elem_image = element.image.convert("RGBA")
 
-        # Resize to new dimensions
-        new_size = (layout.new_bbox.width, layout.new_bbox.height)
+        # Resize uniformly into the allotted box (never stretch a raster layer)
+        box = layout.new_bbox.fit_aspect(*elem_image.size)
+        new_size = (box.width, box.height)
         if new_size[0] <= 0 or new_size[1] <= 0:
             return canvas
 

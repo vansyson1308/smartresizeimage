@@ -8,6 +8,7 @@ import numpy as np
 from PIL import Image
 
 from ..composition.engine import CompositionEngine
+from ..constants import BACKGROUND_ROLES
 from ..layout.safe_zone import fit_group_into_safe_rect
 from ..models import CompositionResult, DesignElement, LayoutResult
 from .anchors import (
@@ -46,7 +47,15 @@ def run_target_first_redesign(
 ) -> CompositionResult:
     """Execute Phase 3 target-first redesign using anchored brand-locked workflow."""
     compositor = CompositionEngine(use_ai_inpainting=False)
-    base = compositor.compose(elements, layout_results, source_size, target_size)
+    # Layered input: the base must be background-only. Every foreground layer
+    # is pasted once as an anchor; if it were also in the base, any shift
+    # (safe zone, aspect fit) or skyline stitching would leave ghost copies.
+    base_elements = elements
+    if not manual_anchors:
+        background_only = [e for e in elements if e.role in BACKGROUND_ROLES]
+        if background_only:
+            base_elements = background_only
+    base = compositor.compose(base_elements, layout_results, source_size, target_size)
     source_bg = base.image.convert("RGBA")
     base_text_plate_meta = dict(base.metadata.get("text_plate", {}))
     # Phase 3 composes fresh background around immutable text anchors;

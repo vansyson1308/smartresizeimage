@@ -11,6 +11,7 @@ from PIL import Image
 from ..enums import ElementRole
 from ..exceptions import ParseError
 from ..models import BoundingBox, DesignElement
+from .auto_layers import decompose_flat_image
 from .base_parser import BaseParser
 
 logger = logging.getLogger("autobanner.parser.image")
@@ -30,11 +31,16 @@ class ImageParser(BaseParser):
     def supports(self, file_path: str) -> bool:
         return Path(file_path).suffix.lower() in self.SUPPORTED_EXTENSIONS
 
-    def parse(self, file_path: str) -> tuple[list[DesignElement], tuple[int, int]]:
-        """Parse image file into a single DesignElement.
+    def parse(
+        self, file_path: str, auto_layers: bool = False
+    ) -> tuple[list[DesignElement], tuple[int, int]]:
+        """Parse image file into a single DesignElement (or pseudo-layers).
 
         Args:
             file_path: Path to the image file.
+            auto_layers: Try to split the flat design into background +
+                foreground pseudo-layers (headline, CTA, logo, hero, ...).
+                Falls back to a single flat element when detection fails.
 
         Returns:
             Tuple of ([single element], (width, height)).
@@ -50,6 +56,11 @@ class ImageParser(BaseParser):
 
         w, h = img.size
         logger.info("Parsed image %s: %dx%d", Path(file_path).name, w, h)
+
+        if auto_layers:
+            layers = decompose_flat_image(img)
+            if layers is not None:
+                return layers, (w, h)
 
         has_transparency = self._has_meaningful_alpha(img)
 

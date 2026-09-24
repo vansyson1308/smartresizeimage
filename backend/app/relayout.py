@@ -27,8 +27,9 @@ from .generative.masks import build_layout_masks
 from .layout import LayoutEngine
 from .layout.safe_zone import fit_group_into_safe_rect
 from .layout.solver import export_layout_debug_json, render_layout_debug_overlay
+from .layout.stack import StackLayoutEngine
 from .models import CompositionResult, DesignElement, LayoutResult
-from .parser import get_parser
+from .parser import ImageParser, get_parser
 from .redesign import run_target_first_redesign
 from .validators import validate_dimensions, validate_file_path
 
@@ -55,6 +56,7 @@ class ReLayoutEngine:
         use_ai: bool = True,
         classifier: SemanticClassifier | None = None,
     ) -> None:
+        self.stack_layout = StackLayoutEngine()
         # A classifier may be shared across engines so the (optional) CLIP
         # model is loaded once per process rather than once per job.
         self.classifier = classifier or SemanticClassifier(use_ai=use_ai)
@@ -67,11 +69,13 @@ class ReLayoutEngine:
         self.file_path: str | None = None
         self._last_outpaint_metadata: dict[str, Any] = {}
 
-    def load_file(self, file_path: str) -> dict[str, Any]:
+    def load_file(self, file_path: str, auto_layers: bool = False) -> dict[str, Any]:
         """Load and analyze a design file (PSD, PNG, JPG, WEBP).
 
         Args:
             file_path: Path to the design file.
+            auto_layers: For flat PNG/JPG/WEBP, detect headline/CTA/logo/hero
+                as pseudo-layers so they can be rearranged independently.
 
         Returns:
             Dict with analysis results for UI display.
@@ -87,8 +91,11 @@ class ReLayoutEngine:
         # Get appropriate parser
         parser = get_parser(file_path)
 
-        # Parse file
-        self.elements, self.source_size = parser.parse(file_path)
+        # Parse file (auto-layering only applies to flat raster images)
+        if auto_layers and isinstance(parser, ImageParser):
+            self.elements, self.source_size = parser.parse(file_path, auto_layers=True)
+        else:
+            self.elements, self.source_size = parser.parse(file_path)
 
         # Classify elements
         self.elements = self.classifier.classify_all(self.elements, self.source_size)
@@ -187,9 +194,7 @@ class ReLayoutEngine:
         validate_dimensions(target_size[0], target_size[1])
 
         # Calculate layout
-        layout_results = self.layout_engine.calculate_layout(
-            self.elements, self.source_size, target_size
-        )
+        layout_results = self._calculate_layout(target_size)
         if safe_rect is not None:
             layout_results = self._fit_layout_to_safe_rect(layout_results, safe_rect)
         self._maybe_export_layout_debug(layout_results, target_size)
@@ -276,6 +281,20 @@ class ReLayoutEngine:
         return deterministic_result
 
 
+
+    def _calculate_layout(self, target_size: tuple[int, int]) -> list[LayoutResult]:
+        """Pick the layout engine: role-aware stack layout for layered designs."""
+        if Config.LAYOUT_ENGINE == "stack":
+            results = self.stack_layout.calculate(self.elements, self.source_size, target_size)
+            if results is not None:
+                debug = self.stack_layout.last_debug
+                self.layout_engine.last_layout_debug = {
+                    "engine": "stack",
+                    "mode": debug.mode if debug else None,
+                    "dropped": list(debug.dropped) if debug else [],
+                }
+                return results
+        return self.layout_engine.calculate_layout(self.elements, self.source_size, target_size)
 
     def _fit_layout_to_safe_rect(
         self,
@@ -438,9 +457,7 @@ class ReLayoutEngine:
             raise ValueError("No file loaded. Call load_file() first.")
 
         validate_dimensions(target_size[0], target_size[1])
-        layout_results = self.layout_engine.calculate_layout(
-            self.elements, self.source_size, target_size
-        )
+        layout_results = self._calculate_layout(target_size)
         self._maybe_export_layout_debug(layout_results, target_size)
 
         return run_target_first_redesign(

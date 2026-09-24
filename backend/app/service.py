@@ -27,6 +27,7 @@ from .config import Config
 from .enums import ElementRole
 from .exceptions import AutoBannerError, ValidationError
 from .export import EncodedImage, ExportOptions, encode_image
+from .layout.stack import MIN_SMALL_TEXT_PX
 from .models import CompositionResult, DesignElement
 from .presets import SizePreset
 from .relayout import ReLayoutEngine
@@ -52,7 +53,7 @@ _CRITICAL_ROLES = frozenset(
 _TEXT_ROLES = frozenset(
     {ElementRole.HEADLINE, ElementRole.SUBHEADLINE, ElementRole.BODY_TEXT, ElementRole.CTA}
 )
-_MIN_TEXT_HEIGHT_PX = 9
+_MIN_TEXT_HEIGHT_PX = MIN_SMALL_TEXT_PX
 
 ProgressCallback = Callable[[int, int, str], None]
 
@@ -71,6 +72,8 @@ class RenderRequest:
     role_overrides: dict[str, str] = field(default_factory=dict)
     # Move key elements out of platform UI overlay zones (Stories, Reels, ...).
     enforce_safe_zones: bool = True
+    # Flat PNG/JPG/WEBP: detect headline/CTA/logo/hero as movable pseudo-layers.
+    auto_layers: bool = False
 
     def validate(self) -> None:
         if not self.targets:
@@ -366,19 +369,27 @@ class RenderService:
     def _new_engine(self) -> ReLayoutEngine:
         return ReLayoutEngine(use_ai=self.use_ai, classifier=self._shared_classifier())
 
-    def load(self, file_path: str | Path, *, trusted: bool = False) -> ReLayoutEngine:
+    def load(
+        self, file_path: str | Path, *, trusted: bool = False, auto_layers: bool = False
+    ) -> ReLayoutEngine:
         """Validate and parse a source file into a fresh engine."""
         path = str(file_path)
         if not trusted:
             validate_upload(path, self.max_upload_bytes)
         engine = self._new_engine()
-        engine.load_file(path)
+        engine.load_file(path, auto_layers=auto_layers)
         return engine
 
     # -- public API -------------------------------------------------------------------
-    def analyze(self, file_path: str | Path, *, display_name: str | None = None) -> dict[str, Any]:
+    def analyze(
+        self,
+        file_path: str | Path,
+        *,
+        display_name: str | None = None,
+        auto_layers: bool = False,
+    ) -> dict[str, Any]:
         """Parse and classify a design without rendering."""
-        engine = self.load(file_path)
+        engine = self.load(file_path, auto_layers=auto_layers)
         w, h = engine.source_size
         return {
             "file": display_name or Path(file_path).name,
@@ -403,7 +414,7 @@ class RenderService:
         started = time.perf_counter()
         created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-        engine = engine or self.load(file_path)
+        engine = engine or self.load(file_path, auto_layers=request.auto_layers)
         for elem_id, role in request.role_overrides.items():
             if not engine.update_element_role(elem_id, role):
                 raise ValidationError(f"Unknown element id '{elem_id}' in role overrides")
@@ -512,4 +523,6 @@ class RenderService:
 def _source_type(elements: list[DesignElement]) -> str:
     if len(elements) == 1 and elements[0].effects.get("_source_type") == "flat_image":
         return "flat_image"
+    if any(e.effects.get("_auto_layer") for e in elements):
+        return "auto_layers"
     return "layered"

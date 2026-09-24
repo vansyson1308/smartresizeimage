@@ -42,6 +42,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     a = sub.add_parser("analyze", help="Show detected layers and roles")
     a.add_argument("input", help="PSD, PNG, JPG or WEBP file")
+    a.add_argument("--auto-layers", action="store_true", help="Detect elements in flat images")
 
     r = sub.add_parser("render", help="Render one or more designs")
     r.add_argument("inputs", nargs="+", help="Design files (PSD, PNG, JPG, WEBP)")
@@ -60,6 +61,8 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Do not move key elements out of Story/Reels UI zones")
     r.add_argument("--anchor-preset", choices=ANCHOR_PRESETS, default="none")
     r.add_argument("--anchors", help="JSON file with manual anchor boxes (flat images)")
+    r.add_argument("--auto-layers", action="store_true",
+                   help="Flat PNG/JPG: detect headline/CTA/logo/hero and relayout them")
     r.add_argument("--zip", action="store_true", help="Write one ZIP per input instead of files")
     r.add_argument("--use-ai", action="store_true", help="Enable CLIP classification if installed")
     r.add_argument("-q", "--quiet", action="store_true")
@@ -91,7 +94,7 @@ def _cmd_presets(args: argparse.Namespace) -> int:
 
 
 def _cmd_analyze(args: argparse.Namespace) -> int:
-    info = RenderService().analyze(args.input)
+    info = RenderService().analyze(args.input, auto_layers=args.auto_layers)
     print(json.dumps(info, indent=2))
     return EXIT_OK
 
@@ -114,6 +117,7 @@ def _cmd_render(args: argparse.Namespace) -> int:
         manual_anchors=anchors,
         anchor_preset=args.anchor_preset,
         enforce_safe_zones=not args.no_safe_zones,
+        auto_layers=args.auto_layers,
     )
     request.validate()
 

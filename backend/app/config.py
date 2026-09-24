@@ -43,6 +43,10 @@ class Config:
     CLIP_MODEL = "openai/clip-vit-base-patch32"
     CONFIDENCE_THRESHOLD = 0.7
 
+    # Layout engine for layered designs: "stack" (role-aware, overlap-free)
+    # or "legacy" (zone templates + profile solver).
+    LAYOUT_ENGINE = "stack"
+
     # Zone assignment
     MAX_ELEMENTS_PER_ZONE = 2
     LAYOUT_PROFILE_SCORING_ENABLED = False

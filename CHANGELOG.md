@@ -8,6 +8,17 @@ A productisation release: AutoBanner becomes a deployable service with a studio,
 API and CLI.
 
 ### Added
+- **Stack layout engine** (default for layered designs): role-aware strip / landscape /
+  vertical arrangements, overlap-free by construction, one solved scale per group to
+  keep the type hierarchy, profile margins and size limits, legibility-driven dropping
+  of secondary copy (never the headline or CTA). Phase 2.1 bench: 75.0% -> 88.9% pass,
+  mean score 39.2 -> 56.4, runs with overlapping elements 36/36 -> 0/36.
+- **Auto-layers (beta)** for flat PNG/JPG/WEBP: background modelling + block detection
+  split a flattened banner into headline, sub-copy, CTA, logo and hero pseudo-layers
+  plus an inpainted background plate (95% of elements detected with the right role on
+  the sample set); `auto_layers` option in API/CLI/studio.
+- `backend/tools/flat_banner_samples.py`: realistic flat/layered banner generator with
+  ground truth; `run_layout_bench.py --engine stack|legacy`.
 - **Studio** web UI (no Gradio): drag-and-drop upload, packs/presets, live progress,
   per-size previews with file-size budget and QA warnings, ZIP download, dark mode.
 - **REST API** (FastAPI): `/v1/render` (sync ZIP), async `/v1/jobs`, `/v1/analyze`,
@@ -37,6 +48,12 @@ API and CLI.
 - Engineering history docs moved to `docs/history/`.
 
 ### Fixed
+- Raster layers (including PSD text layers) were stretched to reflowed text boxes; they
+  are now always scaled uniformly.
+- Phase 3 on layered input composed foreground layers into its base and pasted them again
+  as anchors, leaving ghost copies when positions differed.
+- Background grading froze whole bounding boxes around round/irregular elements, leaving
+  a visible rectangle; protection now follows each element's silhouette.
 - Gradio UI failed to import with current `huggingface_hub` and shared one engine (and
   its loaded file) across all users.
 - Flat PNG/JPG sources were reclassified as `photo`, so Phase 3 manual anchors were cut

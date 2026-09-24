@@ -32,7 +32,7 @@ private to the key that created them; other keys get `404`.
 | GET | `/metrics` | Prometheus text metrics |
 | GET | `/v1/config` | Version, auth requirement, modes, formats, limits |
 | GET | `/v1/presets[?platform=iab]` | Size catalog and packs |
-| POST | `/v1/analyze` | Multipart `file` → detected layers/roles |
+| POST | `/v1/analyze[?auto_layers=true]` | Multipart `file` → detected layers/roles |
 | POST | `/v1/render` | Multipart `file` + `options` → `application/zip` |
 | POST | `/v1/jobs` | Same inputs → `202` job (async) |
 | GET | `/v1/jobs/{id}` | Status, progress, manifest and links when done |
@@ -61,6 +61,7 @@ Sent as a JSON string in the multipart field `options`. Unknown keys are rejecte
 | `anchor_preset` | `none` \| `flat_banner_3anchors` | `none` | Default brand anchors for flat images (phase3) |
 | `anchors` | object[] | – | Manual anchors: `{id, role, x, y, width, height}` in source pixels |
 | `role_overrides` | object | `{}` | `{element_id: role}` corrections from `/v1/analyze` |
+| `auto_layers` | bool | `false` | Flat PNG/JPG/WEBP: detect headline, sub-copy, CTA, logo and hero as movable layers (falls back to whole-image fit when the design cannot be separated) |
 
 At least one target is required and at most 60 per job. Packs, presets and sizes are
 merged in order with duplicates removed.
@@ -76,7 +77,7 @@ Every ZIP (and every finished job) includes a manifest:
   "mode": "phase21",
   "duration_ms": 1203,
   "source": {"file": "spring.psd", "width": 1200, "height": 628, "sha256": "…",
-             "source_type": "layered", "layers": 7},
+             "source_type": "layered", "layers": 7},  // or "flat_image" / "auto_layers"
   "summary": {"total": 8, "succeeded": 8, "failed": 0, "with_warnings": 1},
   "assets": [
     {

@@ -90,3 +90,15 @@ def test_serve_port_precedence(monkeypatch):
     monkeypatch.setenv("AUTOBANNER_SERVER_PORT", "9000")
     main_mod.main()
     assert calls["port"] == 9000
+
+
+def test_render_with_auto_layers(tmp_path):
+    from backend.tools.flat_banner_samples import make_sample
+
+    src = tmp_path / "flat.png"
+    make_sample(2).image.save(src)
+    out = tmp_path / "out"
+    assert main(["render", str(src), "-p", "iab-leaderboard", "--auto-layers",
+                 "-o", str(out), "-q"]) == 0
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert manifest["source"]["source_type"] == "auto_layers"

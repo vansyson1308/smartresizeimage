@@ -292,3 +292,24 @@ def test_job_results_are_served_from_disk_not_memory(client):
     (path, mime), = job.asset_files.values()
     assert path.is_file() and mime == "image/png"
     assert client.get(f"/v1/jobs/{job_id}/download").status_code == 200
+
+
+def test_auto_layers_option_and_analyze_query(client):
+    from backend.tools.flat_banner_samples import make_sample
+
+    buf = io.BytesIO()
+    make_sample(0).image.save(buf, "PNG")
+    data = buf.getvalue()
+    info = client.post(
+        "/v1/analyze", params={"auto_layers": "true"}, files=_upload(data=data)
+    ).json()
+    assert info["source_type"] == "auto_layers"
+    assert {"headline", "cta"} <= {e["role"] for e in info["elements"]}
+
+    r = client.post(
+        "/v1/render", files=_upload(data=data),
+        data={"options": json.dumps({"presets": ["iab-leaderboard"], "auto_layers": True})},
+    )
+    assert r.status_code == 200
+    manifest = json.loads(zipfile.ZipFile(io.BytesIO(r.content)).read("manifest.json"))
+    assert manifest["source"]["source_type"] == "auto_layers"

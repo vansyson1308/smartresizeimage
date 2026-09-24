@@ -206,10 +206,16 @@
     }
     refreshGenerate();
 
+    $("auto-layers-field").hidden = !isRaster;
+    await analyze(file, seq);
+  }
+
+  async function analyze(file, seq) {
     const body = new FormData();
     body.append("file", file);
+    const auto = !$("auto-layers-field").hidden && $("auto-layers").checked;
     try {
-      const res = await api("/v1/analyze", { method: "POST", body });
+      const res = await api(`/v1/analyze?auto_layers=${auto}`, { method: "POST", body });
       const analysis = await res.json();
       if (seq !== state.analyzeSeq) return;
       state.analysis = analysis;
@@ -231,7 +237,10 @@
     info.replaceChildren(
       el("dt", { text: "File" }), el("dd", { text: a.file }),
       el("dt", { text: "Size" }), el("dd", { text: `${a.width}×${a.height}px` }),
-      el("dt", { text: "Type" }), el("dd", { text: a.source_type === "flat_image" ? "Flat image" : `Layered (${a.layers} layers)` }),
+      el("dt", { text: "Type" }), el("dd", { text: {
+        flat_image: "Flat image",
+        auto_layers: `Flat image · ${a.layers - 1} elements detected`,
+      }[a.source_type] || `Layered (${a.layers} layers)` }),
       el("dt", { text: "Roles" }), el("dd", { text: roleText || "-" }),
     );
     info.hidden = false;
@@ -251,6 +260,7 @@
     };
     if (Number.isFinite(maxKb) && maxKb > 0) opts.max_kb = maxKb;
     if (!$("anchor-field").hidden) opts.anchor_preset = $("anchor-preset").value;
+    if (!$("auto-layers-field").hidden) opts.auto_layers = $("auto-layers").checked;
     return opts;
   }
 
@@ -459,6 +469,12 @@
   });
   $("custom-size").addEventListener("input", (e) => e.target.setCustomValidity(""));
   $("generate").addEventListener("click", generate);
+  $("auto-layers").addEventListener("change", () => {
+    if (!state.file) return;
+    state.analysis = null;
+    refreshGenerate();
+    analyze(state.file, ++state.analyzeSeq);
+  });
   $("download-all").addEventListener("click", downloadZip);
   $("api-key-btn").addEventListener("click", openKeyDialog);
   $("key-dialog").addEventListener("close", () => {

@@ -63,6 +63,9 @@ class RenderOptions(BaseModel):
     anchor_preset: Literal["none", "flat_banner_3anchors"] = "none"
     anchors: list[dict[str, Any]] | None = None
     role_overrides: dict[str, str] = Field(default_factory=dict)
+    auto_layers: bool = Field(
+        False, description="Flat images: detect headline/CTA/logo/hero as movable layers"
+    )
 
     def to_request(self) -> RenderRequest:
         targets = resolve_targets(presets=self.presets, packs=self.packs, sizes=self.sizes)
@@ -75,6 +78,7 @@ class RenderOptions(BaseModel):
             anchor_preset=self.anchor_preset,
             role_overrides=dict(self.role_overrides),
             enforce_safe_zones=self.enforce_safe_zones,
+            auto_layers=self.auto_layers,
         )
 
 
@@ -312,10 +316,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def analyze(
         owner: Annotated[str | None, Depends(limited_caller)],
         file: Annotated[UploadFile, File(description="PSD, PNG, JPG or WEBP")],
+        auto_layers: bool = False,
     ) -> dict[str, Any]:
         path, workdir, display = await save_upload(file)
         try:
-            future = jobs.submit_sync(lambda: service.analyze(path, display_name=display))
+            future = jobs.submit_sync(
+                lambda: service.analyze(path, display_name=display, auto_layers=auto_layers)
+            )
             return await asyncio.wrap_future(future)
         finally:
             shutil.rmtree(workdir, ignore_errors=True)

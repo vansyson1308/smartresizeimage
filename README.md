@@ -36,8 +36,10 @@ và được **kiểm tra vùng an toàn** (safe zone) trước khi bạn tải 
 - **Thư viện 40+ preset** chuẩn IAB / Google Ads / Meta / TikTok / LinkedIn / X / YouTube / Pinterest / Web / Email, gom thành **pack** theo chiến dịch.
 - **Xuất PNG / JPEG / WebP** với **ngân sách dung lượng** (tự áp giới hạn của từng mạng hoặc tự đặt `max_kb`).
 - **QA tự động** cho từng file: vi phạm safe zone, chữ quá nhỏ (< 9px), quality gate, dung lượng.
-- **2 engine**:
-  - `phase21` — *Relayout*: nhanh, deterministic; PSD được bố cục lại theo vai trò layer, ảnh phẳng dùng content-aware fit.
+- **Layout engine theo vai trò (stack layout)**: mỗi size được xếp theo 3 kiểu chuẩn của designer — *strip* (728×90: logo | chữ | hero | CTA), *landscape* (cột chữ cạnh hero) và *vertical* (logo, chữ, hero, CTA xếp dọc). Không chồng lấn, giữ thứ bậc chữ, không bao giờ kéo méo layer; khi size quá nhỏ sẽ bỏ bớt nội dung phụ (body → sub → logo), **không bao giờ bỏ headline/CTA**.
+- **Auto-layers cho ảnh phẳng (beta)**: PNG/JPG xuất sẵn được tự tách thành headline, sub, CTA, logo, hero + nền sạch, để bố cục lại như PSD thay vì thu nhỏ cả ảnh.
+- **2 chế độ**:
+  - `phase21` — *Relayout*: nhanh, deterministic; PSD (hoặc ảnh phẳng đã auto-layers) được bố cục lại theo vai trò, ảnh phẳng không tách lớp dùng content-aware fit.
   - `phase3` — *Redesign*: đặt “điểm neo thương hiệu” trước rồi vẽ lại nền + decor phong cách flat illustration.
 - **Sẵn sàng production**: API key (so sánh hằng thời gian), rate limit, giới hạn upload, kiểm tra magic-byte, chống decompression bomb, request ID, Prometheus `/metrics`, log JSON, Docker non-root + read-only.
 
@@ -49,7 +51,15 @@ và được **kiểm tra vùng an toàn** (safe zone) trước khi bạn tải 
 | Relayout → 8 size Google Display | 3.0 s | **1.2 s** |
 | Redesign (phase3) → Story 1080×1920 | 36 s | **13 s** |
 
-Chất lượng layout không đổi: benchmark Phase 2.1 cho kết quả **giống hệt** bản trước (75% pass, cùng điểm từng case).
+### Chất lượng layout (benchmark Phase 2.1, 12 case × 3 size)
+
+| | Engine cũ | Stack layout (v2) |
+|---|---:|---:|
+| Pass rate | 75.0% | **88.9%** |
+| Điểm trung bình | 39.2 | **56.4** |
+| Số lần render có phần tử chồng nhau | 36 / 36 | **0 / 36** |
+
+Auto-layers trên bộ banner phẳng mẫu (`backend/tools/flat_banner_samples.py`): phát hiện đúng vị trí + vai trò **106/112** phần tử (95%).
 
 ---
 
@@ -85,7 +95,7 @@ Muốn dùng AI (phân loại CLIP + inpainting LaMa, tải vài GB): `pip insta
 
 ## Dùng Studio
 
-1. **Master design** — kéo-thả PSD/PNG/JPG/WEBP. Studio hiển thị kích thước, loại (layered/flat) và vai trò các layer phát hiện được.
+1. **Master design** — kéo-thả PSD/PNG/JPG/WEBP. Studio hiển thị kích thước, loại (layered/flat) và vai trò các layer phát hiện được. Với ảnh phẳng, ô *Detect headline, CTA, logo & hero* (bật sẵn) sẽ tách phần tử để bố cục lại.
 2. **Output sizes** — bấm một pack (vd. *Meta Ads*), tick thêm preset, hoặc thêm size tùy chỉnh `1200x628`.
 3. **Output settings** — chọn engine, định dạng, giới hạn KB (để trống = theo mạng quảng cáo).
 4. **Generate** — xem tiến độ, preview từng size kèm dung lượng / ngân sách và cảnh báo QA, tải từng file hoặc cả ZIP.
@@ -101,6 +111,7 @@ python -m app presets                                 # liệt kê preset & pack
 python -m app analyze design.psd                      # xem layer & vai trò
 python -m app render design.psd -k meta-ads -k google-display -o out/
 python -m app render banners/*.png -s 1200x628 -s 300x250 --format webp --max-kb 150 --zip
+python -m app render flat_banner.png -k google-display --auto-layers   # tách phần tử ảnh phẳng
 ```
 
 Sau khi `pip install ./backend`, có thể gọi trực tiếp `autobanner …`. Exit code: `0` thành công,
@@ -176,7 +187,8 @@ backend/app/
 ## Giới hạn (nói thật)
 
 - Không phải trình render Photoshop đầy đủ: một số layer effect (stroke, glow, gradient overlay) chưa tái tạo 100%.
-- Ảnh phẳng (PNG/JPG) không có thông tin layer: với tỷ lệ cực đoan (vd. 728×90) thiết kế được thu nhỏ vào giữa và mở rộng nền; PSD nhiều layer cho kết quả tốt hơn nhiều.
+- Ảnh phẳng (PNG/JPG): bật **auto-layers** để tách phần tử. Auto-layers hoạt động tốt với banner thiết kế trên nền phẳng/gradient; với ảnh chụp full-bleed hoặc nền quá rối, hệ thống tự nhận biết và quay về content-aware fit (thu nhỏ + mở rộng nền).
+- Chữ là layer raster (không render lại font), nên ở size rất hẹp (160×600) một headline dài sẽ nhỏ; engine không tự xuống dòng chữ đã rasterize.
 - Redesign (phase3) tối ưu cho banner **flat illustration**, không dành cho ảnh chụp.
 - AI (CLIP/LaMa) là tùy chọn; mặc định chạy hoàn toàn deterministic trên CPU.
 

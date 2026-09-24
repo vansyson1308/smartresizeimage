@@ -261,7 +261,9 @@ class SemanticClassifier:
             # hides the source from preview and Phase 3 anchor cropping.
             if element.effects.get("_source_type") == "flat_image":
                 continue
-            element.role = self.classify(element, canvas_size)
+            # Auto-layer detection already assigned a role from geometry.
+            if not element.effects.get("_auto_layer"):
+                element.role = self.classify(element, canvas_size)
 
             # Set priority based on role
             if element.role in ROLE_PRIORITIES:

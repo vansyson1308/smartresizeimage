@@ -58,13 +58,14 @@ def extract_anchors(
             continue
 
         protected = elem.role in _PROTECTED_ROLES
+        image = elem.image.convert("RGBA")
         anchors.append(
             Anchor(
                 element_id=elem.id,
                 role=elem.role,
-                image=elem.image.convert("RGBA"),
+                image=image,
                 source_bbox=elem.bbox,
-                target_bbox=lr.new_bbox,
+                target_bbox=lr.new_bbox.fit_aspect(*image.size),
                 protected=protected,
             )
         )
@@ -109,7 +110,7 @@ def extract_anchors_from_boxes(
                 role=role,
                 image=crop,
                 source_bbox=src,
-                target_bbox=lr.new_bbox,
+                target_bbox=lr.new_bbox.fit_aspect(*crop.size),
                 protected=True,
             )
         )
