@@ -100,19 +100,19 @@ def _parse_options(raw: str | None) -> RenderOptions:
 def _make_work_root(data_dir: str | None) -> Path:
     """Create the private working directory for uploads and job results.
 
-    Falls back to the system temp dir when the configured data dir is not
-    writable (e.g. a read-only container started without a /data volume).
+    A configured but unwritable data dir is a deployment error: fail fast with
+    an actionable message instead of silently writing somewhere else.
     """
-    if data_dir:
-        try:
-            Path(data_dir).mkdir(parents=True, exist_ok=True)
-            return Path(tempfile.mkdtemp(prefix="autobanner-", dir=data_dir))
-        except OSError as e:
-            logger.warning(
-                "AUTOBANNER_DATA_DIR=%s is not writable (%s); using %s instead",
-                data_dir, e, tempfile.gettempdir(),
-            )
-    return Path(tempfile.mkdtemp(prefix="autobanner-"))
+    if not data_dir:
+        return Path(tempfile.mkdtemp(prefix="autobanner-"))
+    try:
+        Path(data_dir).mkdir(parents=True, exist_ok=True)
+        return Path(tempfile.mkdtemp(prefix="autobanner-", dir=data_dir))
+    except OSError as e:
+        raise RuntimeError(
+            f"AUTOBANNER_DATA_DIR={data_dir} is not writable ({e}). Mount a writable "
+            "volume there or point AUTOBANNER_DATA_DIR at a writable directory."
+        ) from e
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

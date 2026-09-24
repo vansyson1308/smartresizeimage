@@ -47,15 +47,14 @@ def run_target_first_redesign(
 ) -> CompositionResult:
     """Execute Phase 3 target-first redesign using anchored brand-locked workflow."""
     compositor = CompositionEngine(use_ai_inpainting=False)
-    # Layered input: the base must be background-only. Every foreground layer
-    # is pasted once as an anchor; if it were also in the base, any shift
-    # (safe zone, aspect fit) or skyline stitching would leave ghost copies.
-    base_elements = elements
-    if not manual_anchors:
-        background_only = [e for e in elements if e.role in BACKGROUND_ROLES]
-        if background_only:
-            base_elements = background_only
-    base = compositor.compose(base_elements, layout_results, source_size, target_size)
+    # Layered input: the base must not contain the foreground. Every foreground
+    # layer is pasted once as an anchor; if it were also in the base, any shift
+    # or skyline stitching would leave ghost copies. Readability plates are
+    # still rendered under the (final) text positions.
+    layered = not manual_anchors and any(e.role in BACKGROUND_ROLES for e in elements)
+    base = compositor.compose(
+        elements, layout_results, source_size, target_size, draw_content=not layered
+    )
     source_bg = base.image.convert("RGBA")
     base_text_plate_meta = dict(base.metadata.get("text_plate", {}))
     # Phase 3 composes fresh background around immutable text anchors;

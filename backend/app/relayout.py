@@ -57,6 +57,7 @@ class ReLayoutEngine:
         classifier: SemanticClassifier | None = None,
     ) -> None:
         self.stack_layout = StackLayoutEngine()
+        self._mask_cache: tuple[Any, list[LayoutResult], Any] | None = None
         # A classifier may be shared across engines so the (optional) CLIP
         # model is loaded once per process rather than once per job.
         self.classifier = classifier or SemanticClassifier(use_ai=use_ai)
@@ -225,7 +226,7 @@ class ReLayoutEngine:
                 warnings=list(deterministic_result.warnings),
                 metadata=copy.deepcopy(deterministic_result.metadata),
             )
-            masks = build_layout_masks(self.elements, layout_results, target_size)
+            masks = self._layout_masks(layout_results, target_size)
             candidate.metadata["generative"] = self._disabled_outpaint_metadata(masks)
         else:
             candidate = self.compositor.compose(
@@ -247,7 +248,7 @@ class ReLayoutEngine:
                 apply_decor=True,
             )
 
-        masks = build_layout_masks(self.elements, layout_results, target_size)
+        masks = self._layout_masks(layout_results, target_size)
         gate_report = evaluate_quality_gates(
             baseline=deterministic_result.image,
             candidate=candidate.image,
@@ -281,6 +282,23 @@ class ReLayoutEngine:
         return deterministic_result
 
 
+
+    def _layout_masks(
+        self, layout_results: list[LayoutResult], target_size: tuple[int, int]
+    ) -> Any:
+        """build_layout_masks, memoised for the layout currently being rendered.
+
+        One relayout needs the same masks for harmonisation, generative
+        metadata and quality gates; recomputing them resized every protected
+        layer's alpha several times per size.
+        """
+        key = (id(layout_results), target_size)
+        cached = self._mask_cache
+        if cached is not None and cached[0] == key and cached[1] is layout_results:
+            return cached[2]
+        masks = build_layout_masks(self.elements, layout_results, target_size)
+        self._mask_cache = (key, layout_results, masks)
+        return masks
 
     def _calculate_layout(self, target_size: tuple[int, int]) -> list[LayoutResult]:
         """Pick the layout engine: role-aware stack layout for layered designs."""
@@ -366,7 +384,7 @@ class ReLayoutEngine:
         apply_decor: bool,
     ) -> CompositionResult:
         """Apply safe color harmonization and grounding shadow without changing protected pixels."""
-        masks = build_layout_masks(self.elements, layout_results, target_size)
+        masks = self._layout_masks(layout_results, target_size)
 
         rgba = result.image.convert("RGBA")
         graded = apply_color_grading_safe(rgba, masks.protected_mask)
@@ -424,7 +442,7 @@ class ReLayoutEngine:
         policy = Config.GENERATIVE_BG_POLICY
         seed = Config.GENERATIVE_BG_SEED
 
-        masks = build_layout_masks(self.elements, layout_results, target_size)
+        masks = self._layout_masks(layout_results, target_size)
 
         if not Config.GENERATIVE_BG_ENABLED:
             self._last_outpaint_metadata = self._disabled_outpaint_metadata(masks)
@@ -458,6 +476,10 @@ class ReLayoutEngine:
 
         validate_dimensions(target_size[0], target_size[1])
         layout_results = self._calculate_layout(target_size)
+        if safe_rect is not None and not manual_anchors:
+            # Move the layout itself so the base's readability plates and the
+            # anchors agree on where text ends up.
+            layout_results = self._fit_layout_to_safe_rect(layout_results, safe_rect)
         self._maybe_export_layout_debug(layout_results, target_size)
 
         return run_target_first_redesign(

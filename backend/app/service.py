@@ -24,6 +24,7 @@ from typing import IO, Any
 from . import __version__
 from .classifier import SemanticClassifier
 from .config import Config
+from .constants import BACKGROUND_ROLES
 from .enums import ElementRole
 from .exceptions import AutoBannerError, ValidationError
 from .export import EncodedImage, ExportOptions, encode_image
@@ -344,6 +345,21 @@ def evaluate_qa(
             f"(< {_MIN_TEXT_HEIGHT_PX}px tall): {', '.join(small_text[:5])}"
         )
 
+    # Content the layout engine removed to keep the size legible.
+    visible_ids = {lr.element_id for lr in result.layout_results if lr.visible}
+    laid_out = {lr.element_id for lr in result.layout_results}
+    dropped = [
+        e for e in elements
+        if e.id in laid_out and e.id not in visible_ids and e.image is not None
+        and e.role not in BACKGROUND_ROLES and e.role != ElementRole.GROUP
+    ]
+    qa["dropped"] = [{"id": e.id, "role": e.role.value} for e in dropped]
+    if dropped:
+        warnings.append(
+            f"Removed to stay legible at {preset.width}x{preset.height}: "
+            + ", ".join(sorted({e.role.value.replace("_", " ") for e in dropped}))
+        )
+
     qa["quality_gates_passed"] = bool(result.gates_passed)
     if result.used_fallback:
         warnings.append("Generative candidate failed quality gates; deterministic layout used")
@@ -414,7 +430,12 @@ class RenderService:
         started = time.perf_counter()
         created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-        engine = engine or self.load(file_path, auto_layers=request.auto_layers)
+        # Manual/preset anchors describe regions of the *original* flat image;
+        # they take precedence over auto-detected layers.
+        use_auto_layers = request.auto_layers and not (
+            request.manual_anchors or request.anchor_preset != "none"
+        )
+        engine = engine or self.load(file_path, auto_layers=use_auto_layers)
         for elem_id, role in request.role_overrides.items():
             if not engine.update_element_role(elem_id, role):
                 raise ValidationError(f"Unknown element id '{elem_id}' in role overrides")

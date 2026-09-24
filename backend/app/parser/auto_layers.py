@@ -28,11 +28,12 @@ logger = logging.getLogger("autobanner.parser.auto_layers")
 
 _WORK_MAX_SIDE = 640
 _BORDER_FRAC = 0.04
-_RESIDUAL_THRESHOLD = 38.0
+_RESIDUAL_THRESHOLD = 28.0
 _MIN_COMPONENT_FRAC = 0.0012
 _MAX_FOREGROUND_FRAC = 0.62
 _MAX_ELEMENTS = 10
 _MIN_FILL = 0.08
+_MAX_COMPONENTS = 300  # bound merge work on text-heavy / noisy inputs
 
 
 @dataclass
@@ -43,6 +44,17 @@ class _Block:
     y2: int
     fill: float  # foreground pixels / bbox area (on the un-merged mask)
     area: int  # foreground pixel count
+    labels: frozenset[int] = frozenset()  # connected-component ids it is made of
+
+    def merged(self, other: _Block) -> _Block:
+        total = self.area + other.area
+        return _Block(
+            min(self.x1, other.x1), min(self.y1, other.y1),
+            max(self.x2, other.x2), max(self.y2, other.y2),
+            fill=(self.fill * self.area + other.fill * other.area) / max(1, total),
+            area=total,
+            labels=self.labels | other.labels,
+        )
 
     @property
     def w(self) -> int:
@@ -105,7 +117,9 @@ def _foreground_mask(rgb: np.ndarray) -> np.ndarray | None:
     return residual > _RESIDUAL_THRESHOLD
 
 
-def _components(mask: np.ndarray, close_w: int, close_h: int) -> list[_Block]:
+def _components(
+    mask: np.ndarray, close_w: int, close_h: int
+) -> tuple[list[_Block], np.ndarray]:
     closed = ndimage.binary_closing(mask, structure=np.ones((close_h, close_w)))
     closed = ndimage.binary_fill_holes(closed)
     labels, count = ndimage.label(closed)
@@ -128,39 +142,43 @@ def _components(mask: np.ndarray, close_w: int, close_h: int) -> list[_Block]:
                 sl[1].start, sl[0].start, sl[1].stop, sl[0].stop,
                 fill=fill,
                 area=area,
+                labels=frozenset({idx}),
             )
         )
-    return blocks
+    blocks.sort(key=lambda b: b.area, reverse=True)
+    return blocks[:_MAX_COMPONENTS], labels
 
 
 def _merge_words(blocks: list[_Block]) -> list[_Block]:
     """Join blocks on the same text line (large type has word gaps wider than
-    the closing kernel)."""
-    changed = True
-    blocks = list(blocks)
-    while changed:
-        changed = False
-        blocks.sort(key=lambda b: (b.x1, b.y1))
-        for i, a in enumerate(blocks):
-            for j in range(i + 1, len(blocks)):
-                b = blocks[j]
-                if a.fill > 0.8 or b.fill > 0.8:
-                    continue  # solid plates (CTA/logo) are never words
-                similar_height = 0.7 <= b.h / max(1, a.h) <= 1.43
-                overlap_y = min(a.y2, b.y2) - max(a.y1, b.y1)
-                gap = b.x1 - a.x2
-                if similar_height and overlap_y > 0.6 * min(a.h, b.h) and -2 <= gap < 0.9 * a.h:
-                    total = a.area + b.area
-                    blocks[i] = _Block(
-                        min(a.x1, b.x1), min(a.y1, b.y1), max(a.x2, b.x2), max(a.y2, b.y2),
-                        fill=(a.fill * a.area + b.fill * b.area) / max(1, total), area=total,
-                    )
-                    del blocks[j]
-                    changed = True
+    the closing kernel).
+
+    Single left-to-right sweep per pass: each block is only compared with the
+    open line fragments it could extend, instead of rescanning all pairs.
+    """
+    def joinable(a: _Block, b: _Block) -> bool:
+        if a.fill > 0.8 or b.fill > 0.8:
+            return False  # solid plates (CTA/logo) are never words
+        similar_height = 0.7 <= b.h / max(1, a.h) <= 1.43
+        overlap_y = min(a.y2, b.y2) - max(a.y1, b.y1)
+        gap = b.x1 - a.x2
+        return similar_height and overlap_y > 0.6 * min(a.h, b.h) and -2 <= gap < 0.9 * a.h
+
+    current = list(blocks)
+    for _ in range(4):  # merged fragments can enable one more join; converges fast
+        current.sort(key=lambda b: (b.x1, b.y1))
+        out: list[_Block] = []
+        for b in current:
+            for i in range(len(out) - 1, -1, -1):
+                if joinable(out[i], b):
+                    out[i] = out[i].merged(b)
                     break
-            if changed:
-                break
-    return blocks
+            else:
+                out.append(b)
+        if len(out) == len(current):
+            return out
+        current = out
+    return current
 
 
 def _merge_text_lines(blocks: list[_Block]) -> list[_Block]:
@@ -178,11 +196,7 @@ def _merge_text_lines(blocks: list[_Block]) -> list[_Block]:
                 and overlap_x > 0.3 * min(p.w, b.w)
                 and p.aspect > 2.0 and b.aspect > 2.0
             ):
-                total = p.area + b.area
-                merged[-1] = _Block(
-                    min(p.x1, b.x1), p.y1, max(p.x2, b.x2), b.y2,
-                    fill=(p.fill * p.area + b.fill * b.area) / max(1, total), area=total,
-                )
+                merged[-1] = p.merged(b)
                 continue
         merged.append(b)
     return merged
@@ -265,7 +279,8 @@ def decompose_flat_image(image: Image.Image) -> list[DesignElement] | None:
 
     close_w = max(3, int(ww * 0.022))
     close_h = max(2, int(wh * 0.012))
-    blocks = _merge_text_lines(_merge_words(_components(mask, close_w, close_h)))
+    components, labels = _components(mask, close_w, close_h)
+    blocks = _merge_text_lines(_merge_words(components))
     blocks = sorted(blocks, key=lambda b: b.w * b.h, reverse=True)[:_MAX_ELEMENTS]
     if not blocks:
         return None
@@ -278,6 +293,14 @@ def decompose_flat_image(image: Image.Image) -> list[DesignElement] | None:
         (sw, sh), Image.Resampling.NEAREST
     )
     mask_full = mask_full.filter(ImageFilter.MaxFilter(5))
+    # Component ids at full resolution, so each layer only takes its own pixels
+    # (a badge inside the hero's rectangle must not be copied into the hero).
+    labels_full = np.asarray(
+        Image.fromarray(labels.astype(np.int32), mode="I").resize(
+            (sw, sh), Image.Resampling.NEAREST
+        )
+    )
+    labels_full = ndimage.grey_dilation(labels_full, size=(5, 5))
 
     elements: list[DesignElement] = []
     fg_union = np.zeros((sh, sw), dtype=bool)
@@ -290,7 +313,8 @@ def decompose_flat_image(image: Image.Image) -> list[DesignElement] | None:
         if x2 - x1 < 4 or y2 - y1 < 4:
             continue
         crop = src.crop((x1, y1, x2, y2))
-        region = np.asarray(mask_full.crop((x1, y1, x2, y2))) > 0
+        own = np.isin(labels_full[y1:y2, x1:x2], list(b.labels))
+        region = (np.asarray(mask_full.crop((x1, y1, x2, y2))) > 0) & own
         if role in (ElementRole.CTA, ElementRole.LOGO, ElementRole.BADGE):
             # Solid plates: fill the holes (the label text) but keep the plate's
             # own silhouette so rounded corners do not carry background patches.

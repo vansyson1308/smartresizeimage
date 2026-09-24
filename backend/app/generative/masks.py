@@ -133,10 +133,10 @@ def _paint_element(mask: np.ndarray, elem: DesignElement, layout: LayoutResult) 
         _paint_bbox(mask, box.x, box.y, box.width, box.height)
         return
     image = elem.image
-    if image.mode != "RGBA":
-        _paint_bbox(mask, box.x, box.y, box.width, box.height)
+    fitted = box.fit_aspect(*image.size)  # where the compositor actually draws it
+    if "A" not in image.getbands():
+        _paint_bbox(mask, fitted.x, fitted.y, fitted.width, fitted.height)
         return
-    fitted = box.fit_aspect(*image.size)
     alpha = image.getchannel("A").resize((fitted.width, fitted.height), Image.Resampling.BILINEAR)
     # alpha > 8 already includes the anti-aliased rim; no dilation, or the
     # ungraded rim shows up as a halo around round shapes.

@@ -332,7 +332,6 @@ class StackLayoutEngine:
         want_h = math.sqrt(self._profile.target_hero_ratio * tw * th * hh0 / max(1.0, hw0))
         want_h = min(want_h, 0.92 * rw * hh0 / max(1.0, hw0))
         copy_share = min(0.6, max(0.3, (rh - want_h - 2 * gap) / rh))
-        n_gaps = len(copy_items)  # gaps between copy items + around the hero
         budget = copy_share * rh - gap * max(0, len(copy_items) - 1)
 
         def total(s: float) -> float:
@@ -343,14 +342,16 @@ class StackLayoutEngine:
         copy_h = sum(heights.values()) + gap * max(0, len(copy_items) - 1)
 
         hero_item = self._item(hero, cap_w=0.92)  # type: ignore[arg-type]
-        remaining = rh - copy_h - gap * min(n_gaps, 2)
+        # One gap separates the hero from the copy items around it.
+        hero_gap = gap if copy_items else 0.0
+        remaining = rh - copy_h - hero_gap
         hero_h = min(
             remaining, _MAX_UPSCALE * hero_item.h0, hero_item.cap_w * rw / hero_item.aspect
         )
         hero_h = max(1.0, hero_h)
 
         order = [*top, hero_item, *bottom]
-        used = copy_h + hero_h + gap * (2 if bottom else 1)
+        used = copy_h + hero_h + hero_gap
         # Breathing room: spread leftover height between the groups
         # (logo | copy | hero | CTA) instead of clustering everything mid-canvas.
         logo_item = top[0] if top and top[0].elem is roles["logo"] else None
