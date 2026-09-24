@@ -35,3 +35,8 @@ Do **not** commit generated binaries/artifacts:
 - exports (`*.zip`)
 
 Use deterministic generators/tests instead of committing generated artifacts whenever possible.
+
+Exception: the README demo images in `docs/demo/` are committed on purpose. Regenerate them
+with `python backend/tools/make_demo.py` whenever rendering changes, and keep the folder
+small (JPEG boards, ~2.5 MB total). `docs/demo/studio.jpg` is a screenshot of the running
+studio; refresh it with `backend/tools/capture_studio.mjs` (instructions in the file).

@@ -16,6 +16,73 @@ và được **kiểm tra vùng an toàn** (safe zone) trước khi bạn tải 
 > elements preserved, platform safe zones respected, file-size caps met. Studio UI,
 > REST API, CLI and Docker image included. See [docs/API.md](docs/API.md).*
 
+### Ảnh gốc: 1 thiết kế nhiều layer (như file PSD), 1200×628
+
+<p align="center"><img src="docs/demo/master_mascot.jpg" width="720" alt="Original master banner: PawMart Mega Sale 10.10 with a cat mascot"></p>
+
+### ↓ Kết quả: 1 click → 16 kích thước quảng cáo & mạng xã hội
+
+[![1 master → 16 sizes](docs/demo/showcase_mascot.jpg)](docs/demo/showcase_mascot.jpg)
+
+Mascot mèo, sticker "-70%", headline viền chữ, CTA và logo đều là layer riêng. Engine
+giữ nguyên tỉ lệ từng layer (không méo, không cắt), sticker "-70%" luôn bám theo mascot,
+bố cục tự đổi theo hình dạng khung: 1 hàng ngang ở 728×90, chồng dọc ở 300×600 và
+Story 1080×1920 (né vùng UI tô đỏ), chữ phụ tự bỏ ở size quá nhỏ để headline còn đọc được
+(và ghi lại trong "QA note"). Dung lượng dưới mỗi ô là file WebP thật; mọi size Google
+Display đều dưới trần 150 KB.
+
+---
+
+## Demo: kết quả thật, không phải ảnh minh họa
+
+Mọi ô ảnh trong các bảng dưới đây là **output thật của engine**, được tạo bởi
+[`backend/tools/make_demo.py`](backend/tools/make_demo.py) — chạy lại
+`python backend/tools/make_demo.py` là ra lại **đúng từng byte** các ảnh này. Dung lượng
+ghi dưới mỗi ô là kích thước file WebP thật sau khi xuất; vùng tô đỏ trên Story là vùng
+UI của Instagram/Facebook mà engine đã chủ động tránh (chỉ vẽ để minh họa, không có
+trong file xuất). Các banner gốc là thiết kế mẫu vẽ bằng code (4 phong cách khác nhau),
+không phải ảnh chỉnh tay; output không được chỉnh sửa gì thêm.
+
+### Thêm 3 phong cách khác: 1 master → 12 size quảng cáo
+
+<table>
+<tr>
+<td width="33%"><a href="docs/demo/showcase_coffee.jpg"><img src="docs/demo/showcase_coffee.jpg" alt="Coffee: 1 master to 12 sizes"></a></td>
+<td width="33%"><a href="docs/demo/showcase_tech.jpg"><img src="docs/demo/showcase_tech.jpg" alt="Electronics: 1 master to 12 sizes"></a></td>
+<td width="33%"><a href="docs/demo/showcase_travel.jpg"><img src="docs/demo/showcase_travel.jpg" alt="Travel: 1 master to 12 sizes"></a></td>
+</tr>
+<tr>
+<td align="center">Quán cà phê</td><td align="center">Điện tử (sticker "-50%" bám theo sản phẩm)</td><td align="center">Du lịch</td>
+</tr>
+</table>
+
+Điều cần nhìn: leaderboard 728×90 xếp thành 1 hàng (logo · chữ · hình · CTA), dọc 1080×1920
+xếp chồng và né vùng UI, 300×250 tự bỏ logo hoặc sub-copy để chữ còn đọc được (và **báo
+lại** trong QA), mọi file IAB đều dưới trần 150 KB của Google Display.
+
+### Ảnh phẳng PNG cũng bố cục lại được (auto-layers)
+
+![Flat PNG: plain resize vs auto-layers](docs/demo/auto_layers.jpg)
+
+Cùng một file PNG đã flatten, không có layer nào. Hàng trên: resize thông thường chỉ có
+thể thu nhỏ cả bức ảnh (leaderboard 728×90 gần như không đọc được). Hàng dưới: auto-layers
+tự tách headline, sub-copy, CTA, logo, hình minh họa + dựng lại nền sạch, rồi bố cục lại.
+
+### Engine cũ vs engine mới (cùng input nhiều layer)
+
+![v1 vs v2 layout engine](docs/demo/engine_comparison.jpg)
+
+Engine v1 (zone template) chồng logo lên chữ, cắt/đè sticker, chữ nhỏ tới mức biến mất.
+Engine v2 (stack layout) không bao giờ chồng lấn, giữ thứ bậc chữ và bám safe zone.
+
+### Studio
+
+![AutoBanner Studio](docs/demo/studio.jpg)
+
+Ảnh chụp màn hình Studio đang chạy thật (Chromium headless). Kéo-thả 1 file PNG phẳng →
+Studio phát hiện 8 phần tử → chọn pack *Meta Ads* + *Google
+Display* → 12 size trong ~7 giây, mỗi thẻ hiện dung lượng / trần của mạng và ghi chú QA.
+
 ---
 
 ## Vì sao AutoBanner?

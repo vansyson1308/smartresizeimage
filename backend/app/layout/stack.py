@@ -161,6 +161,7 @@ class StackLayoutEngine:
             dropped.append(victim.id)
             self._remove(roles, victim)
 
+        self._place_attached(roles, boxes, target_size, dropped)
         self._place_secondary(roles, boxes, source_size, target_size, dropped)
 
         results: list[LayoutResult] = []
@@ -202,9 +203,33 @@ class StackLayoutEngine:
             reverse=True,
         )
         hero = visuals[0] if visuals else None
+
+        # Stickers designed onto the hero (a "-50%" roundel on the product) stay
+        # attached to it, at the same relative spot and scale, instead of
+        # taking a slot in the copy stack.
+        attached: list[tuple[DesignElement, tuple[float, float, float]]] = []
+        if hero is not None:
+            hb = hero.bbox
+            for e in list(copy):
+                if e.role not in (ElementRole.BADGE, ElementRole.LABEL):
+                    continue
+                if _overlap(e.bbox, hb) < 0.2 * max(1, e.bbox.area):
+                    continue
+                rel = (
+                    (e.bbox.x - hb.x) / max(1, hb.width),
+                    (e.bbox.y - hb.y) / max(1, hb.height),
+                    e.bbox.width / max(1, hb.width),
+                )
+                attached.append((e, rel))
+                copy.remove(e)
+
         placed = {id(x) for x in [logo, cta, hero, *copy] if x is not None}
+        placed |= {id(e) for e, _ in attached}
         secondary = [e for e in foreground if id(e) not in placed]
-        return {"logo": logo, "cta": cta, "copy": copy, "hero": hero, "secondary": secondary}
+        return {
+            "logo": logo, "cta": cta, "copy": copy, "hero": hero,
+            "secondary": secondary, "attached": attached,
+        }
 
     @staticmethod
     def _remove(roles: dict[str, object], victim: DesignElement) -> None:
@@ -329,7 +354,9 @@ class StackLayoutEngine:
         # rest of the height (between 30% and 60%).
         hero_elem: DesignElement = hero  # type: ignore[assignment]
         hw0, hh0 = _natural_size(hero_elem)
-        want_h = math.sqrt(self._profile.target_hero_ratio * tw * th * hh0 / max(1.0, hw0))
+        # Aim a little above the prominence floor (0.65 x target) rather than at the
+        # full target, so copy keeps a readable share on square and 4:5 canvases.
+        want_h = math.sqrt(0.75 * self._profile.target_hero_ratio * tw * th * hh0 / max(1.0, hw0))
         want_h = min(want_h, 0.92 * rw * hh0 / max(1.0, hw0))
         copy_share = min(0.6, max(0.3, (rh - want_h - 2 * gap) / rh))
         budget = copy_share * rh - gap * max(0, len(copy_items) - 1)
@@ -436,7 +463,7 @@ class StackLayoutEngine:
 
         row: list[_Item] = []
         if roles["logo"] is not None:
-            row.append(self._item(roles["logo"], cap_h=0.75))
+            row.append(self._item(roles["logo"], cap_w=0.16, cap_h=0.6))
         if block is not None:
             row.append(block)
         if roles["hero"] is not None:
@@ -515,6 +542,41 @@ class StackLayoutEngine:
             if b.height < cap - 1:
                 out.append(it.elem)
         return out
+
+    @staticmethod
+    def _place_attached(
+        roles: dict[str, object],
+        boxes: dict[str, BoundingBox],
+        target_size: tuple[int, int],
+        dropped: list[str],
+    ) -> None:
+        """Re-attach stickers to the hero at their designed relative position."""
+        hero = roles["hero"]
+        hb = boxes.get(hero.id) if hero is not None else None  # type: ignore[union-attr]
+        tw, th = target_size
+        for e, (rx, ry, rw_frac) in roles["attached"]:  # type: ignore[union-attr]
+            if hb is None:
+                dropped.append(e.id)
+                continue
+            w0, h0 = _natural_size(e)
+            w = max(1.0, min(rw_frac * hb.width, _MAX_UPSCALE * w0))
+            h = w * h0 / max(1.0, w0)
+            x = min(max(hb.x + rx * hb.width, 0), tw - w)
+            y = min(max(hb.y + ry * hb.height, 0), th - h)
+            box = BoundingBox(round(x), round(y), max(1, round(w)), max(1, round(h)))
+            others = [b for k, b in boxes.items() if k != hero.id]  # type: ignore[union-attr]
+            if any(_overlap(box, b) > 0 for b in others):
+                # A sticker protruding from the hero would collide with the
+                # copy or CTA laid out next to it: pull it inside the hero.
+                w = min(w, float(hb.width))
+                h = w * h0 / max(1.0, w0)
+                if h > hb.height:
+                    h = float(hb.height)
+                    w = h * w0 / max(1.0, h0)
+                x = min(max(x, hb.x), hb.x2 - w)
+                y = min(max(y, hb.y), hb.y2 - h)
+                box = BoundingBox(round(x), round(y), max(1, round(w)), max(1, round(h)))
+            boxes[e.id] = box
 
     # ------------------------------------------------------- secondary visuals
     @staticmethod

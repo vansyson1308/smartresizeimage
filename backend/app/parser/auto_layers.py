@@ -88,7 +88,13 @@ def _fit_background(rgb: np.ndarray, sample_mask: np.ndarray) -> np.ndarray | No
     return full.reshape(h, w, 3)
 
 
-def _foreground_mask(rgb: np.ndarray) -> np.ndarray | None:
+@dataclass
+class _Background:
+    model: np.ndarray  # fitted background colour per pixel (working resolution)
+    smooth: bool  # True when the model explains the background (flat/gradient)
+
+
+def _foreground_mask(rgb: np.ndarray) -> tuple[np.ndarray, _Background] | None:
     """Robustly fit the background and threshold the colour residual."""
     h, w, _ = rgb.shape
     border = np.zeros((h, w), dtype=bool)
@@ -98,6 +104,7 @@ def _foreground_mask(rgb: np.ndarray) -> np.ndarray | None:
 
     sample = border
     residual = None
+    bg = None
     for _ in range(3):
         bg = _fit_background(rgb, sample)
         if bg is None:
@@ -114,7 +121,10 @@ def _foreground_mask(rgb: np.ndarray) -> np.ndarray | None:
     # No morphological opening here: at working resolution small type has
     # 1px strokes. Speckle and thin pattern lines are rejected later by
     # component area and fill ratio instead.
-    return residual > _RESIDUAL_THRESHOLD
+    mask = residual > _RESIDUAL_THRESHOLD
+    background_px = residual[~mask]
+    smooth = bool(background_px.size) and float(np.percentile(background_px, 90)) < 12.0
+    return mask, _Background(model=bg, smooth=smooth)
 
 
 def _components(
@@ -225,6 +235,22 @@ def _classify(blocks: list[_Block], w: int, h: int) -> list[tuple[_Block, Elemen
         else:
             roles.append((b, ElementRole.DECORATION))
 
+    # Wordmark logos on a near-invisible plate show up as a small text block
+    # tucked into a top corner. Decide this *before* ranking the copy, so the
+    # real sub-headline is not demoted to body text.
+    if texts and not any(r == ElementRole.LOGO for _, r in roles):
+        tallest = max(texts, key=lambda b: b.h)
+        for b in sorted(texts, key=lambda b: b.y1):
+            if (
+                b is not tallest
+                and b.y2 < 0.22 * h
+                and (b.x1 > 0.7 * w or b.x2 < 0.3 * w)
+                and b.w * b.h / canvas < 0.02
+            ):
+                roles.append((b, ElementRole.LOGO))
+                texts.remove(b)
+                break
+
     # Tallest text block is the headline, the rest are sub/body copy.
     texts.sort(key=lambda b: b.h, reverse=True)
     for i, b in enumerate(texts):
@@ -235,18 +261,24 @@ def _classify(blocks: list[_Block], w: int, h: int) -> list[tuple[_Block, Elemen
         )
         roles.append((b, role))
 
-    # Wordmark logos on a near-invisible plate show up as a small text block
-    # tucked into a top corner; promote the first such block if no logo exists.
-    if not any(r == ElementRole.LOGO for _, r in roles):
-        for i, (b, r) in enumerate(roles):
-            if (
-                r in (ElementRole.SUBHEADLINE, ElementRole.BODY_TEXT)
-                and b.y2 < 0.22 * h
-                and (b.x1 > 0.7 * w or b.x2 < 0.3 * w)
-                and b.w * b.h / canvas < 0.02
-            ):
-                roles[i] = (b, ElementRole.LOGO)
-                break
+    # Small visual fragments touching the hero (steam, sparkles, a shadow)
+    # belong to it: keep them together so they move as one illustration.
+    hero_idx = next((i for i, (_, r) in enumerate(roles) if r == ElementRole.HERO_IMAGE), None)
+    if hero_idx is not None:
+        hero = roles[hero_idx][0]
+        reach = 0.08 * max(hero.w, hero.h)
+        keep: list[tuple[_Block, ElementRole]] = []
+        for b, r in roles:
+            near = (
+                b.x1 < hero.x2 + reach and b.x2 > hero.x1 - reach
+                and b.y1 < hero.y2 + reach and b.y2 > hero.y1 - reach
+            )
+            if b is not hero and r in (ElementRole.ILLUSTRATION, ElementRole.DECORATION) and near:
+                hero = hero.merged(b)
+                continue
+            keep.append((b, r))
+        roles = [(hero, r) if r == ElementRole.HERO_IMAGE and b is roles[hero_idx][0] else (b, r)
+                 for b, r in keep]
 
     # A banner has at most one CTA and one logo: demote extras.
     for unique in (ElementRole.CTA, ElementRole.LOGO):
@@ -254,6 +286,29 @@ def _classify(blocks: list[_Block], w: int, h: int) -> list[tuple[_Block, Elemen
         for i in found[1:]:
             roles[i] = (roles[i][0], ElementRole.BADGE)
     return roles
+
+
+def _assign_orphans(labels: np.ndarray, blocks: list[_Block]) -> dict[int, frozenset[int]]:
+    """Give every orphan component to exactly one block.
+
+    An orphan (too small to be a block, e.g. the dot of an "i") joins the
+    smallest block whose box contains its centre, so a fragment inside two
+    overlapping boxes is never rendered twice.
+    """
+    assigned = {lab for b in blocks for lab in b.labels}
+    out: dict[int, set[int]] = {}
+    for lab, sl in enumerate(ndimage.find_objects(labels), start=1):
+        if sl is None or lab in assigned:
+            continue
+        cy = (sl[0].start + sl[0].stop) / 2
+        cx = (sl[1].start + sl[1].stop) / 2
+        owners = [
+            (b.w * b.h, i) for i, b in enumerate(blocks)
+            if b.x1 - 3 <= cx <= b.x2 + 3 and b.y1 - 3 <= cy <= b.y2 + 3
+        ]
+        if owners:
+            out.setdefault(min(owners)[1], set()).add(lab)
+    return {i: frozenset(v) for i, v in out.items()}
 
 
 def decompose_flat_image(image: Image.Image) -> list[DesignElement] | None:
@@ -268,10 +323,11 @@ def decompose_flat_image(image: Image.Image) -> list[DesignElement] | None:
     ww, wh = max(8, int(round(sw * scale))), max(8, int(round(sh * scale)))
     work = np.asarray(src.convert("RGB").resize((ww, wh), Image.Resampling.BOX))
 
-    mask = _foreground_mask(work)
-    if mask is None:
+    fitted = _foreground_mask(work)
+    if fitted is None:
         logger.info("auto-layers: background not modelable, keeping flat image")
         return None
+    mask, bg_fit = fitted
     fg_frac = float(mask.mean())
     if fg_frac < 0.005 or fg_frac > _MAX_FOREGROUND_FRAC:
         logger.info("auto-layers: implausible foreground ratio %.3f", fg_frac)
@@ -302,6 +358,7 @@ def decompose_flat_image(image: Image.Image) -> list[DesignElement] | None:
     )
     labels_full = ndimage.grey_dilation(labels_full, size=(5, 5))
 
+    orphans = _assign_orphans(labels, [b for b, _ in roles])
     elements: list[DesignElement] = []
     fg_union = np.zeros((sh, sw), dtype=bool)
     for idx, (b, role) in enumerate(roles):
@@ -313,7 +370,10 @@ def decompose_flat_image(image: Image.Image) -> list[DesignElement] | None:
         if x2 - x1 < 4 or y2 - y1 < 4:
             continue
         crop = src.crop((x1, y1, x2, y2))
-        own = np.isin(labels_full[y1:y2, x1:x2], list(b.labels))
+        window = labels_full[y1:y2, x1:x2]
+        # Its own components, plus the tiny orphans (i-dots, accents,
+        # punctuation) the minimum-area filter left out and that belong to it.
+        own = np.isin(window, list(b.labels | orphans.get(idx, frozenset())))
         region = (np.asarray(mask_full.crop((x1, y1, x2, y2))) > 0) & own
         if role in (ElementRole.CTA, ElementRole.LOGO, ElementRole.BADGE):
             # Solid plates: fill the holes (the label text) but keep the plate's
@@ -340,7 +400,7 @@ def decompose_flat_image(image: Image.Image) -> list[DesignElement] | None:
     if not elements:
         return None
 
-    background = _clean_background(src, fg_union)
+    background = _clean_background(src, fg_union, bg_fit)
     elements.insert(
         0,
         DesignElement(
@@ -363,21 +423,42 @@ def decompose_flat_image(image: Image.Image) -> list[DesignElement] | None:
     return elements
 
 
-def _clean_background(src: Image.Image, fg: np.ndarray) -> Image.Image:
-    """Remove detected foreground from the background plate by inpainting."""
+def _clean_background(src: Image.Image, fg: np.ndarray, bg_fit: _Background) -> Image.Image:
+    """Remove detected foreground from the background plate.
+
+    Flat or gradient backgrounds are refilled from the fitted background model,
+    which reproduces them exactly (inpainting a large hole leaves a smeared
+    "ghost" of the removed element). Textured backgrounds fall back to
+    inpainting.
+    """
     rgb = np.asarray(src.convert("RGB")).copy()
+    sh, sw = rgb.shape[:2]
+    hole = ndimage.binary_dilation(fg, iterations=4)
+    if bg_fit.smooth:
+        model = np.clip(bg_fit.model, 0, 255).astype(np.uint8)
+        model_full = np.asarray(
+            Image.fromarray(model, "RGB").resize((sw, sh), Image.Resampling.BICUBIC),
+            dtype=np.float32,
+        )
+        # Feather the hole edge so the refill blends into the original pixels.
+        alpha = np.asarray(
+            Image.fromarray(hole.astype(np.uint8) * 255).filter(ImageFilter.GaussianBlur(2)),
+            dtype=np.float32,
+        )[..., None] / 255.0
+        alpha = np.maximum(alpha, hole[..., None].astype(np.float32))
+        out = rgb.astype(np.float32) * (1 - alpha) + model_full * alpha
+        return Image.fromarray(np.clip(out, 0, 255).astype(np.uint8), "RGB").convert("RGBA")
     try:
         import cv2  # type: ignore
 
         from ..composition.content_aware_fit import _fast_inpaint
 
-        mask = ndimage.binary_dilation(fg, iterations=3).astype(np.uint8) * 255
-        filled = _fast_inpaint(cv2, rgb, mask, 5)
+        filled = _fast_inpaint(cv2, rgb, hole.astype(np.uint8) * 255, 5)
         return Image.fromarray(filled, "RGB").convert("RGBA")
     except Exception as e:  # headless environments without cv2
         logger.info("auto-layers: inpaint unavailable (%s), using blurred fill", e)
         blurred = np.asarray(
             Image.fromarray(rgb).filter(ImageFilter.GaussianBlur(25)), dtype=np.uint8
         )
-        rgb[fg] = blurred[fg]
+        rgb[hole] = blurred[hole]
         return Image.fromarray(rgb, "RGB").convert("RGBA")

@@ -2,6 +2,37 @@
 
 All notable changes to this project are documented here. Versions follow SemVer.
 
+## [Unreleased]
+
+### Added
+- README demo gallery (`docs/demo/`): three layered masters rendered to 12 sizes each,
+  flat-PNG plain resize vs auto-layers, v1 vs v2 engine, and a studio screenshot. Boards
+  are produced by `backend/tools/make_demo.py` and are byte-for-byte reproducible.
+- README hero: a complex mascot master (PawMart "Mega Sale 10.10") shown next to its 16
+  resized outputs (IAB, Meta, Pinterest, LinkedIn, X, Facebook cover).
+- `backend/tools/capture_studio.mjs` regenerates the studio screenshot with Playwright.
+
+### Changed
+- Stack layout: stickers designed onto the hero (e.g. a "-50%" roundel) stay attached to
+  it instead of taking a slot in the copy stack; strip logos are capped so they never
+  dominate a 728×90 row.
+- Auto-layers: flat or gradient backgrounds are refilled from the fitted background model
+  instead of inpainting (no more "ghost" of removed elements, ~2x faster); small visual
+  fragments touching the hero (steam, sparkles) are merged into it; the corner wordmark
+  logo is detected before copy ranking so the sub-headline keeps its role.
+- QA warns only when content is removed; dropped decoration is still listed in
+  `qa.dropped` but no longer produces a warning.
+- Vertical layouts give the hero a slightly smaller share so copy and CTA get more room
+  (layout bench: mean score 56.4 -> 57.2, still 0 overlaps).
+
+### Fixed
+- Auto-layers lost small glyph parts (the dot of an "i", accents) from text layers and left
+  them behind on the background plate.
+- Auto-layers: a fragment lying inside two overlapping blocks was copied into both layers;
+  it now belongs only to the smallest block that contains it.
+- Stack layout: a sticker protruding far outside the hero could overlap strip neighbours
+  (logo, copy); it is now shrunk and kept inside the hero box when it would collide.
+
 ## [2.0.0] - 2026-09-24
 
 A productisation release: AutoBanner becomes a deployable service with a studio, REST

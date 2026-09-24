@@ -112,3 +112,101 @@ def test_phase3_layered_base_keeps_text_plates_without_ghosts(tmp_path):
     )
     asset = report.assets[0]
     assert asset.ok and asset.qa["safe_zone"]["violations"] == []
+
+
+def test_dropped_decoration_is_recorded_but_not_warned():
+    from backend.app.models import CompositionResult
+    from backend.app.presets import get_preset as _gp
+    from backend.app.service import evaluate_qa
+
+    deco = DesignElement(
+        "dot", "dot", "pixel", BoundingBox(0, 0, 10, 10),
+        image=Image.new("RGBA", (10, 10), (255, 255, 255, 255)), role=ElementRole.DECORATION,
+    )
+    result = CompositionResult(
+        image=Image.new("RGB", (300, 250)),
+        layout_results=[LayoutResult("dot", BoundingBox(0, 0, 1, 1), 0.0, visible=False)],
+    )
+    qa, warnings = evaluate_qa(_gp("iab-medium-rectangle"), result, [deco], "phase21")
+    assert qa["dropped"] == [{"id": "dot", "role": "decoration"}]
+    assert not any("Removed" in w for w in warnings)
+
+
+def test_hero_sticker_stays_attached_and_strip_logo_is_capped():
+    from backend.tools.make_demo import tech_master
+
+    master = tech_master()
+    elements = master.elements()
+    for size in [(1080, 1080), (1080, 1920), (728, 90), (300, 600)]:
+        results = {r.element_id: r for r in StackLayoutEngine().calculate(
+            elements, (1200, 628), size)}
+        badge, hero = results["badge"], results["hero"]
+        assert badge.visible and hero.visible
+        b, h = badge.new_bbox, hero.new_bbox
+        ix = max(0, min(b.x2, h.x2) - max(b.x, h.x))
+        iy = max(0, min(b.y2, h.y2) - max(b.y, h.y))
+        assert ix * iy > 0.2 * b.area, size  # still sits on the product
+    strip = {r.element_id: r for r in StackLayoutEngine().calculate(
+        elements, (1200, 628), (728, 90))}
+    assert strip["logo"].new_bbox.width <= 0.16 * 728 + 2
+    assert strip["logo"].new_bbox.height < strip["headline"].new_bbox.height
+
+
+def test_auto_layers_keep_i_dots_in_the_text_layer():
+    img = Image.new("RGB", (1200, 628), (250, 240, 225))
+    d = ImageDraw.Draw(img)
+    from backend.tools.make_demo import font
+
+    d.text((80, 200), "Morning", font=font(110), fill=(70, 40, 30))
+    d.rounded_rectangle((80, 420, 380, 500), radius=40, fill=(220, 100, 40))
+    d.ellipse((760, 140, 1100, 480), fill=(200, 80, 60))
+    elements = decompose_flat_image(img)
+    assert elements is not None
+    bg = np.asarray(elements[0].image.convert("RGB"), dtype=np.int32)
+    ink = (np.abs(bg - np.array([70, 40, 30])).sum(axis=2) < 60)
+    assert not ink[180:340, 60:620].any()  # no glyph remnants (i-dot) left in the plate
+
+
+def test_orphan_fragment_goes_to_exactly_one_layer():
+    from backend.app.parser.auto_layers import _assign_orphans, _Block
+
+    labels = np.zeros((100, 100), dtype=np.int32)
+    labels[10:40, 10:60] = 1   # block A
+    labels[30:80, 40:90] = 2   # block B, overlapping A's box
+    labels[34:36, 50:52] = 3   # tiny orphan inside both boxes
+    a = _Block(10, 10, 60, 40, fill=1.0, area=1500, labels=frozenset({1}))
+    b = _Block(40, 30, 90, 80, fill=1.0, area=2500, labels=frozenset({2}))
+    owners = _assign_orphans(labels, [a, b])
+    holders = [i for i, labs in owners.items() if 3 in labs]
+    assert holders == [0]  # the smaller containing block only
+
+
+def test_protruding_sticker_never_overlaps_strip_neighbours():
+    bg = _bg((1200, 628))
+    hero = DesignElement(
+        "hero", "hero", "pixel", BoundingBox(700, 100, 300, 400),
+        image=Image.new("RGBA", (300, 400), (200, 60, 60, 255)), role=ElementRole.HERO_IMAGE,
+    )
+    # sticker hanging well off the hero's right edge (still overlaps it by ~40%)
+    badge = DesignElement(
+        "badge", "badge", "pixel", BoundingBox(900, 60, 200, 200),
+        image=Image.new("RGBA", (200, 200), (255, 64, 96, 255)), role=ElementRole.BADGE,
+    )
+    headline = DesignElement(
+        "headline", "headline", "pixel", BoundingBox(60, 200, 500, 90),
+        image=Image.new("RGBA", (500, 90), (0, 0, 0, 255)), role=ElementRole.HEADLINE,
+    )
+    cta = DesignElement(
+        "cta", "cta", "pixel", BoundingBox(60, 380, 240, 70),
+        image=Image.new("RGBA", (240, 70), (255, 200, 0, 255)), role=ElementRole.CTA,
+    )
+    elements = [bg, hero, badge, headline, cta]
+    for size in [(728, 90), (970, 250), (320, 50), (1080, 1080)]:
+        res = {r.element_id: r for r in StackLayoutEngine().calculate(
+            elements, (1200, 628), size)}
+        b = res["badge"].new_bbox
+        for other in ("headline", "cta"):
+            o = res[other].new_bbox
+            ix = max(0, min(b.x2, o.x2) - max(b.x, o.x))
+            iy = max(0, min(b.y2, o.y2) - max(b.y, o.y))
+            assert ix * iy == 0, (size, other)
