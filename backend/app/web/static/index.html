@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AutoBanner Studio</title>
+  <meta name="description" content="Resize one master banner into every ad and social size.">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/studio.css">
+  <script src="/static/studio.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar">
+    <div class="brand">
+      <img src="/static/favicon.svg" alt="" width="24" height="24">
+      <span class="brand-name">AutoBanner</span>
+      <span class="brand-tag">Studio</span>
+    </div>
+    <nav class="topnav" aria-label="Resources">
+      <span id="version" class="muted small"></span>
+      <a href="/docs" target="_blank" rel="noopener">API reference</a>
+      <button type="button" id="api-key-btn" class="btn btn-ghost" hidden>API key</button>
+    </nav>
+  </header>
+
+  <main id="main" class="layout">
+    <section class="panel" aria-labelledby="setup-title">
+      <h1 id="setup-title" class="visually-hidden">Set up a render</h1>
+
+      <div class="step">
+        <h2 class="step-title"><span class="step-num">1</span> Master design</h2>
+        <label id="dropzone" class="dropzone" for="file-input">
+          <input id="file-input" type="file" accept=".psd,.png,.jpg,.jpeg,.webp" class="visually-hidden">
+          <span class="dropzone-empty" id="dropzone-empty">
+            <strong>Drop a PSD, PNG, JPG or WEBP</strong>
+            <span class="muted small">or click to browse · layered PSDs give the best results</span>
+          </span>
+          <img id="source-preview" alt="Source preview" hidden>
+        </label>
+        <dl id="source-info" class="facts" hidden></dl>
+      </div>
+
+      <div class="step">
+        <h2 class="step-title"><span class="step-num">2</span> Output sizes
+          <span id="selected-count" class="pill">0 selected</span></h2>
+        <div class="field">
+          <span class="label" id="packs-label">Quick packs</span>
+          <div id="packs" class="chips" role="group" aria-labelledby="packs-label"></div>
+        </div>
+        <div class="field">
+          <label class="label" for="preset-filter">Presets</label>
+          <input id="preset-filter" type="search" class="input" placeholder="Filter: story, 300x250, linkedin…">
+          <div id="preset-list" class="preset-list" role="group" aria-label="Preset sizes"></div>
+        </div>
+        <form id="custom-form" class="field inline" autocomplete="off">
+          <label class="label" for="custom-size">Custom size</label>
+          <div class="row">
+            <input id="custom-size" class="input" placeholder="e.g. 1200x628" pattern="\s*\d{2,5}\s*[xX×]\s*\d{2,5}\s*">
+            <button class="btn" type="submit">Add</button>
+          </div>
+          <div id="custom-list" class="chips"></div>
+        </form>
+      </div>
+
+      <div class="step">
+        <h2 class="step-title"><span class="step-num">3</span> Output settings</h2>
+        <fieldset class="field">
+          <legend class="label">Engine</legend>
+          <div class="segmented">
+            <label><input type="radio" name="mode" value="phase21" checked><span>Relayout <small>fast</small></span></label>
+            <label><input type="radio" name="mode" value="phase3"><span>Redesign <small>flat illustration</small></span></label>
+          </div>
+        </fieldset>
+        <div class="grid-2">
+          <div class="field">
+            <label class="label" for="format">Format</label>
+            <select id="format" class="input">
+              <option value="png">PNG (lossless)</option>
+              <option value="jpeg">JPEG</option>
+              <option value="webp">WebP</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="label" for="max-kb">Max file size (KB)</label>
+            <input id="max-kb" class="input" type="number" min="1" placeholder="Platform default">
+          </div>
+        </div>
+        <div class="field" id="anchor-field" hidden>
+          <label class="label" for="anchor-preset">Brand anchors (flat images)</label>
+          <select id="anchor-preset" class="input">
+            <option value="none">Auto</option>
+            <option value="flat_banner_3anchors">Mascot + headline + CTA preset</option>
+          </select>
+        </div>
+        <label class="check"><input type="checkbox" id="platform-limits" checked> Enforce ad-network file-size caps</label>
+        <label class="check"><input type="checkbox" id="safe-zones" checked> Keep key elements out of Story/Reels UI zones</label>
+      </div>
+
+      <div class="actions">
+        <button id="generate" class="btn btn-primary btn-lg" type="button" disabled>Generate</button>
+        <p id="form-hint" class="muted small" aria-live="polite">Upload a design to begin.</p>
+      </div>
+    </section>
+
+    <section class="results" aria-labelledby="results-title">
+      <div class="results-head">
+        <h2 id="results-title">Results</h2>
+        <div class="row">
+          <span id="summary" class="muted small" aria-live="polite"></span>
+          <a id="download-all" class="btn btn-primary" hidden download>Download ZIP</a>
+        </div>
+      </div>
+      <div id="progress" class="progress" hidden>
+        <div class="progress-bar"><div id="progress-fill"></div></div>
+        <span id="progress-text" class="small muted" aria-live="polite"></span>
+      </div>
+      <div id="error" class="alert" role="alert" hidden></div>
+      <div id="empty" class="empty">
+        <p><strong>No renders yet.</strong></p>
+        <p class="muted small">Pick a pack like <em>Meta ads</em> or <em>Google Display</em>, then hit Generate.
+          Every file is checked against the network's size cap and safe zones.</p>
+      </div>
+      <ul id="gallery" class="gallery" role="list"></ul>
+    </section>
+  </main>
+
+  <dialog id="key-dialog" aria-labelledby="key-title">
+    <form method="dialog" id="key-form">
+      <h2 id="key-title">API key</h2>
+      <p class="muted small">This server requires an API key. It is stored only in this browser.</p>
+      <label class="label" for="key-input">Key</label>
+      <input id="key-input" class="input" type="password" autocomplete="off" required>
+      <div class="row end">
+        <button class="btn btn-ghost" value="cancel" formnovalidate>Cancel</button>
+        <button class="btn btn-primary" value="save">Save</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>
